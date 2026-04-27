@@ -24,6 +24,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -43,7 +44,7 @@ import java.util.*
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
-    onNavigateToSettings: () -> Unit
+    @Suppress("UNUSED_PARAMETER") onNavigateToSettings: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -76,13 +77,109 @@ fun ChatScreen(
         viewModel.connect(serverUrl, deviceId, clientId)
     }
 
+    // 顶部栏状态
+    val connectionColor by animateColorAsState(
+        targetValue = when (uiState.connectionState) {
+            is ConnectionState.Connected -> Color(0xFF4CAF50)
+            is ConnectionState.Connecting -> Color(0xFFFFC107)
+            is ConnectionState.Error -> Color(0xFFF44336)
+            else -> Color(0xFF9E9E9E)
+        },
+        label = "connection_color"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "ai_state")
+    val stateScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
+
+    val stateText = when (uiState.aiState) {
+        AiState.LISTENING -> "正在倾听..."
+        AiState.SPEAKING -> "正在回答..."
+        AiState.PROCESSING -> "思考中..."
+        else -> ""
+    }
+
+    val stateIcon = when (uiState.aiState) {
+        AiState.LISTENING -> Icons.Default.Mic
+        AiState.SPEAKING -> Icons.Default.VolumeUp
+        AiState.PROCESSING -> Icons.Default.Psychology
+        else -> null
+    }
+
     Scaffold(
         topBar = {
-            ChatTopBar(
-                connectionState = uiState.connectionState,
-                onSettingsClick = { showSettings = true }
+            TopAppBar(
+                title = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 左侧：连接状态 + 小智AI
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(connectionColor)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "小智 AI",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        // 中间：状态文字（居中）
+                        if (stateText.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (stateIcon != null) {
+                                    Icon(
+                                        imageVector = stateIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .scale(stateScale),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                Text(
+                                    text = stateText,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                    }
+                },
+                windowInsets = WindowInsets.statusBars,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
             modifier = Modifier
@@ -90,7 +187,6 @@ fun ChatScreen(
                 .padding(padding)
                 .imePadding()
         ) {
-            // 消息列表
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -106,15 +202,6 @@ fun ChatScreen(
                 }
 
                 item { Spacer(modifier = Modifier.height(8.dp)) }
-            }
-
-            // AI 状态指示器
-            AnimatedVisibility(
-                visible = uiState.aiState != AiState.IDLE,
-                enter = fadeIn() + slideInVertically(),
-                exit = fadeOut() + slideOutVertically()
-            ) {
-                AiStateIndicator(state = uiState.aiState)
             }
 
             // 输入区域
@@ -155,6 +242,7 @@ fun ChatScreen(
 @Composable
 private fun ChatTopBar(
     connectionState: ConnectionState,
+    aiState: AiState,
     onSettingsClick: () -> Unit
 ) {
     val connectionColor by animateColorAsState(
@@ -166,9 +254,50 @@ private fun ChatTopBar(
         },
         label = "connection_color"
     )
-    
-    TopAppBar(
-        title = {
+
+    val infiniteTransition = rememberInfiniteTransition(label = "ai_state")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
+
+    val stateText = when (aiState) {
+        AiState.LISTENING -> "正在倾听..."
+        AiState.SPEAKING -> "正在回答..."
+        AiState.PROCESSING -> "思考中..."
+        else -> ""
+    }
+
+    val stateIcon = when (aiState) {
+        AiState.LISTENING -> Icons.Default.Mic
+        AiState.SPEAKING -> Icons.Default.VolumeUp
+        AiState.PROCESSING -> Icons.Default.Psychology
+        else -> null
+    }
+
+    val statusBarsPadding = WindowInsets.statusBars.asPaddingValues()
+    val topPadding = statusBarsPadding.calculateTopPadding().let { maxOf(it, 4.dp) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding),
+        shadowElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 左侧：连接状态 + 小智AI
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -179,16 +308,42 @@ private fun ChatTopBar(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("小智 AI")
             }
-        },
-        actions = {
+
+            // 中间：状态文字（居中）
+            if (stateText.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (stateIcon != null) {
+                        Icon(
+                            imageVector = stateIcon,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .scale(scale),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = stateText,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 13.sp
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
+            // 右侧：设置按钮
             IconButton(onClick = onSettingsClick) {
                 Icon(Icons.Default.Settings, contentDescription = "设置")
             }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    )
+        }
+    }
 }
 
 @Composable
@@ -397,17 +552,6 @@ private fun ChatInputArea(
                                         modifier = Modifier.size(36.dp)
                                     )
                                 }
-
-                                // 状态提示
-                                Text(
-                                    text = when {
-                                        isRecording -> "松开停止"
-                                        isAiWorking -> "AI工作中..."
-                                        else -> "点击说话"
-                                    },
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                         1 -> {
