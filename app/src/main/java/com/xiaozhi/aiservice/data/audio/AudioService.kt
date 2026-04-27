@@ -8,7 +8,6 @@ import android.media.AudioFormat
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioRecord
-import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
@@ -27,7 +26,6 @@ class AudioService {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var audioTrack: AudioTrack? = null
     private var isRecording = false
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
@@ -215,9 +213,6 @@ class AudioService {
 
     fun release() {
         stopRecording()
-        audioTrack?.stop()
-        audioTrack?.release()
-        audioTrack = null
     }
 
     fun isRecording(): Boolean = isRecording

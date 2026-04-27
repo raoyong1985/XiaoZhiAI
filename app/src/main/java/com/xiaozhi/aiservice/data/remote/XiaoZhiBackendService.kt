@@ -198,7 +198,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     private fun doConnect(url: String, deviceId: String, clientId: String, accessToken: String) {
-        Log.i(TAG, "发送WebSocket请求...")
         Log.i(TAG, "Device-Id: $deviceId, Client-Id: $clientId")
 
         val headers = Headers.Builder().apply {
@@ -218,7 +217,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
             .url(url)
             .headers(headers)
             .build()
-
         Log.i(TAG, "发送WebSocket请求...")
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -354,20 +352,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     /**
-     * 唤醒词检测
-     * @param wakeWord 唤醒词文本
-     */
-    fun sendWakeWordDetected(wakeWord: String) {
-        val message = JsonObject().apply {
-            addProperty("session_id", sessionId)
-            addProperty("type", "listen")
-            addProperty("state", "detect")
-            addProperty("text", wakeWord)
-        }
-        sendTextMessage(message.toString())
-    }
-
-    /**
      * 发送设备激活响应
      * @param challenge 服务器下发的challenge
      * @param code 激活码（用户网站上确认后获取）
@@ -395,14 +379,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
         }
         sendTextMessage(message.toString())
         _aiState.value = "idle"
-    }
-
-    /**
-     * 发送音频数据
-     */
-    fun sendAudioData(data: ByteArray) {
-        if (!isConnected) return
-        webSocket?.send(ByteString.of(*data))
     }
 
     /**
