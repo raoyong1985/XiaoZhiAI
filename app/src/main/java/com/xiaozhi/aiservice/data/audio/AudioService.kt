@@ -213,46 +213,6 @@ class AudioService {
         Log.i(TAG, "录音停止")
     }
 
-    fun playAudio(audioData: ByteArray) {
-        Thread {
-            try {
-                val bufferSize = AudioTrack.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AUDIO_FORMAT
-                )
-
-                audioTrack = AudioTrack.Builder()
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(AUDIO_FORMAT)
-                            .setSampleRate(sampleRate)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(bufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
-
-                audioTrack?.setVolume(1.0f)
-                audioTrack?.play()
-
-                var offset = 0
-                while (offset < audioData.size) {
-                    val length = minOf(bufferSize, audioData.size - offset)
-                    audioTrack?.write(audioData, offset, length)
-                    offset += length
-                }
-
-                audioTrack?.stop()
-                audioTrack?.release()
-                audioTrack = null
-            } catch (e: Exception) {
-                Log.e(TAG, "播放失败: ${e.message}")
-            }
-        }.start()
-    }
-
     fun release() {
         stopRecording()
         audioTrack?.stop()

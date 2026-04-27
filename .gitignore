@@ -1,6 +1,8 @@
 # Build outputs
 /build/
 /app/build/
+/.app/
+/.cxx/
 /.gradle/
 **/build/
 
