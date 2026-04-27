@@ -115,35 +115,51 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 左侧：连接状态 + 小智AI
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(connectionColor)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        // 左侧留空（给返回按钮+状态图标空间）
+                        Spacer(modifier = Modifier.width(80.dp))
+                        // 居中：名称/状态
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            stateIcon?.let { icon ->
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .scale(stateScale),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
                             Text(
-                                contact.name,
+                                text = if (stateText.isNotEmpty()) "${contact.name} · $stateText" else contact.name,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         }
                     }
                 },
-                actions = {
+                navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
+                actions = {
+                    IconButton(onClick = {}) {
+                        Icon(
+                            imageVector = Icons.Default.Circle,
+                            contentDescription = "网络状态",
+                            modifier = Modifier.size(12.dp),
+                            tint = connectionColor
+                        )
+                    }
+                },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = Color.Transparent,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
@@ -185,43 +201,6 @@ fun ChatScreen(
                 onStartRecording = { viewModel.startListening() },
                 onStopRecording = { viewModel.stopListening() }
             )
-        }
-
-        // 状态浮层（居中显示在内容区上方）
-        if (stateText.isNotEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    modifier = Modifier.padding(padding),
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(24.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (stateIcon != null) {
-                            Icon(
-                                imageVector = stateIcon,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .scale(stateScale),
-                                tint = Color.White
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Text(
-                            text = stateText,
-                            color = Color.White,
-                            fontSize = 15.sp
-                        )
-                    }
-                }
-            }
         }
     }
 }
@@ -298,11 +277,7 @@ private fun ChatInputArea(
     )
 
     // 根据状态决定按钮颜色
-    val buttonColor = when {
-        isRecording -> Color(0xFFF44336)  // 录音中 - 红色
-        isAiWorking -> Color(0xFF9E9E9E)   // AI 工作中 - 灰色
-        else -> MaterialTheme.colorScheme.primary  // 正常 - 主题色
-    }
+    val buttonColor = if (isRecording) Color(0xFFF44336) else MaterialTheme.colorScheme.primary
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -342,28 +317,20 @@ private fun ChatInputArea(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                // 录音图标根据状态变化
-                                val micIcon = when {
-                                    isRecording -> Icons.Default.Stop
-                                    isAiWorking -> Icons.Default.Block
-                                    else -> Icons.Default.Mic
-                                }
+                                // 录音图标：录音中=停止，平时=麦克风
+                                val micIcon = if (isRecording) Icons.Default.Stop else Icons.Default.Mic
 
-                                val contentDesc = when {
-                                    isRecording -> "停止录音"
-                                    isAiWorking -> "AI工作中..."
-                                    else -> "开始录音"
-                                }
+                                val contentDesc = if (isRecording) "停止录音" else "开始录音/中断"
 
                                 IconButton(
                                     onClick = {
                                         if (isRecording) {
                                             onStopRecording()
-                                        } else if (!isAiWorking) {
+                                        } else {
                                             onStartRecording()
                                         }
                                     },
-                                    enabled = !isAiWorking || isRecording,
+                                    enabled = true,
                                     modifier = Modifier
                                         .size(72.dp)
                                         .scale(if (isRecording) scale else 1f)
@@ -418,6 +385,20 @@ private fun ChatInputArea(
                                         contentDescription = "发送"
                                     )
                                 }
+                            }
+                            // AI工作中时的提示文字（文字模式下显示）
+                            if (isAiWorking && inputMode == 1) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = when (aiState) {
+                                        AiState.LISTENING -> "正在倾听..."
+                                        AiState.SPEAKING -> "正在回答..."
+                                        AiState.PROCESSING -> "思考中..."
+                                        else -> ""
+                                    },
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                     }

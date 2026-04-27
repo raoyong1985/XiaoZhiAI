@@ -96,8 +96,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var wsToken = ""              // WebSocket token (OTA注册返回)
     private var pendingActivationChallenge = "" // 待发送的激活challenge
     private var reconnectAttempt = 0       // 重连次数
-    private val maxReconnectAttempts = 10   // 最大重连次数
-    private val baseReconnectDelay = 2000L  // 基础重连延迟(ms)
+    private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
     private var isReconnecting = false     // 是否正在重连
 
     /**
@@ -244,9 +243,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 // 1005 = 服务器强制关闭（设备未激活），不重试
                 if (code == 1005) {
                     Log.w(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
-                    reconnectAttempt = maxReconnectAttempts + 1 // 跳过重试
-                    // Error不接受参数，用Disconnected + 日志表示
-                    _connectionState.value = ConnectionState.Disconnected
+                    isReconnecting = false
+                    reconnectAttempt = 0
+                    _connectionState.value = ConnectionState.Error
                 } else {
                     scheduleReconnect()
                 }
@@ -273,7 +272,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     /**
-     * 计划重连
+     * 计划重连 - 无限重试，直到连接成功
      */
     private fun scheduleReconnect() {
         if (isReconnecting) return
@@ -282,15 +281,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         isReconnecting = true
         reconnectAttempt++
 
-        if (reconnectAttempt > maxReconnectAttempts) {
-            Log.w(TAG, "已达到最大重连次数 ($maxReconnectAttempts)，停止重连")
-            isReconnecting = false
-            _connectionState.value = ConnectionState.Error
-            return
-        }
-
-        // 指数退避: 2s, 4s, 8s, 16s, 32s (最多)
-        val delay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(4))).coerceAtMost(30000L)
+        // 指数退避: 1s, 2s, 4s, 8s, 16s, 32s, 最多2分钟
+        val delay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(7))).coerceAtMost(120000L)
         Log.i(TAG, "计划 ${reconnectAttempt}s 后重连 (延迟: ${delay}ms)")
 
         scope.launch {
