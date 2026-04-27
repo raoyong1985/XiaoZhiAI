@@ -71,8 +71,20 @@ Java_com_xiaozhi_aiservice_data_audio_NativeOpusDecoder_nativeDecode(
     env->ReleaseShortArrayElements(output, outputShorts, 0);
 
     if (samples < 0) {
-        LOGE("opus_decode failed: %d (inputLen=%d, decodeUs=%lld)", samples, inputLen, (long long)decodeUs);
+        LOGE("opus_decode failed: %d (inputLen=%d, decodeUs=%lld, firstBytes=%02X %02X %02X)",
+             samples, inputLen, (long long)decodeUs,
+             inputLen > 0 ? (unsigned char)inputBytes[0] : 0,
+             inputLen > 1 ? (unsigned char)inputBytes[1] : 0,
+             inputLen > 2 ? (unsigned char)inputBytes[2] : 0);
         return 0;
+    }
+
+    if (samples == 0) {
+        LOGW("opus_decode 返回0 (静音帧? inputLen=%d, firstBytes=%02X %02X %02X)",
+             inputLen,
+             inputLen > 0 ? (unsigned char)inputBytes[0] : 0,
+             inputLen > 1 ? (unsigned char)inputBytes[1] : 0,
+             inputLen > 2 ? (unsigned char)inputBytes[2] : 0);
     }
 
     if (decodeUs > 10000) {

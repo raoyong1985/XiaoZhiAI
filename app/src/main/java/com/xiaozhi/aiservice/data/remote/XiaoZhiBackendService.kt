@@ -621,7 +621,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             Log.w(TAG, "收到空二进制消息")
             return
         }
-        Log.i(TAG, "收到二进制音频: ${data.size} bytes")
+        Log.i(TAG, "收到二进制音频: ${data.size} bytes, 前3字节: ${data.take(3).joinToString(" ") { "%02X".format(it) }}")
         // 使用emit发送Opus音频数据包
         scope.launch {
             _audioData.emit(data)
