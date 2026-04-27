@@ -1,0 +1,205 @@
+package com.xiaozhi.aiservice.data.audio
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
+import android.util.Log
+import androidx.core.content.ContextCompat
+import kotlin.math.abs
+
+class AudioService {
+
+    companion object {
+        private const val TAG = "AudioService"
+        const val DEFAULT_SAMPLE_RATE = 16000
+        const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+        const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+        private const val SILENCE_THRESHOLD = 500
+        private const val SILENCE_TIMEOUT_MS = 3000L
+    }
+
+    private var audioRecord: AudioRecord? = null
+    private var audioTrack: AudioTrack? = null
+    private var isRecording = false
+    private var recordingThread: Thread? = null
+    private var sampleRate = DEFAULT_SAMPLE_RATE
+    private var onSilenceDetected: (() -> Unit)? = null
+
+    fun hasPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun setSampleRate(rate: Int) {
+        sampleRate = rate
+        Log.i(TAG, "设置采样率: $rate")
+    }
+
+    fun getSampleRate(): Int = sampleRate
+
+    /**
+     * 设置静音检测回调
+     */
+    fun setOnSilenceDetected(callback: () -> Unit) {
+        onSilenceDetected = callback
+    }
+
+    /**
+     * 启动录音，带 VAD 静音检测
+     * @param onAudioData PCM数据回调
+     * @param enableVAD 是否启用静音检测（自动停止）
+     */
+    fun startRecording(onAudioData: (ByteArray) -> Unit, enableVAD: Boolean = true): Boolean {
+        if (isRecording) return false
+
+        // 使用 16000Hz 录音（与服务器上行一致）
+        val recordSampleRate = 16000
+        val bufferSize = AudioRecord.getMinBufferSize(
+            recordSampleRate, CHANNEL_CONFIG, AUDIO_FORMAT
+        )
+
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                recordSampleRate,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord初始化失败")
+                return false
+            }
+
+            isRecording = true
+            audioRecord?.startRecording()
+
+            val buffer = ByteArray(bufferSize)
+            var silenceStartTime = 0L
+
+            recordingThread = Thread {
+                while (isRecording) {
+                    val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
+                    if (readSize <= 0) continue
+
+                    val pcmData = buffer.copyOf(readSize)
+                    onAudioData(pcmData)
+
+                    // VAD 检测
+                    if (enableVAD) {
+                        val energy = calculateEnergy(pcmData)
+                        val now = System.currentTimeMillis()
+
+                        if (energy > SILENCE_THRESHOLD) {
+                            silenceStartTime = 0
+                        } else {
+                            if (silenceStartTime == 0L) {
+                                silenceStartTime = now
+                            } else if (now - silenceStartTime >= SILENCE_TIMEOUT_MS) {
+                                Log.i(TAG, "检测到${SILENCE_TIMEOUT_MS}ms静音，自动停止录音")
+                                onSilenceDetected?.invoke()
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+            recordingThread?.start()
+
+            Log.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD")
+            return true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "录音权限被拒绝: ${e.message}")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "录音启动失败: ${e.message}")
+            return false
+        }
+    }
+
+    /**
+     * 计算音频能量
+     */
+    private fun calculateEnergy(pcmData: ByteArray): Double {
+        if (pcmData.size < 2) return 0.0
+        var sum = 0.0
+        val sampleCount = pcmData.size / 2
+        for (i in 0 until sampleCount) {
+            // 16-bit PCM, little-endian
+            val sample = (pcmData[i * 2].toInt() and 0xFF) or
+                        ((pcmData[i * 2 + 1].toInt() and 0xFF) shl 8)
+            sum += abs(sample)
+        }
+        return sum / sampleCount
+    }
+
+    fun stopRecording() {
+        isRecording = false
+        recordingThread?.interrupt()
+        recordingThread = null
+
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (_: Exception) {}
+        audioRecord = null
+
+        Log.i(TAG, "录音停止")
+    }
+
+    fun playAudio(audioData: ByteArray) {
+        Thread {
+            try {
+                val bufferSize = AudioTrack.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AUDIO_FORMAT
+                )
+
+                audioTrack = AudioTrack.Builder()
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AUDIO_FORMAT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+
+                audioTrack?.setVolume(1.0f)
+                audioTrack?.play()
+
+                var offset = 0
+                while (offset < audioData.size) {
+                    val length = minOf(bufferSize, audioData.size - offset)
+                    audioTrack?.write(audioData, offset, length)
+                    offset += length
+                }
+
+                audioTrack?.stop()
+                audioTrack?.release()
+                audioTrack = null
+            } catch (e: Exception) {
+                Log.e(TAG, "播放失败: ${e.message}")
+            }
+        }.start()
+    }
+
+    fun release() {
+        stopRecording()
+        audioTrack?.stop()
+        audioTrack?.release()
+        audioTrack = null
+    }
+
+    fun isRecording(): Boolean = isRecording
+}
