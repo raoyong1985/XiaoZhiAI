@@ -26,12 +26,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.AiState
+import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
+import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
@@ -44,15 +44,13 @@ import java.util.*
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
-    @Suppress("UNUSED_PARAMETER") onNavigateToSettings: () -> Unit
+    contact: BotContact,
+    onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    var serverUrl by remember { mutableStateOf("wss://api.tenclass.net/xiaozhi/v1/") }
-    var deviceId by remember { mutableStateOf(AppContainer.deviceMac) }
-    var clientId by remember { mutableStateOf(AppContainer.clientId) }
-    var inputMode by remember { mutableIntStateOf(0) } // 0=语音模式, 1=文本模式
-    var showSettings by remember { mutableStateOf(false) }
+    // 使用联系人配置
+    var inputMode by remember { mutableIntStateOf(if (contact.inputMode == InputMode.VOICE) 0 else 1) }
 
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
@@ -74,7 +72,7 @@ fun ChatScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.connect(serverUrl, deviceId, clientId)
+        viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id)
     }
 
     // 顶部栏状态
@@ -131,7 +129,7 @@ fun ChatScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "小智 AI",
+                                contact.name,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Medium
                             )
@@ -168,8 +166,8 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
                 windowInsets = WindowInsets.statusBars,
@@ -217,24 +215,6 @@ fun ChatScreen(
                 onStopRecording = { viewModel.stopListening() }
             )
         }
-    }
-    
-    if (showSettings) {
-        SettingsDialog(
-            serverUrl = serverUrl,
-            deviceId = deviceId,
-            clientId = clientId,
-            inputMode = inputMode,
-            onServerUrlChange = { serverUrl = it },
-            onDeviceIdChange = { deviceId = it },
-            onClientIdChange = { clientId = it },
-            onInputModeChange = { inputMode = it },
-            onDismiss = { showSettings = false },
-            onConnect = {
-                viewModel.connect(serverUrl, deviceId, clientId)
-                showSettings = false
-            }
-        )
     }
 }
 
@@ -437,96 +417,4 @@ private fun ChatInputArea(
             }
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingsDialog(
-    serverUrl: String,
-    deviceId: String,
-    clientId: String,
-    inputMode: Int,
-    onServerUrlChange: (String) -> Unit,
-    onDeviceIdChange: (String) -> Unit,
-    onClientIdChange: (String) -> Unit,
-    onInputModeChange: (Int) -> Unit,
-    onDismiss: () -> Unit,
-    onConnect: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("连接设置") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = serverUrl,
-                    onValueChange = onServerUrlChange,
-                    label = { Text("服务器地址 (WebSocket URL)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("wss://xiaozhi.me/ws") }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = deviceId,
-                    onValueChange = onDeviceIdChange,
-                    label = { Text("设备ID (MAC)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("XX:XX:XX:XX:XX:XX") }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = clientId,
-                    onValueChange = onClientIdChange,
-                    label = { Text("客户端ID (UUID)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("UUID") }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("输入模式", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = inputMode == 0,
-                        onClick = { onInputModeChange(0) },
-                        label = { Text("语音") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = inputMode == 1,
-                        onClick = { onInputModeChange(1) },
-                        label = { Text("文字") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Keyboard, contentDescription = null, modifier = Modifier.size(18.dp))
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "默认连接 xiaozhi.me 官方服务器",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onConnect) {
-                Text("连接")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
 }

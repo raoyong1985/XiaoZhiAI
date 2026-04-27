@@ -1,0 +1,5 @@
+# ninja log v5
+0	19	1777283640054465479	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	fc4c475d513505cf
+19	28	1777283640062689569	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/arm64-v8a/libnative_opus_decoder.so	774f19502aef3f7c
+0	21	1777296828662532210	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	fc4c475d513505cf
+21	31	1777296828674532397	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/arm64-v8a/libnative_opus_decoder.so	774f19502aef3f7c

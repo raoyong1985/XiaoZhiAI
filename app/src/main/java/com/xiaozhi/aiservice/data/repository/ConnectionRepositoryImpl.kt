@@ -46,6 +46,9 @@ class ConnectionRepositoryImpl(
     private var lastSentText: String? = null
     private val lastSentTextLock = Any()
 
+    // 当前联系人ID，用于消息路由
+    private var currentContactId: String = ""
+
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private var opusDecoder: NativeOpusDecoder? = null
     // Opus 编码器（录音用）
@@ -112,7 +115,7 @@ class ConnectionRepositoryImpl(
                         }
                     }
                 }
-                messageRepository.addReceivedMessage(message)
+                messageRepository.addReceivedMessage(currentContactId, message)
             }
         }
 
@@ -144,12 +147,31 @@ class ConnectionRepositoryImpl(
         }
     }
 
-    override suspend fun connect(config: ConnectionConfig): Result<Unit> {
+    override suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit> {
+        Log.i(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
+        
+        // 互斥：连接新联系人前先断开旧连接
+        if (_connectionState.value is ConnectionState.Connected || 
+            _connectionState.value is ConnectionState.Connecting) {
+            Log.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
+            backendService.disconnect()
+            opusEncoder?.stop()
+            opusEncoder = null
+            opusDecoder?.release()
+            opusDecoder = null
+            _connectionState.value = ConnectionState.Disconnected
+            _aiState.value = AiState.IDLE
+        }
+        
+        currentContactId = contactId
         return try {
             _connectionState.value = ConnectionState.Connecting
-            backendService.connect(config.serverUrl, config.deviceId, config.clientId, config.accessToken ?: "")
+            Log.i(TAG, "ConnectionRepositoryImpl: calling backendService.connect()...")
+            backendService.connect(config.serverUrl, config.otaUrl, config.deviceId, config.clientId, config.accessToken)
+            Log.i(TAG, "ConnectionRepositoryImpl: backendService.connect() returned successfully")
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "ConnectionRepositoryImpl.connect() failed: ${e.message}")
             _connectionState.value = ConnectionState.Error(e.message ?: "连接失败")
             Result.failure(e)
         }
@@ -165,7 +187,8 @@ class ConnectionRepositoryImpl(
         _aiState.value = AiState.IDLE
     }
     
-    override suspend fun sendTextMessage(text: String): Result<Unit> {
+    override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
+        currentContactId = contactId
         // 先添加到本地消息列表（用户发送）
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -175,7 +198,7 @@ class ConnectionRepositoryImpl(
             status = MessageStatus.SENT,
             timestamp = System.currentTimeMillis()
         )
-        messageRepository.addSentMessage(message)
+        messageRepository.addSentMessage(contactId, message)
 
         // 记录最后发送的消息，用于STT回显去重
         synchronized(lastSentTextLock) {

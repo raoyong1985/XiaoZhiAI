@@ -2,10 +2,12 @@
 #include <opus.h>
 #include <android/log.h>
 #include <stdint.h>
+#include <sys/time.h>
 
 #define LOG_TAG "NativeOpus"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 extern "C" {
 
@@ -52,6 +54,8 @@ Java_com_xiaozhi_aiservice_data_audio_NativeOpusDecoder_nativeDecode(
     
     // Decode Opus packet
     // frame_size is the maximum number of samples per channel
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
     int samples = opus_decode(
         decoder,
         reinterpret_cast<unsigned char *>(inputBytes),
@@ -60,15 +64,21 @@ Java_com_xiaozhi_aiservice_data_audio_NativeOpusDecoder_nativeDecode(
         maxFrameSize,
         0  // no FEC
     );
-    
+    gettimeofday(&t1, NULL);
+    long decodeUs = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_usec - t0.tv_usec);
+
     env->ReleaseByteArrayElements(input, inputBytes, 0);
     env->ReleaseShortArrayElements(output, outputShorts, 0);
-    
+
     if (samples < 0) {
-        LOGE("opus_decode failed: %d", samples);
+        LOGE("opus_decode failed: %d (inputLen=%d, decodeUs=%lld)", samples, inputLen, (long long)decodeUs);
         return 0;
     }
-    
+
+    if (decodeUs > 10000) {
+        LOGW("opus_decode 慢: %lldus, samples=%d, inputLen=%d", (long long)decodeUs, samples, inputLen);
+    }
+
     return samples;
 }
 

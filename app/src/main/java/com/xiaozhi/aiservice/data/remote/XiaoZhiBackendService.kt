@@ -38,7 +38,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     companion object {
         private const val PROTOCOL_VERSION = "1"
         private const val TAG = "XiaoZhiWS"
-        private const val OTA_URL = "https://api.tenclass.net/xiaozhi/ota/"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -87,12 +86,15 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
     private var isConnected = false
     private var serverUrl = ""
+    private var otaUrl = ""
     private var deviceId = ""
     private var clientId = ""
     private var sessionId = ""
     private var serverSampleRate = 16000  // 服务器返回的采样率
     private var serverChannels = 1            // 服务器返回的声道数
     private var accessToken = ""           // 保存accessToken用于重连
+    private var wsToken = ""              // WebSocket token (OTA注册返回)
+    private var pendingActivationChallenge = "" // 待发送的激活challenge
     private var reconnectAttempt = 0       // 重连次数
     private val maxReconnectAttempts = 10   // 最大重连次数
     private val baseReconnectDelay = 2000L  // 基础重连延迟(ms)
@@ -105,8 +107,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * @param clientId 客户端ID (用于Client-Id header，UUID格式)
      * @param accessToken 访问令牌 (用于Authorization header)
      */
-    fun connect(url: String, deviceId: String, clientId: String, accessToken: String = "") {
+    fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String = "") {
         serverUrl = url
+        this.otaUrl = otaUrl
         this.deviceId = deviceId
         this.clientId = clientId
         this.accessToken = accessToken
@@ -117,7 +120,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         // 先进行OTA注册（设备激活）
         scope.launch {
             try {
-                registerDevice(deviceId, clientId)
+                registerDevice(otaUrl, deviceId, clientId)
             } catch (e: Exception) {
                 Log.e(TAG, "OTA注册失败: ${e.message}")
             }
@@ -131,7 +134,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * 必须在连接WebSocket之前调用，用于向服务器注册设备
      * 参考: https://xujiwei.com/blog/2025/04/xiaozhi-ai-protocol-ota/
      */
-    private suspend fun registerDevice(deviceId: String, clientId: String) {
+    private suspend fun registerDevice(otaUrl: String, deviceId: String, clientId: String) {
         val systemInfo = JsonObject().apply {
             addProperty("version", 2)
             addProperty("language", "zh")
@@ -150,7 +153,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         val requestBody = body.toRequestBody("application/json".toMediaTypeOrNull())
 
         val request = Request.Builder()
-            .url(OTA_URL)
+            .url(otaUrl)
             .post(requestBody)
             .addHeader("Device-Id", deviceId)
             .addHeader("Client-Id", clientId)
@@ -163,13 +166,30 @@ class XiaoZhiBackendService(private val gson: Gson) {
         Log.i(TAG, "OTA注册响应: ${response.code} - $responseBody")
 
         if (response.isSuccessful) {
-            // 解析响应，检查是否有activation字段（设备未激活）
             try {
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
+                // 保存WebSocket token
+                val wsObj = json.getAsJsonObject("websocket")
+                if (wsObj != null) {
+                    wsToken = wsObj.get("token")?.asString ?: ""
+                    Log.i(TAG, "WebSocket token: ${wsToken.take(20)}...")
+                }
+                // 保存激活challenge（如果有）
                 if (json.has("activation")) {
                     val activation = json.getAsJsonObject("activation")
+                    pendingActivationChallenge = activation?.get("challenge")?.asString ?: ""
                     val code = activation?.get("code")?.asString ?: ""
-                    Log.i(TAG, "设备需要激活，验证码: $code")
+                    Log.i(TAG, "设备需要激活，验证码: $code, challenge: $pendingActivationChallenge")
+                    // 显示验证码到聊天界面
+                    val message = ChatMessage(
+                        id = java.util.UUID.randomUUID().toString(),
+                        content = "🔐 设备需要激活，请在 xiaozhi.me 输入验证码：$code",
+                        type = MessageType.TEXT,
+                        direction = MessageDirection.RECEIVED,
+                        status = MessageStatus.SENT,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    scope.launch { _chatMessages.emit(message) }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "解析OTA响应失败: ${e.message}")
@@ -185,7 +205,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
             add("Protocol-Version", PROTOCOL_VERSION)
             add("Device-Id", deviceId)
             add("Client-Id", clientId)
-            if (accessToken.isNotEmpty()) {
+            // 优先使用OTA注册返回的websocket token
+            if (wsToken.isNotEmpty()) {
+                add("Authorization", "Bearer $wsToken")
+                Log.i(TAG, "使用WebSocket token认证")
+            } else if (accessToken.isNotEmpty()) {
                 add("Authorization", "Bearer $accessToken")
             }
         }.build()
@@ -219,7 +243,15 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 Log.i(TAG, "WebSocket关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
-                scheduleReconnect()
+                // 1005 = 服务器强制关闭（设备未激活），不重试
+                if (code == 1005) {
+                    Log.w(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
+                    reconnectAttempt = maxReconnectAttempts + 1 // 跳过重试
+                    // Error不接受参数，用Disconnected + 日志表示
+                    _connectionState.value = ConnectionState.Disconnected
+                } else {
+                    scheduleReconnect()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -236,6 +268,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         webSocket = null
         isConnected = false
         reconnectAttempt = 0  // 重置重连计数
+        wsToken = ""
+        pendingActivationChallenge = ""
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = "idle"
     }
@@ -330,6 +364,21 @@ class XiaoZhiBackendService(private val gson: Gson) {
             addProperty("state", "detect")
             addProperty("text", wakeWord)
         }
+        sendTextMessage(message.toString())
+    }
+
+    /**
+     * 发送设备激活响应
+     * @param challenge 服务器下发的challenge
+     * @param code 激活码（用户网站上确认后获取）
+     */
+    private fun sendActivation(challenge: String, code: String) {
+        val message = JsonObject().apply {
+            addProperty("type", "activation")
+            addProperty("challenge", challenge)
+            addProperty("code", code)
+        }
+        Log.i(TAG, "发送激活响应: $message")
         sendTextMessage(message.toString())
     }
 
@@ -433,6 +482,18 @@ class XiaoZhiBackendService(private val gson: Gson) {
                         Log.i(TAG, "服务器音频参数: ${serverSampleRate}Hz, ${serverChannels}ch")
                     }
                     Log.i(TAG, "Session ID: $sessionId")
+
+                    // 检查hello中是否包含激活challenge（服务器要求激活）
+                    val activation = json.getAsJsonObject("activation")
+                    if (activation != null) {
+                        val challenge = activation.get("challenge")?.asString ?: ""
+                        val challengeCode = activation.get("code")?.asString ?: ""
+                        Log.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
+                        // 立即发送激活响应
+                        if (challenge.isNotEmpty()) {
+                            sendActivation(challenge, challengeCode)
+                        }
+                    }
                 }
                 "activation" -> {
                     val code = json.get("code")?.asString

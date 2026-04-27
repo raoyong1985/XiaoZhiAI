@@ -11,12 +11,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 class MessageRepositoryImpl : MessageRepository {
-    
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    
-    override fun getMessages(): StateFlow<List<ChatMessage>> = _messages.asStateFlow()
-    
-    override suspend fun sendTextMessage(text: String): Result<Unit> {
+
+    // 每个联系人独立的 MutableStateFlow
+    private val messagesByContact = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+
+    private fun getOrCreateFlow(contactId: String): MutableStateFlow<List<ChatMessage>> {
+        return messagesByContact.getOrPut(contactId) {
+            MutableStateFlow(emptyList())
+        }
+    }
+
+    override fun getMessages(contactId: String): StateFlow<List<ChatMessage>> {
+        return getOrCreateFlow(contactId).asStateFlow()
+    }
+
+    private fun updateMessages(contactId: String, transform: (List<ChatMessage>) -> List<ChatMessage>) {
+        getOrCreateFlow(contactId).value = transform(getOrCreateFlow(contactId).value)
+    }
+
+    override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             content = text,
@@ -25,11 +38,11 @@ class MessageRepositoryImpl : MessageRepository {
             status = MessageStatus.SENT,
             timestamp = System.currentTimeMillis()
         )
-        _messages.value = _messages.value + message
+        updateMessages(contactId) { it + message }
         return Result.success(Unit)
     }
-    
-    override suspend fun sendVoiceMessage(filePath: String, duration: Int): Result<Unit> {
+
+    override suspend fun sendVoiceMessage(contactId: String, filePath: String, duration: Int): Result<Unit> {
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             content = filePath,
@@ -40,25 +53,25 @@ class MessageRepositoryImpl : MessageRepository {
             duration = duration,
             audioPath = filePath
         )
-        _messages.value = _messages.value + message
+        updateMessages(contactId) { it + message }
         return Result.success(Unit)
     }
-    
-    override suspend fun addReceivedMessage(message: ChatMessage) {
-        _messages.value = _messages.value + message
+
+    override suspend fun addReceivedMessage(contactId: String, message: ChatMessage) {
+        updateMessages(contactId) { it + message }
     }
 
-    override suspend fun addSentMessage(message: ChatMessage) {
-        _messages.value = _messages.value + message
+    override suspend fun addSentMessage(contactId: String, message: ChatMessage) {
+        updateMessages(contactId) { it + message }
     }
-    
-    override suspend fun updateMessageStatus(messageId: String, status: MessageStatus) {
-        _messages.value = _messages.value.map { msg ->
-            if (msg.id == messageId) msg.copy(status = status) else msg
+
+    override suspend fun updateMessageStatus(contactId: String, messageId: String, status: MessageStatus) {
+        updateMessages(contactId) { msgs ->
+            msgs.map { msg -> if (msg.id == messageId) msg.copy(status = status) else msg }
         }
     }
-    
-    override suspend fun clearMessages() {
-        _messages.value = emptyList()
+
+    override suspend fun clearMessages(contactId: String) {
+        updateMessages(contactId) { emptyList() }
     }
 }

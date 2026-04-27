@@ -1,9 +1,11 @@
 package com.xiaozhi.aiservice.domain.repository
 
 import com.xiaozhi.aiservice.domain.model.AiState
+import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
 import com.xiaozhi.aiservice.domain.model.Device
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -40,13 +42,13 @@ sealed class IncomingMessage {
  * 消息仓库接口
  */
 interface MessageRepository {
-    fun getMessages(): StateFlow<List<ChatMessage>>
-    suspend fun sendTextMessage(text: String): Result<Unit>
-    suspend fun sendVoiceMessage(filePath: String, duration: Int): Result<Unit>
-    suspend fun addReceivedMessage(message: ChatMessage)
-    suspend fun addSentMessage(message: ChatMessage)
-    suspend fun updateMessageStatus(messageId: String, status: com.xiaozhi.aiservice.domain.model.MessageStatus)
-    suspend fun clearMessages()
+    fun getMessages(contactId: String): StateFlow<List<ChatMessage>>
+    suspend fun sendTextMessage(contactId: String, text: String): Result<Unit>
+    suspend fun sendVoiceMessage(contactId: String, filePath: String, duration: Int): Result<Unit>
+    suspend fun addReceivedMessage(contactId: String, message: ChatMessage)
+    suspend fun addSentMessage(contactId: String, message: ChatMessage)
+    suspend fun updateMessageStatus(contactId: String, messageId: String, status: com.xiaozhi.aiservice.domain.model.MessageStatus)
+    suspend fun clearMessages(contactId: String)
 }
 
 /**
@@ -67,12 +69,21 @@ interface ConnectionRepository {
     val connectionState: StateFlow<ConnectionState>
     val aiState: StateFlow<AiState>
     val incomingMessages: SharedFlow<IncomingMessage>
-    suspend fun connect(config: ConnectionConfig): Result<Unit>
+    suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit>
     suspend fun disconnect()
-    suspend fun sendTextMessage(text: String): Result<Unit>
+    suspend fun sendTextMessage(contactId: String, text: String): Result<Unit>
     suspend fun sendAudio(audioData: ByteArray): Result<Unit>
-    
+
     // 语音控制
     suspend fun startListening()
     suspend fun stopListening()
+}
+
+/**
+ * 联系人仓库接口
+ */
+interface ContactsRepository {
+    fun getContacts(): Flow<List<BotContact>>
+    suspend fun saveContact(contact: BotContact)
+    suspend fun deleteContact(contactId: String)
 }

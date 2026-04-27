@@ -65,6 +65,7 @@ data class Device(
  */
 data class ConnectionConfig(
     val serverUrl: String,
+    val otaUrl: String = "https://api.tenclass.net/xiaozhi/ota/",
     val deviceId: String = "",   // 设备ID (MAC格式)
     val clientId: String = "",    // 客户端ID (UUID格式)
     val accessToken: String = ""
@@ -79,3 +80,24 @@ enum class AiState {
     SPEAKING,      // 正在回复
     PROCESSING     // 处理中
 }
+
+/**
+ * 输入模式
+ */
+enum class InputMode {
+    VOICE,   // 语音输入
+    TEXT     // 文字输入
+}
+
+/**
+ * 智能体联系人
+ */
+data class BotContact(
+    val id: String = "",                       // 唯一标识（UUID）
+    val name: String = "",                     // 联系人名称
+    val serverUrl: String = "wss://api.tenclass.net/xiaozhi/v1/",
+    val otaUrl: String = "https://api.tenclass.net/xiaozhi/ota/", // OTA注册地址
+    val deviceId: String = "",                 // 设备ID (MAC格式)
+    val clientId: String = "",                 // 客户端ID (UUID格式)
+    val inputMode: InputMode = InputMode.VOICE
+)

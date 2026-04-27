@@ -5,9 +5,11 @@ import com.google.gson.Gson
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
+import com.xiaozhi.aiservice.data.repository.ContactsRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.DeviceRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.MessageRepositoryImpl
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
+import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.DeviceRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
@@ -22,6 +24,9 @@ object AppContainer {
     val deviceRepository: DeviceRepository by lazy { DeviceRepositoryImpl() }
     val connectionRepository: ConnectionRepository by lazy {
         ConnectionRepositoryImpl(xiaoZhiBackendService, audioService, messageRepository)
+    }
+    val contactsRepository: ContactsRepository by lazy {
+        ContactsRepositoryImpl(context, gson)
     }
 
     // 设备标识 - 延迟初始化

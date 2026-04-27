@@ -21,21 +21,22 @@ class ChatViewModel(
     private val connectionRepository: ConnectionRepository,
     private val messageRepository: MessageRepository
 ) : ViewModel() {
-    
+
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
-    
+
     val connectionState: StateFlow<ConnectionState> = connectionRepository.connectionState
-    
+
+    private var currentContactId: String = ""
+
     init {
         observeConnection()
-        observeMessages()
     }
-    
+
     private fun observeConnection() {
         viewModelScope.launch {
             connectionRepository.aiState.collect { state ->
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         aiState = state,
                         // 当 AI 不再监听时，自动切回麦克风图标
@@ -44,67 +45,71 @@ class ChatViewModel(
                 }
             }
         }
-        
+
         viewModelScope.launch {
             connectionRepository.connectionState.collect { state ->
                 _uiState.update { it.copy(connectionState = state) }
             }
         }
     }
-    
-    private fun observeMessages() {
+
+    private fun observeMessages(contactId: String) {
         viewModelScope.launch {
-            messageRepository.getMessages().collect { messages ->
+            messageRepository.getMessages(contactId).collect { messages ->
                 _uiState.update { it.copy(messages = messages) }
             }
         }
     }
-    
-    fun connect(serverUrl: String, deviceId: String, clientId: String) {
+
+    fun connect(serverUrl: String, otaUrl: String, deviceId: String, clientId: String, contactId: String) {
+        Log.i(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
+        currentContactId = contactId
+        observeMessages(contactId)
         viewModelScope.launch {
             val config = ConnectionConfig(
                 serverUrl = serverUrl,
+                otaUrl = otaUrl,
                 deviceId = deviceId,
                 clientId = clientId
             )
-            connectionRepository.connect(config)
+            Log.i(TAG, "connect: about to call connectionRepository.connect()")
+            connectionRepository.connect(config, contactId)
         }
     }
-    
+
     fun disconnect() {
         viewModelScope.launch {
             connectionRepository.disconnect()
         }
     }
-    
+
     fun startListening() {
         viewModelScope.launch {
             connectionRepository.startListening()
             _uiState.update { it.copy(isRecording = true) }
         }
     }
-    
+
     fun stopListening() {
         viewModelScope.launch {
             connectionRepository.stopListening()
             _uiState.update { it.copy(isRecording = false) }
         }
     }
-    
+
     fun sendTextMessage(text: String) {
         viewModelScope.launch {
             Log.i(TAG, "sendTextMessage: 发送文本: $text")
-            // 消息已在ConnectionRepositoryImpl.sendTextMessage()中添加
-            connectionRepository.sendTextMessage(text)
+            connectionRepository.sendTextMessage(currentContactId, text)
         }
     }
-    
+
     fun clearMessages() {
         viewModelScope.launch {
-            messageRepository.clearMessages()
+            messageRepository.clearMessages(currentContactId)
         }
     }
-    
+
     class Factory(private val gson: Gson) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {

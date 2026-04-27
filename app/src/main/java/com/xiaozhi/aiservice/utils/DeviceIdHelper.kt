@@ -13,6 +13,9 @@ import java.util.UUID
  * 匹配官方小智AI Android版的设备ID生成逻辑
  */
 object DeviceIdHelper {
+    private const val PREFS_NAME = "device_id_prefs"
+    private const val KEY_DEVICE_MAC = "device_mac"
+    private const val KEY_DEVICE_UUID = "device_uuid"
 
     /**
      * 获取设备ID (64字符SHA256十六进制字符串)
@@ -25,20 +28,29 @@ object DeviceIdHelper {
 
     /**
      * 获取设备MAC地址 (XX:XX:XX:XX:XX:XX格式)
+     * 首次生成后持久化存储，确保重装/重新编译后ID不变
      */
     fun getDeviceMac(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.getString(KEY_DEVICE_MAC, null)?.let { return it }
+
         val sha256Hash = generateDeviceHash(context)
-        // 取前6字节
         val macBytes = sha256Hash.copyOf(6)
-        return macBytes.joinToString(":") { String.format("%02x", it) }
+        val mac = macBytes.joinToString(":") { String.format("%02x", it) }
+
+        prefs.edit().putString(KEY_DEVICE_MAC, mac).apply()
+        return mac
     }
 
     /**
      * 获取设备UUID
+     * 首次生成后持久化存储，确保重装/重新编译后ID不变
      */
     fun getDeviceUuid(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.getString(KEY_DEVICE_UUID, null)?.let { return it }
+
         val sha256Hash = generateDeviceHash(context)
-        // 取前16字节
         val uuidBytes = sha256Hash.copyOf(16)
         // 设置版本和变体位
         uuidBytes[6] = (uuidBytes[6].toInt() and 0x0f or 0x40).toByte()
@@ -47,7 +59,10 @@ object DeviceIdHelper {
         val buffer = ByteBuffer.wrap(uuidBytes)
         val mostSignificant = buffer.long
         val leastSignificant = buffer.long
-        return UUID(mostSignificant, leastSignificant).toString()
+        val uuid = UUID(mostSignificant, leastSignificant).toString()
+
+        prefs.edit().putString(KEY_DEVICE_UUID, uuid).apply()
+        return uuid
     }
 
     /**
@@ -108,5 +123,32 @@ object DeviceIdHelper {
      */
     private fun hexStringToBytes(hex: String): ByteArray {
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    /**
+     * 为指定联系人生成唯一的MAC地址（随机）
+     * 每个联系人独立，重启不变，删除重建则重新生成
+     */
+    fun generateContactMac(): String {
+        val bytes = ByteArray(6)
+        java.security.SecureRandom().nextBytes(bytes)
+        // 设置本地管理位 + 清除广播位 (byte[0] & ~1)
+        bytes[0] = (bytes[0].toInt() and 0xfe or 0x02).toByte()
+        return bytes.joinToString(":") { String.format("%02x", it) }
+    }
+
+    /**
+     * 为指定联系人生成唯一的客户端UUID（基于联系人ID生成，稳定）
+     * 基于contactId生成，重启不变，删除重建（不同ID）则不同
+     */
+    fun generateContactUuid(contactId: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(contactId.toByteArray(Charsets.UTF_8))
+        val uuidBytes = hashBytes.copyOf(16)
+        // 设置版本(4)和变体位
+        uuidBytes[6] = (uuidBytes[6].toInt() and 0x0f or 0x40).toByte()
+        uuidBytes[8] = (uuidBytes[8].toInt() and 0x3f or 0x80).toByte()
+        val buffer = ByteBuffer.wrap(uuidBytes)
+        return UUID(buffer.long, buffer.long).toString()
     }
 }

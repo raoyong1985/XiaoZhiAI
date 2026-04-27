@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.data.audio
 
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -7,6 +8,7 @@ import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.abs
@@ -31,7 +33,8 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val MAX_QUEUE_SIZE = 100
+        private const val MAX_QUEUE_SIZE = 200      // 增大队列缓冲网络抖动
+        private const val BUFFER_MULTIPLIER = 16    // 16倍 minBuffer ≈ 960ms
     }
 
     private var decoderPtr: Long = 0  // native decoder pointer
@@ -41,8 +44,7 @@ class NativeOpusDecoder(
     private var playThread: Thread? = null
 
     // 帧大小
-    private val serverFrameSamples = serverSampleRate * 60 / 1000  // 60ms
-    private val clientFrameSamples = clientSampleRate * 60 / 1000  // 60ms @ 16kHz = 960
+    private val serverFrameSamples = serverSampleRate * 60 / 1000  // 60ms @ 24kHz = 1440
 
     init {
         System.loadLibrary("native_opus_decoder")
@@ -68,16 +70,16 @@ class NativeOpusDecoder(
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            // 4倍缓冲防止卡顿（minBuffer 约 480-960 bytes 太小）
-            val bufferSize = maxOf(minBuffer * 4, 4096)
+            // 16倍缓冲：约 960ms @ 16kHz，足以掩盖网络抖动和GC暂停
+            val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
             Log.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
 
             audioTrack = AudioTrack(
                 AudioManager.STREAM_MUSIC,
-                clientSampleRate,  // 16kHz，与 Flutter 一致
+                clientSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,        // 4倍缓冲防止卡顿
+                bufferSize,
                 AudioTrack.MODE_STREAM
             )
 
@@ -89,20 +91,22 @@ class NativeOpusDecoder(
             Log.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
             playThread = Thread {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 Log.i(TAG, "Play thread started")
                 while (isPlaying.get()) {
                     try {
-                        val data = audioQueue.take()
+                        // poll 带超时，队列空时不阻塞音频线程
+                        val data = audioQueue.poll(500, TimeUnit.MILLISECONDS) ?: continue
                         if (data.isNotEmpty()) {
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
-                            if (written > 0) {
-                                Log.v(TAG, "write ${data.size}B ok")
+                            if (written < 0) {
+                                Log.e(TAG, "AudioTrack write error: $written")
                             }
                         }
                     } catch (e: InterruptedException) {
                         break
                     } catch (e: Exception) {
-                        Log.e(TAG, "err: ${e.message}")
+                        Log.e(TAG, "play err: ${e.message}")
                     }
                 }
                 Log.i(TAG, "Play thread ended")
@@ -116,14 +120,12 @@ class NativeOpusDecoder(
 
     private fun warmUpPlayer() {
         try {
-            // 发送静音帧预热（10ms）
-            val warmupSamples = clientSampleRate / 100
-            val silentFrame = ShortArray(warmupSamples)
-            val byteBuffer = ByteBuffer.allocate(silentFrame.size * 2)
-                .order(ByteOrder.LITTLE_ENDIAN)
-            for (s in silentFrame) byteBuffer.putShort(s)
-            audioTrack?.write(byteBuffer.array(), 0, byteBuffer.array().size)
-            Log.i(TAG, "warmup ok")
+            // 预填充 3帧静音（180ms），让 AudioTrack 有足够数据开始播放不卡顿
+            val warmupFrames = 3
+            val warmupSamplesPerFrame = clientSampleRate * 60 / 1000  // 960 @ 16kHz
+            val warmupData = ByteArray(warmupSamplesPerFrame * warmupFrames * 2)
+            audioTrack?.write(warmupData, 0, warmupData.size)
+            Log.i(TAG, "warmup ${warmupFrames} frames ok (${warmupData.size} bytes)")
         } catch (e: Exception) {
             Log.e(TAG, "warmup failed: ${e.message}")
         }
@@ -144,15 +146,20 @@ class NativeOpusDecoder(
 
             if (samples > 0) {
                 // ===== 重采样 24kHz → 16kHz（线性插值，与 Flutter 一致） =====
+                val t0 = System.nanoTime()
                 val pcmResampled = resamplePcm(pcmShorts, samples, serverSampleRate, clientSampleRate)
+                val resampleUs = (System.nanoTime() - t0) / 1000
+                if (resampleUs > 5000) {
+                    Log.w(TAG, "resample 慢: ${resampleUs}us (samples=$samples)")
+                }
 
                 // ===== AGC 处理（与 Flutter 一致） =====
-                val pcmAgced = applyAgc(pcmResampled)
+                val pcmLimiter = applyLimiter(pcmResampled)
 
                 // 转换为字节
-                val byteBuffer = ByteBuffer.allocate(pcmAgced.size * 2)
+                val byteBuffer = ByteBuffer.allocate(pcmLimiter.size * 2)
                     .order(ByteOrder.LITTLE_ENDIAN)
-                for (s in pcmAgced) byteBuffer.putShort(s)
+                byteBuffer.asShortBuffer().put(pcmLimiter)
                 val pcmBytes = byteBuffer.array()
 
                 if (audioQueue.remainingCapacity() > 0) {
@@ -160,14 +167,6 @@ class NativeOpusDecoder(
                 } else {
                     Log.w(TAG, "queue full")
                 }
-
-                // 调试：打印峰值
-                var peak = 0
-                for (v in pcmAgced) {
-                    val absv = abs(v.toInt())
-                    if (absv > peak) peak = absv
-                }
-                Log.v(TAG, "PCM out ${pcmAgced.size} peak=$peak")
             }
         } catch (e: Exception) {
             Log.e(TAG, "decode err: ${e.message}")
@@ -204,52 +203,41 @@ class NativeOpusDecoder(
     }
 
     /**
-     * AGC 处理（与 Flutter audio_util.dart 完全一致）
+     * 软限幅器（替代原 AGC）——只在峰值超限时才压缩，减少不必要的处理
+     * 避免 quiet 帧被放大导致 noise 放大
      */
-    private fun applyAgc(pcm: ShortArray): ShortArray {
-        val TARGET_PEAK = 20000
-        val SOFT_CLIP_THRESHOLD = 26000
-        val SOFT_CLIPCEIL = 30000
-        val QUIET_THRESHOLD = 5000
+    private fun applyLimiter(pcm: ShortArray): ShortArray {
+        val HARD_CLIP = 30000
 
-        var framePeak = 0
+        // 找峰值
+        var peak = 0
         for (v in pcm) {
             val abs = abs(v.toInt())
-            if (abs > framePeak) framePeak = abs
+            if (abs > peak) peak = abs
         }
 
+        // 峰值正常 → 直接 clamp 到 30000，不做任何增益调整
+        if (peak <= HARD_CLIP) {
+            val result = ShortArray(pcm.size)
+            for (i in pcm.indices) {
+                result[i] = pcm[i].toInt().coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
+            }
+            return result
+        }
+
+        // 峰值过高 → 软压缩（避免硬 clip 产生的谐波）
+        val ratio = HARD_CLIP.toDouble() / peak
         val result = ShortArray(pcm.size)
-
-        if (framePeak > SOFT_CLIP_THRESHOLD) {
-            // 峰值过高 → 软压缩
-            for (i in pcm.indices) {
-                val raw = pcm[i].toInt()
-                val rawAbs = abs(raw)
-                val limited = if (rawAbs <= SOFT_CLIP_THRESHOLD) {
-                    rawAbs.toDouble()
-                } else {
-                    val over = (rawAbs - SOFT_CLIP_THRESHOLD).toDouble()
-                    val overRange = (framePeak - SOFT_CLIP_THRESHOLD).toDouble()
-                    val ratio = (over / overRange).coerceIn(0.0, 1.0)
-                    SOFT_CLIP_THRESHOLD + (TARGET_PEAK - SOFT_CLIP_THRESHOLD) * kotlin.math.sqrt(ratio)
-                }
-                val clamped = (kotlin.math.sign(raw.toDouble()) * limited).toInt().coerceIn(-30000, 30000)
-                result[i] = clamped.toShort()
+        for (i in pcm.indices) {
+            val s = pcm[i].toInt()
+            // 软压缩：对峰值以下的部分做 sqrt 压缩
+            val compressed = if (s >= 0) {
+                ((s * ratio) + (s - s * ratio) * kotlin.math.sqrt(s.toDouble() / peak)).toInt()
+            } else {
+                -((abs(s) * ratio) + (abs(s) - abs(s) * ratio) * kotlin.math.sqrt(abs(s).toDouble() / peak)).toInt()
             }
-        } else if (framePeak < QUIET_THRESHOLD && framePeak > 0) {
-            // 峰值过低 → 归一化
-            val gain = (TARGET_PEAK.toDouble() / framePeak).coerceIn(1.0, 4.0)
-            for (i in pcm.indices) {
-                val boosted = (pcm[i].toInt() * gain).toInt().coerceIn(-30000, 30000)
-                result[i] = boosted.toShort()
-            }
-        } else {
-            // 正常帧 → 保持原样，clamp 到 [-30000, 30000]
-            for (i in pcm.indices) {
-                result[i] = pcm[i].toInt().coerceIn(-30000, 30000).toShort()
-            }
+            result[i] = compressed.coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
         }
-
         return result
     }
 
