@@ -20,7 +20,7 @@ object AppContainer {
     val audioService: AudioService by lazy { AudioService() }
     val xiaoZhiBackendService: XiaoZhiBackendService by lazy { XiaoZhiBackendService(gson) }
 
-    val messageRepository: MessageRepository by lazy { MessageRepositoryImpl() }
+    val messageRepository: MessageRepository by lazy { MessageRepositoryImpl(context, gson) }
     val deviceRepository: DeviceRepository by lazy { DeviceRepositoryImpl() }
     val connectionRepository: ConnectionRepository by lazy {
         ConnectionRepositoryImpl(xiaoZhiBackendService, audioService, messageRepository)
