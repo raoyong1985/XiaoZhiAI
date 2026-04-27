@@ -32,6 +32,12 @@ class ContactsViewModel(
         }
     }
 
+    fun clearMessages(contactId: String) {
+        viewModelScope.launch {
+            AppContainer.messageRepository.clearMessages(contactId)
+        }
+    }
+
     fun generateId(): String = UUID.randomUUID().toString()
 
     class Factory : ViewModelProvider.Factory {

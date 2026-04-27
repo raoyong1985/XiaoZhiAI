@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,6 +120,10 @@ fun ContactsScreen(
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
+                editingContact = null
+            },
+            onClearMessages = {
+                viewModel.clearMessages(contact.id)
                 editingContact = null
             }
         )
@@ -292,7 +297,8 @@ private fun ContactItem(
 fun AddEditContactDialog(
     contact: BotContact?,
     onDismiss: () -> Unit,
-    onSave: (BotContact) -> Unit
+    onSave: (BotContact) -> Unit,
+    onClearMessages: (() -> Unit)? = null
 ) {
     val isEditing = contact != null
     var name by remember { mutableStateOf(contact?.name ?: "") }
@@ -300,137 +306,170 @@ fun AddEditContactDialog(
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: "https://api.tenclass.net/xiaozhi/ota/") }
     var inputMode by remember { mutableStateOf(contact?.inputMode ?: InputMode.VOICE) }
 
-    // 新建时预生成唯一ID（用于生成稳定的MAC/UUID）；编辑时使用已有值
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "编辑智能体" else "添加智能体") },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名称 *") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("例如：小智一号") }
-                )
-
-                OutlinedTextField(
-                    value = serverUrl,
-                    onValueChange = { serverUrl = it },
-                    label = { Text("WebSocket服务器地址") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("wss://api.tenclass.net/xiaozhi/v1/") }
-                )
-
-                OutlinedTextField(
-                    value = otaUrl,
-                    onValueChange = { otaUrl = it },
-                    label = { Text("OTA注册地址") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("https://api.tenclass.net/xiaozhi/ota/") }
-                )
-
-                // 设备ID - 只读显示（Box叠加实现，不依赖disabled颜色）
-                Box {
-                    OutlinedTextField(
-                        value = generatedDeviceId,
-                        onValueChange = {},
-                        label = { Text("设备ID") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = false,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            disabledContainerColor = Color.Transparent
-                        )
-                    )
-                    // 点击整行复制（可选UX增强）
-                }
-
-                // 客户端ID - 只读显示
-                Box {
-                    OutlinedTextField(
-                        value = generatedClientId,
-                        onValueChange = {},
-                        label = { Text("客户端ID") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = false,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            disabledContainerColor = Color.Transparent
-                        )
-                    )
-                }
-
-                Text(
-                    "输入模式",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(0.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // 标题栏（原生风格，左对齐无背景）
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = inputMode == InputMode.VOICE,
-                        onClick = { inputMode = InputMode.VOICE },
-                        label = { Text("语音") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
-                        },
+                    Text(
+                        text = if (isEditing) "编辑智能体" else "添加智能体",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
-                    FilterChip(
-                        selected = inputMode == InputMode.TEXT,
-                        onClick = { inputMode = InputMode.TEXT },
-                        label = { Text("文字") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Keyboard, contentDescription = null, modifier = Modifier.size(18.dp))
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (name.isBlank()) return@TextButton
-                    val newContact = BotContact(
-                        id = newContactId,
-                        name = name.trim(),
-                        serverUrl = serverUrl.trim(),
-                        otaUrl = otaUrl.trim(),
-                        deviceId = generatedDeviceId,
-                        clientId = generatedClientId,
-                        inputMode = inputMode
+
+                Divider()
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // 基本配置
+                    Text("基本配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("名称") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("例如：小智一号") }
                     )
-                    onSave(newContact)
-                },
-                enabled = name.isNotBlank()
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
+
+                    // 输入模式
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = inputMode == InputMode.VOICE,
+                            onClick = { inputMode = InputMode.VOICE },
+                            label = {
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    Text("语音模式")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = inputMode == InputMode.TEXT,
+                            onClick = { inputMode = InputMode.TEXT },
+                            label = {
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    Text("文字模式")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Divider()
+
+                    // 服务器配置
+                    Text("服务器配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text("WebSocket 服务器") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("wss://api.tenclass.net/xiaozhi/v1/") }
+                    )
+                    OutlinedTextField(
+                        value = otaUrl,
+                        onValueChange = { otaUrl = it },
+                        label = { Text("OTA 注册地址") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("https://api.tenclass.net/xiaozhi/ota/") }
+                    )
+
+                    Divider()
+
+                    // ID 信息（只读）
+                    Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    Text("设备ID：$generatedDeviceId", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("客户端ID：$generatedClientId", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                    // 清除聊天记录（仅编辑时）
+                    if (isEditing && onClearMessages != null) {
+                        Divider()
+                        OutlinedButton(
+                            onClick = onClearMessages,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("清除聊天记录")
+                        }
+                    }
+                }
+
+                Divider()
+
+                // 底部按钮栏
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("取消")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (name.isBlank()) return@Button
+                            val newContact = BotContact(
+                                id = newContactId,
+                                name = name.trim(),
+                                serverUrl = serverUrl.trim(),
+                                otaUrl = otaUrl.trim(),
+                                deviceId = generatedDeviceId,
+                                clientId = generatedClientId,
+                                inputMode = inputMode
+                            )
+                            onSave(newContact)
+                        },
+                        enabled = name.isNotBlank()
+                    ) {
+                        Text("保存")
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary
     )
 }
