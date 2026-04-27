@@ -210,7 +210,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                Log.i(TAG, "收到二进制: ${bytes.size} bytes")
+                val ba = bytes.toByteArray()
+                Log.i(TAG, "收到二进制: ${ba.size} bytes, hex=${ba.take(8).joinToString { "%02X".format(it) }}")
                 handleBinaryMessage(bytes.toByteArray())
             }
 

@@ -9,21 +9,20 @@ import org.concentus.OpusException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import kotlin.math.abs
 
 /**
- * Concentus Opus 解码播放
- * 服务器 16000Hz PCM → AudioTrack 16000Hz → Android AudioFlinger 上采样到原生 48000Hz
- * PCM 固定增益 ×2：原始峰值约 ±2000-8000，×2 后约 ±4000-16000，无爆音风险
+ * 测试版：24kHz 直通，完全不做任何处理
+ * 服务器 24kHz Opus → 解码 → AudioTrack(24kHz)
+ * 用于排查声音问题
  */
 class OpusDecoder(
-    private val serverSampleRate: Int = 16000,
+    private val serverSampleRate: Int = 24000,
     private val serverChannels: Int = 1
 ) {
     companion object {
         private const val TAG = "OpusDecoder"
         private const val MAX_QUEUE_SIZE = 50
-        // 固定增益 ×2：原始峰值约 ±2000-8000，×2 后约 ±4000-16000，无爆音风险
-        private const val FIXED_GAIN = 2
     }
 
     private var decoder: OpusDecoder? = null
@@ -32,29 +31,29 @@ class OpusDecoder(
     private val audioQueue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE_SIZE)
     private var playThread: Thread? = null
 
-    // 服务器帧参数：60ms 帧
-    private val serverMaxFrameSize = serverSampleRate * 60 / 1000  // 960 samples @ 16kHz, 1440 @ 24kHz
+    // 60ms 帧 @ 24kHz = 1440 samples
+    private val serverMaxFrameSize = serverSampleRate * 60 / 1000
     private val serverPcmBufferSamples = serverMaxFrameSize * serverChannels
 
     fun init() {
         try {
             decoder = OpusDecoder(serverSampleRate, serverChannels)
-            Log.i(TAG, "Decoder: ${serverSampleRate}Hz ${serverChannels}ch maxFrame=$serverMaxFrameSize gain=$FIXED_GAIN")
+            Log.i(TAG, "Decoder init: ${serverSampleRate}Hz")
 
             val minBuffer = AudioTrack.getMinBufferSize(
                 serverSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            // 60ms @ 16kHz = 960 samples * 2 bytes * 4 倍缓冲
+            // 60ms * 24kHz * 2bytes * 10帧
             val frameSize = serverMaxFrameSize * 2
-            val actualBufferSize = max(minBuffer, frameSize * 4)
+            val actualBufferSize = max(minBuffer, frameSize * 10)
 
             audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 )
                 .setAudioFormat(
@@ -70,6 +69,9 @@ class OpusDecoder(
 
             audioTrack?.play()
             isPlaying.set(true)
+
+            warmUpPlayer()
+
             Log.i(TAG, "AudioTrack: ${serverSampleRate}Hz mono buffer=$actualBufferSize")
 
             playThread = Thread {
@@ -98,6 +100,21 @@ class OpusDecoder(
         }
     }
 
+    private fun warmUpPlayer() {
+        try {
+            // 10ms warmup
+            val warmupSamples = serverSampleRate / 100
+            val silentFrame = ShortArray(warmupSamples)
+            val byteBuffer = java.nio.ByteBuffer.allocate(silentFrame.size * 2)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            for (s in silentFrame) byteBuffer.putShort(s)
+            audioTrack?.write(byteBuffer.array(), 0, byteBuffer.array().size)
+            Log.i(TAG, "warmup ok")
+        } catch (e: Exception) {
+            Log.e(TAG, "warmup failed: ${e.message}")
+        }
+    }
+
     fun decodePacket(opusData: ByteArray) {
         if (decoder == null || !isPlaying.get()) return
 
@@ -106,19 +123,25 @@ class OpusDecoder(
             val samples = decoder!!.decode(opusData, 0, opusData.size, pcmShorts, 0, serverMaxFrameSize, false)
 
             if (samples > 0) {
-                // 使用 ByteBuffer 正确处理 16-bit signed PCM little-endian 转换
-                val byteBuffer = java.nio.ByteBuffer.allocate(samples * 2)
+                // 完全直通：不重采样，不 AGC
+                val pcmData = pcmShorts.copyOf(samples)
+
+                var peak = 0
+                for (v in pcmData) {
+                    val absv = abs(v.toInt())
+                    if (absv > peak) peak = absv
+                }
+                if (peak > 0) {
+                    Log.v(TAG, "PCM ${pcmData.size} peak=$peak")
+                }
+
+                // 写入 AudioTrack
+                val byteBuffer = java.nio.ByteBuffer.allocate(pcmData.size * 2)
                     .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                var minS: Short = 0; var maxS: Short = 0
-                for (i in 0 until samples) {
-                    val raw = pcmShorts[i].toInt()
-                    val boosted = (raw * FIXED_GAIN).coerceIn(-32768, 32767).toShort()
-                    if (boosted < minS) minS = boosted
-                    if (boosted > maxS) maxS = boosted
-                    byteBuffer.putShort(boosted)
+                for (s in pcmData) {
+                    byteBuffer.putShort(s)
                 }
                 val pcmBytes = byteBuffer.array()
-                Log.d(TAG, "decode ${opusData.size}B → ${samples}ss(${serverSampleRate}Hz) gain=$FIXED_GAIN min=${minS.toInt()} max=${maxS.toInt()}")
 
                 if (audioQueue.remainingCapacity() > 0) {
                     audioQueue.offer(pcmBytes)

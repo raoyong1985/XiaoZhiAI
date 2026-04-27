@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +22,9 @@ import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 
 class MainActivity : ComponentActivity() {
     
+    companion object {
+        private const val TAG = "MainActivity"
+    }
     private lateinit var chatViewModel: ChatViewModel
     
     private val requestPermissionLauncher = registerForActivityResult(
@@ -29,6 +34,11 @@ class MainActivity : ComponentActivity() {
         val networkGranted = permissions[Manifest.permission.INTERNET] == true
         if (audioGranted && networkGranted) {
             initializeViewModel()
+        } else {
+            // 权限被拒绝，显示提示
+            val denied = permissions.filterValues { !it }.keys.joinToString(", ")
+            Toast.makeText(this, "权限不足，无法运行: $denied", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "权限被拒绝: $denied")
         }
     }
     

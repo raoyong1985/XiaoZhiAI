@@ -2,7 +2,7 @@ package com.xiaozhi.aiservice.data.repository
 
 import android.util.Log
 import com.xiaozhi.aiservice.data.audio.AudioService
-import com.xiaozhi.aiservice.data.audio.OpusDecoder
+import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
@@ -46,8 +46,8 @@ class ConnectionRepositoryImpl(
     private var lastSentText: String? = null
     private val lastSentTextLock = Any()
 
-    // Opus 解码器
-    private var opusDecoder: OpusDecoder? = null
+    // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
+    private var opusDecoder: NativeOpusDecoder? = null
     // Opus 编码器（录音用）
     private var opusEncoder: OpusEncoder? = null
 
@@ -133,10 +133,10 @@ class ConnectionRepositoryImpl(
                     if (decoder == null) {
                         val serverRate = backendService.getServerSampleRate()
                         val serverCh = backendService.getServerChannels()
-                        decoder = OpusDecoder(serverRate, serverCh)
+                        decoder = NativeOpusDecoder(serverRate, 16000, serverCh)
                         decoder.init()
                         opusDecoder = decoder
-                        Log.i(TAG, "解码器延迟初始化成功(${serverRate}Hz, ${serverCh}ch)")
+                        Log.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch)")
                     }
                     decoder.decodePacket(audioData)
                 }
@@ -157,6 +157,10 @@ class ConnectionRepositoryImpl(
     
     override suspend fun disconnect() {
         backendService.disconnect()
+        opusEncoder?.stop()
+        opusEncoder = null
+        opusDecoder?.release()
+        opusDecoder = null
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiState.IDLE
     }
@@ -205,6 +209,7 @@ class ConnectionRepositoryImpl(
         
         // 启动 Opus 编码器
         val sampleRate = 16000
+        audioService.requestAudioFocus()  // 录音前请求焦点
         opusEncoder = OpusEncoder(sampleRate = sampleRate)
         val encoder = opusEncoder
         if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
@@ -221,6 +226,7 @@ class ConnectionRepositoryImpl(
     override suspend fun stopListening() {
         backendService.sendListenStop()
         audioService.stopRecording()
+        audioService.abandonAudioFocus()  // 放弃焦点
         opusEncoder?.stop()
         opusEncoder = null
         _aiState.value = AiState.IDLE

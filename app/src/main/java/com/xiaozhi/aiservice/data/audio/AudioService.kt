@@ -3,10 +3,14 @@ package com.xiaozhi.aiservice.data.audio
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
@@ -28,6 +32,60 @@ class AudioService {
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
     private var onSilenceDetected: (() -> Unit)? = null
+    private var audioManager: AudioManager? = null
+    private var context: Context? = null
+    private var isMuted = false
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    fun init(context: Context) {
+        this.context = context.applicationContext
+        audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    /**
+     * 请求音频焦点（播放时使用）
+     * AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK：临时获取焦点，其他媒体音量降低
+     */
+    fun requestAudioFocus(): Boolean {
+        if (audioFocusRequest != null) return true
+        return try {
+            val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { }
+                .build()
+            val result = audioManager?.requestAudioFocus(focusRequest)
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                audioFocusRequest = focusRequest
+                Log.i(TAG, "AudioFocus granted")
+                true
+            } else {
+                Log.w(TAG, "AudioFocus request failed")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "AudioFocus error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 放弃音频焦点
+     */
+    fun abandonAudioFocus() {
+        audioFocusRequest?.let {
+            try {
+                audioManager?.abandonAudioFocusRequest(it)
+                Log.i(TAG, "AudioFocus abandoned")
+            } catch (_: Exception) {}
+        }
+        audioFocusRequest = null
+    }
 
     fun hasPermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(
@@ -58,15 +116,16 @@ class AudioService {
     fun startRecording(onAudioData: (ByteArray) -> Unit, enableVAD: Boolean = true): Boolean {
         if (isRecording) return false
 
-        // 使用 16000Hz 录音（与服务器上行一致）
+        // 使用 16000Hz 录音（与服务器上行一致），缓冲区 4 倍防止丢帧
         val recordSampleRate = 16000
-        val bufferSize = AudioRecord.getMinBufferSize(
+        val minBuffer = AudioRecord.getMinBufferSize(
             recordSampleRate, CHANNEL_CONFIG, AUDIO_FORMAT
         )
+        val bufferSize = maxOf(minBuffer * 4, 8192)  // 至少 8KB 缓冲
 
         try {
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION, // 含 AEC
                 recordSampleRate,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
