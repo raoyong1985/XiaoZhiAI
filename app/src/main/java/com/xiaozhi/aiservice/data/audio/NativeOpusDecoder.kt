@@ -31,7 +31,7 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val MAX_QUEUE_SIZE = 50
+        private const val MAX_QUEUE_SIZE = 100
     }
 
     private var decoderPtr: Long = 0  // native decoder pointer
@@ -68,14 +68,16 @@ class NativeOpusDecoder(
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            Log.i(TAG, "minBuffer=$minBuffer")
+            // 4倍缓冲防止卡顿（minBuffer 约 480-960 bytes 太小）
+            val bufferSize = maxOf(minBuffer * 4, 4096)
+            Log.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
 
             audioTrack = AudioTrack(
                 AudioManager.STREAM_MUSIC,
                 clientSampleRate,  // 16kHz，与 Flutter 一致
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                minBuffer,         // minBuffer (与 Flutter 一致，不用 *10)
+                bufferSize,        // 4倍缓冲防止卡顿
                 AudioTrack.MODE_STREAM
             )
 
