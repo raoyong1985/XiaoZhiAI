@@ -134,35 +134,6 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Medium
                             )
                         }
-
-                        // 中间：状态文字（居中）
-                        if (stateText.isNotEmpty()) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (stateIcon != null) {
-                                    Icon(
-                                        imageVector = stateIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .scale(stateScale),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                }
-                                Text(
-                                    text = stateText,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 13.sp
-                                )
-                            }
-                        } else {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
                     }
                 },
                 actions = {
@@ -214,6 +185,43 @@ fun ChatScreen(
                 onStartRecording = { viewModel.startListening() },
                 onStopRecording = { viewModel.stopListening() }
             )
+        }
+
+        // 状态浮层（居中显示在内容区上方）
+        if (stateText.isNotEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    modifier = Modifier.padding(padding),
+                    color = Color.Black.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        if (stateIcon != null) {
+                            Icon(
+                                imageVector = stateIcon,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .scale(stateScale),
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            text = stateText,
+                            color = Color.White,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+            }
         }
     }
 }
