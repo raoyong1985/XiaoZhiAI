@@ -1,8 +1,10 @@
 package com.xiaozhi.aiservice.di
 
+import android.app.Activity
 import android.content.Context
 import com.google.gson.Gson
 import com.xiaozhi.aiservice.data.audio.AudioService
+import com.xiaozhi.aiservice.data.camera.CameraService
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.ContactsRepositoryImpl
@@ -16,6 +18,7 @@ import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
 object AppContainer {
     lateinit var context: Context
+    lateinit var activity: Activity
     val gson: Gson by lazy { Gson() }
     val audioService: AudioService by lazy { AudioService() }
     val xiaoZhiBackendService: XiaoZhiBackendService by lazy { XiaoZhiBackendService(gson) }
@@ -28,6 +31,8 @@ object AppContainer {
     val contactsRepository: ContactsRepository by lazy {
         ContactsRepositoryImpl(context, gson)
     }
+
+    fun getCameraService(): CameraService = CameraService(activity)
 
     // 设备标识 - 延迟初始化
     private var _deviceId: String? = null

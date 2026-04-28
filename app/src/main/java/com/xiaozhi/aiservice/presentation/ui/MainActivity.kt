@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppContainer.context = this
+        AppContainer.activity = this
         AppContainer.initDeviceIds(this)
         checkAndRequestPermissions()
     }
@@ -59,7 +61,8 @@ class MainActivity : ComponentActivity() {
         val basePermissions = listOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.INTERNET,
-            Manifest.permission.ACCESS_NETWORK_STATE
+            Manifest.permission.ACCESS_NETWORK_STATE,
+            Manifest.permission.CAMERA
         )
 
         for (permission in basePermissions) {
