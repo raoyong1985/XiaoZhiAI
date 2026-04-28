@@ -133,16 +133,36 @@ class NativeOpusDecoder(
 
     /**
      * 接收 Opus 数据包，解码并播放
+     * 参考ESP32 websocket_protocol.cc BinaryProtocol3解析逻辑：
+     * - 剥离4字节BinaryProtocol3头（type[1] + reserved[1] + payload_size[2]大端）
+     * - 只把payload送给Opus解码器
      */
     fun decodePacket(opusData: ByteArray) {
         if (decoderPtr == 0L || !isPlaying.get()) return
 
         try {
+            // ===== BinaryProtocol3 头剥离（参考ESP32 websocket_protocol.cc） =====
+            // BinaryProtocol3: type(1) + reserved(1) + payload_size(2 big-endian) + payload[]
+            // ESP32 websocket_protocol.cc 第128-137行：只取 payload 部分送解码器
+            val audioPayload: ByteArray
+            if (opusData.size >= 4) {
+                val type = opusData[0].toInt() and 0xFF
+                val payloadSize = ((opusData[2].toInt() and 0xFF) shl 8) or (opusData[3].toInt() and 0xFF)
+                audioPayload = if (payloadSize > 0 && payloadSize + 4 <= opusData.size) {
+                    opusData.copyOfRange(4, 4 + payloadSize)
+                } else {
+                    // header解析失败，当作raw opus处理
+                    opusData
+                }
+            } else {
+                audioPayload = opusData
+            }
+
             // 分配 PCM 缓冲区
             val pcmShorts = ShortArray(serverFrameSamples)
 
             // 调用 native Opus 解码
-            val samples = nativeDecode(decoderPtr, opusData, pcmShorts, serverFrameSamples)
+            val samples = nativeDecode(decoderPtr, audioPayload, pcmShorts, serverFrameSamples)
 
             if (samples > 0) {
                 // ===== 重采样 24kHz → 16kHz（线性插值，与 Flutter 一致） =====

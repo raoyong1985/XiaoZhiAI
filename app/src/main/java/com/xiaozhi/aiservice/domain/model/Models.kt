@@ -46,7 +46,8 @@ data class ChatMessage(
     val status: MessageStatus = MessageStatus.SENT,
     val timestamp: Long = System.currentTimeMillis(),
     val duration: Int? = null,
-    val audioPath: String? = null
+    val audioPath: String? = null,
+    val isStreaming: Boolean = false  // AI正在流式回答中
 )
 
 /**
@@ -92,6 +93,20 @@ enum class InputMode {
 /**
  * 智能体联系人
  */
+/**
+ * 语音模式
+ */
+enum class VoiceMode(val serverValue: String, val displayName: String) {
+    AUTO("auto", "自动"),
+    MANUAL("manual", "手动"),
+    REALTIME("realtime", "实时");
+
+    companion object {
+        fun fromServerValue(value: String): VoiceMode =
+            entries.find { it.serverValue == value } ?: REALTIME
+    }
+}
+
 data class BotContact(
     val id: String = "",                       // 唯一标识（UUID）
     val name: String = "",                     // 联系人名称
@@ -99,5 +114,6 @@ data class BotContact(
     val otaUrl: String = "https://api.tenclass.net/xiaozhi/ota/", // OTA注册地址
     val deviceId: String = "",                 // 设备ID (MAC格式)
     val clientId: String = "",                 // 客户端ID (UUID格式)
-    val inputMode: InputMode = InputMode.VOICE
+    val inputMode: InputMode = InputMode.VOICE,
+    val voiceMode: VoiceMode = VoiceMode.REALTIME  // 语音模式
 )

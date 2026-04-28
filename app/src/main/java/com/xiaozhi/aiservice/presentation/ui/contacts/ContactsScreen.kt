@@ -2,20 +2,26 @@ package com.xiaozhi.aiservice.presentation.ui.contacts
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.net.Uri
@@ -26,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
+import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -305,46 +312,48 @@ fun AddEditContactDialog(
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: "wss://api.tenclass.net/xiaozhi/v1/") }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: "https://api.tenclass.net/xiaozhi/ota/") }
     var inputMode by remember { mutableStateOf(contact?.inputMode ?: InputMode.VOICE) }
+    var voiceMode by remember { mutableStateOf(contact?.voiceMode ?: VoiceMode.REALTIME) }
 
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(0.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // 标题栏（原生风格，左对齐无背景）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 24.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isEditing) "编辑智能体" else "添加智能体",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 顶部导航栏
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = if (isEditing) "编辑智能体" else "添加智能体",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭")
-                    }
-                }
+                )
 
-                Divider()
-
+                // 可滚动内容区
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // 基本配置
                     Text("基本配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
@@ -358,6 +367,7 @@ fun AddEditContactDialog(
                     )
 
                     // 输入模式
+                    Text("输入模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -367,21 +377,56 @@ fun AddEditContactDialog(
                             onClick = { inputMode = InputMode.VOICE },
                             label = {
                                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("语音模式")
+                                    Text("语音模式", fontSize = 14.sp)
                                 }
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.height(40.dp).weight(1f),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = MaterialTheme.colorScheme.outline,
+                                selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                            )
                         )
                         FilterChip(
                             selected = inputMode == InputMode.TEXT,
                             onClick = { inputMode = InputMode.TEXT },
                             label = {
                                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("文字模式")
+                                    Text("文字模式", fontSize = 14.sp)
                                 }
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.height(40.dp).weight(1f),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = MaterialTheme.colorScheme.outline,
+                                selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                            )
                         )
+                    }
+
+                    // 语音模式（仅语音输入模式时显示）
+                    if (inputMode == InputMode.VOICE) {
+                        Text("语音模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (mode in VoiceMode.entries) {
+                                val isSelected = voiceMode == mode
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { voiceMode = mode },
+                                    label = {
+                                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Text(mode.displayName, fontSize = 14.sp)
+                                        }
+                                    },
+                                    modifier = Modifier.height(40.dp).weight(1f),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        borderColor = MaterialTheme.colorScheme.outline,
+                                        selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                    )
+                                )
+                            }
+                        }
                     }
 
                     Divider()
@@ -409,8 +454,8 @@ fun AddEditContactDialog(
 
                     // ID 信息（只读）
                     Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
-                    Text("设备ID：$generatedDeviceId", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("客户端ID：$generatedClientId", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("设备ID：$generatedDeviceId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("客户端ID：$generatedClientId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
                     // 清除聊天记录（仅编辑时）
                     if (isEditing && onClearMessages != null) {
@@ -425,38 +470,49 @@ fun AddEditContactDialog(
                             Text("清除聊天记录")
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(80.dp))
                 }
 
-                Divider()
-
-                // 底部按钮栏
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.End
+                // 底部固定按钮栏
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    tonalElevation = 3.dp,
+                    shadowElevation = 8.dp
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            if (name.isBlank()) return@Button
-                            val newContact = BotContact(
-                                id = newContactId,
-                                name = name.trim(),
-                                serverUrl = serverUrl.trim(),
-                                otaUrl = otaUrl.trim(),
-                                deviceId = generatedDeviceId,
-                                clientId = generatedClientId,
-                                inputMode = inputMode
-                            )
-                            onSave(newContact)
-                        },
-                        enabled = name.isNotBlank()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                            .navigationBarsPadding(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("保存")
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.height(48.dp).weight(1f)
+                        ) {
+                            Text("取消", fontSize = 16.sp)
+                        }
+                        Button(
+                            onClick = {
+                                if (name.isBlank()) return@Button
+                                val newContact = BotContact(
+                                    id = newContactId,
+                                    name = name.trim(),
+                                    serverUrl = serverUrl.trim(),
+                                    otaUrl = otaUrl.trim(),
+                                    deviceId = generatedDeviceId,
+                                    clientId = generatedClientId,
+                                    inputMode = inputMode,
+                                    voiceMode = voiceMode
+                                )
+                                onSave(newContact)
+                            },
+                            enabled = name.isNotBlank(),
+                            modifier = Modifier.height(48.dp).weight(1f)
+                        ) {
+                            Text("保存", fontSize = 16.sp)
+                        }
                     }
                 }
             }

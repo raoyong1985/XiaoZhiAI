@@ -84,6 +84,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private val _emotion = MutableStateFlow("")
     val emotion: StateFlow<String> = _emotion.asStateFlow()
 
+    // 服务器Alert弹窗消息
+    private val _alert = MutableSharedFlow<String>(replay = 0)
+    val alert: SharedFlow<String> = _alert.asSharedFlow()
+
+    // 流式消息结束信号（sentence_end时发出消息ID）
+    private val _streamingEnd = MutableSharedFlow<String>(replay = 0)
+    val streamingEnd: SharedFlow<String> = _streamingEnd.asSharedFlow()
+
     private var isConnected = false
     private var serverUrl = ""
     private var otaUrl = ""
@@ -98,6 +106,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var reconnectAttempt = 0       // 重连次数
     private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
     private var isReconnecting = false     // 是否正在重连
+    private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
 
     /**
      * 连接服务器
@@ -515,22 +524,30 @@ class XiaoZhiBackendService(private val gson: Gson) {
                             _aiState.value = "idle"
                         }
                         "sentence_start" -> {
-                            _ttsText.value = ttsTextContent
-                        }
-                        "sentence_end" -> {
-                            // AI最终回复，发送给UI显示
-                            _textMessage.value = ttsTextContent
+                            // 流式TTS：立即发出消息，让用户看到AI正在"思考"
                             if (ttsTextContent.isNotEmpty()) {
+                                val id = java.util.UUID.randomUUID().toString()
+                                streamingMessageId = id
                                 val message = ChatMessage(
-                                    id = java.util.UUID.randomUUID().toString(),
+                                    id = id,
                                     content = ttsTextContent,
                                     type = MessageType.TEXT,
-                                    direction = MessageDirection.RECEIVED, // AI回复
+                                    direction = MessageDirection.RECEIVED,
                                     status = MessageStatus.SENT,
-                                    timestamp = System.currentTimeMillis()
+                                    timestamp = System.currentTimeMillis(),
+                                    isStreaming = true
                                 )
                                 scope.launch { _chatMessages.emit(message) }
                             }
+                            _ttsText.value = ttsTextContent
+                        }
+                        "sentence_end" -> {
+                            // 流式TTS final：通知UI停止动画，不重复发消息
+                            if (streamingMessageId.isNotEmpty()) {
+                                scope.launch { _streamingEnd.emit(streamingMessageId) }
+                                streamingMessageId = ""
+                            }
+                            _ttsText.value = ""
                         }
                     }
                 }
@@ -598,6 +615,15 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     _aiState.value = "idle"
                     val reason = json.get("reason")?.asString ?: ""
                     _textMessage.value = "[中断] $reason"
+                }
+                "alert" -> {
+                    // 服务器下发Alert弹窗消息
+                    val alertText = json.get("text")?.asString
+                        ?: json.get("message")?.asString
+                        ?: json.get("content")?.asString
+                        ?: "收到通知"
+                    Log.i(TAG, "收到Alert: $alertText")
+                    scope.launch { _alert.emit(alertText) }
                 }
             }
         } catch (e: Exception) {

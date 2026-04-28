@@ -118,6 +118,13 @@ class MessageRepositoryImpl(
         saveToDisk(contactId, getOrCreateFlow(contactId).value)
     }
 
+    override suspend fun finalizeStreamingMessage(contactId: String, messageId: String) {
+        updateMessages(contactId) { msgs ->
+            msgs.map { msg -> if (msg.id == messageId) msg.copy(isStreaming = false) else msg }
+        }
+        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+    }
+
     override suspend fun clearMessages(contactId: String) {
         updateMessages(contactId) { emptyList() }
         saveToDisk(contactId, emptyList())

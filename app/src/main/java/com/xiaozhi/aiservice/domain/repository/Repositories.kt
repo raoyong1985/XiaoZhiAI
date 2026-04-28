@@ -48,6 +48,7 @@ interface MessageRepository {
     suspend fun addReceivedMessage(contactId: String, message: ChatMessage)
     suspend fun addSentMessage(contactId: String, message: ChatMessage)
     suspend fun updateMessageStatus(contactId: String, messageId: String, status: com.xiaozhi.aiservice.domain.model.MessageStatus)
+    suspend fun finalizeStreamingMessage(contactId: String, messageId: String)  // sentence_end时停止流式动画
     suspend fun clearMessages(contactId: String)
 }
 
@@ -68,6 +69,9 @@ interface DeviceRepository {
 interface ConnectionRepository {
     val connectionState: StateFlow<ConnectionState>
     val aiState: StateFlow<AiState>
+    val emotion: StateFlow<String>  // AI情感状态
+    val alert: SharedFlow<String>    // 服务器Alert弹窗
+    val streamingEnd: SharedFlow<String>  // 流式消息结束信号（消息ID）
     val incomingMessages: SharedFlow<IncomingMessage>
     suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit>
     suspend fun disconnect()
@@ -75,8 +79,8 @@ interface ConnectionRepository {
     suspend fun sendAudio(audioData: ByteArray): Result<Unit>
 
     // 语音控制
-    suspend fun startListening()
-    suspend fun stopListening()
+    suspend fun startListening(mode: String = "realtime")  // auto / manual / realtime
+    suspend fun stopListening(userExplicitStop: Boolean = true)
 }
 
 /**

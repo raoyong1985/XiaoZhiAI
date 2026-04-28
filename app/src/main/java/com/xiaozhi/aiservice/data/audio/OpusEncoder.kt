@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  * 使用 Android 原生 MediaCodec 将 PCM 编码为 Opus
  */
 class OpusEncoder(
-    private val sampleRate: Int = 48000,
+    private val sampleRate: Int = 16000,  // 必须与 AudioService 录音采样率一致（16kHz）
     private val channels: Int = 1,
     private val bitRate: Int = 32000  // 32kbps（原来 16kbps 太低，语音细节丢失）
 ) {

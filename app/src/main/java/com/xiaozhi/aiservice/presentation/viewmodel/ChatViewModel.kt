@@ -9,6 +9,7 @@ import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
+import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
@@ -52,6 +53,28 @@ class ChatViewModel(
                 _uiState.update { it.copy(connectionState = state) }
             }
         }
+
+        viewModelScope.launch {
+            connectionRepository.emotion.collect { emotion ->
+                _uiState.update { it.copy(emotion = emotion) }
+            }
+        }
+
+        // 观察服务器Alert弹窗
+        viewModelScope.launch {
+            connectionRepository.alert.collect { alertText ->
+                _uiState.update { it.copy(alert = alertText) }
+            }
+        }
+
+        // 观察流式消息结束信号，停止对应消息的动画
+        viewModelScope.launch {
+            connectionRepository.streamingEnd.collect { messageId ->
+                if (currentContactId.isNotEmpty()) {
+                    messageRepository.finalizeStreamingMessage(currentContactId, messageId)
+                }
+            }
+        }
     }
 
     private fun observeMessages(contactId: String) {
@@ -62,9 +85,10 @@ class ChatViewModel(
         }
     }
 
-    fun connect(serverUrl: String, otaUrl: String, deviceId: String, clientId: String, contactId: String) {
+    fun connect(serverUrl: String, otaUrl: String, deviceId: String, clientId: String, contactId: String, voiceMode: VoiceMode) {
         Log.i(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
         currentContactId = contactId
+        _uiState.update { it.copy(voiceMode = voiceMode) }
         observeMessages(contactId)
         viewModelScope.launch {
             val config = ConnectionConfig(
@@ -97,9 +121,17 @@ class ChatViewModel(
 
     fun startListening() {
         viewModelScope.launch {
-            connectionRepository.startListening()
+            connectionRepository.startListening(_uiState.value.voiceMode.serverValue)
             _uiState.update { it.copy(isRecording = true) }
         }
+    }
+
+    fun setVoiceMode(mode: VoiceMode) {
+        _uiState.update { it.copy(voiceMode = mode) }
+    }
+
+    fun dismissAlert() {
+        _uiState.update { it.copy(alert = null) }
     }
 
     fun stopListening() {
@@ -138,5 +170,8 @@ data class ChatUiState(
     val isRecording: Boolean = false,
     val aiState: AiState = AiState.IDLE,
     val connectionState: ConnectionState = ConnectionState.Disconnected,
+    val emotion: String = "",   // AI情感：happy/sad/angry/worried/thoughtful/gentle/doubtful
+    val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 当前语音模式：auto / manual / realtime
+    val alert: String? = null,  // 服务器Alert弹窗内容（非null时显示）
     val error: String? = null
 )

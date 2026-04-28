@@ -32,6 +32,7 @@ import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
+import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
@@ -64,7 +65,7 @@ fun ChatScreen(
         }
     }
 
-    // 自动滚动到底部当新消息到达
+    // 首次加载或新消息到达时滚动到底部（最新消息在底部）
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
@@ -72,7 +73,7 @@ fun ChatScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id)
+        viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
     }
 
     // 顶部栏状态
@@ -109,6 +110,30 @@ fun ChatScreen(
         AiState.SPEAKING -> Icons.Default.VolumeUp
         AiState.PROCESSING -> Icons.Default.Psychology
         else -> null
+    }
+
+    // 情感emoji映射
+    val emotionEmoji = when (uiState.emotion.lowercase()) {
+        "happy" -> "😄"
+        "sad" -> "😢"
+        "angry" -> "😠"
+        "worried" -> "😟"
+        "thoughtful" -> "🤔"
+        "gentle" -> "😊"
+        "doubtful" -> "😕"
+        else -> null
+    }
+
+    // Alert Snackbar 状态
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(uiState.alert) {
+        uiState.alert?.let { alertText ->
+            snackbarHostState.showSnackbar(
+                message = alertText,
+                duration = SnackbarDuration.Short
+            )
+            viewModel.dismissAlert()
+        }
     }
 
     Scaffold(
@@ -164,6 +189,7 @@ fun ChatScreen(
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
@@ -210,7 +236,14 @@ fun ChatScreen(
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val isFromMe = message.direction == MessageDirection.SENT
-    
+
+    // 流式消息：透明度 0.5→1 呼吸动画（统一的，避免每个气泡独立动画导致全局重绘闪烁）
+    val streamingAlpha by animateFloatAsState(
+        targetValue = if (message.isStreaming) 1f else 0.5f,
+        animationSpec = tween(400),
+        label = "streaming_alpha"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -228,7 +261,10 @@ private fun MessageBubble(message: ChatMessage) {
                         bottomEnd = if (isFromMe) 4.dp else 16.dp
                     )
                 )
-                .background(if (isFromMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                .background(
+                    if (isFromMe) MaterialTheme.colorScheme.primary.copy(alpha = streamingAlpha)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (message.isStreaming) streamingAlpha else 1f)
+                )
                 .padding(12.dp)
         ) {
             Text(
