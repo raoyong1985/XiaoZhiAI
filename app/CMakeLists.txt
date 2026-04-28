@@ -2,13 +2,14 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("native_opus_decoder")
 
-# Include path for opus headers
-include_directories(/home/ethan/.pub-cache/hosted/pub.dev/opus_flutter_android-3.0.1/android/libopus/include)
+# Include path for opus headers (opus.h is in opus/ subdir)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/main/cpp/include)
+
+# Import prebuilt opus library
 add_library(opus SHARED IMPORTED)
 set_target_properties(opus PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}/libopus.so)
-
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/main/jni)
+    IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}/libopus.so
+)
 
 # Our JNI wrapper
 add_library(native_opus_decoder SHARED

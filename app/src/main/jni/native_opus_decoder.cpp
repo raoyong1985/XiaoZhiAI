@@ -1,5 +1,5 @@
 #include <jni.h>
-#include <opus.h>
+#include <opus/opus.h>
 #include <android/log.h>
 #include <stdint.h>
 #include <sys/time.h>

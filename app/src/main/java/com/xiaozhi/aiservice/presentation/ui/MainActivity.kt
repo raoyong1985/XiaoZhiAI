@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
@@ -30,6 +31,10 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
     }
+
+    private fun debugLogMainActivity(msg: String) {
+        if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(TAG, msg)
+    }
     private lateinit var chatViewModel: ChatViewModel
     private lateinit var contactsViewModel: ContactsViewModel
 
@@ -37,14 +42,9 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
-        val networkGranted = permissions[Manifest.permission.INTERNET] == true
-        if (audioGranted && networkGranted) {
-            initializeViewModels()
-        } else {
-            val denied = permissions.filterValues { !it }.keys.joinToString(", ")
-            Toast.makeText(this, "权限不足，无法运行: $denied", Toast.LENGTH_LONG).show()
-            Log.e(TAG, "权限被拒绝: $denied")
-        }
+        debugLogMainActivity("权限结果: RECORD_AUDIO=$audioGranted")
+        // 网络类权限安装时已授权，只要有 RECORD_AUDIO 结果就继续
+        initializeViewModels()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

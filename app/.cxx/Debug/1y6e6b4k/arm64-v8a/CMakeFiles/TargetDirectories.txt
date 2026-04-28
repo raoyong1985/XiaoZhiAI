@@ -1,3 +1,0 @@
-/home/ethan/XiaoZhiAI/app/.cxx/Debug/1y6e6b4k/arm64-v8a/CMakeFiles/native_opus_decoder.dir
-/home/ethan/XiaoZhiAI/app/.cxx/Debug/1y6e6b4k/arm64-v8a/CMakeFiles/edit_cache.dir
-/home/ethan/XiaoZhiAI/app/.cxx/Debug/1y6e6b4k/arm64-v8a/CMakeFiles/rebuild_cache.dir

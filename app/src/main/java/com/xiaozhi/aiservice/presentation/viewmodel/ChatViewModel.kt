@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -17,6 +18,13 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 private const val TAG = "ChatViewModel"
+
+/**
+ * 条件日志：仅在 debug 版本输出
+ */
+private fun debugLogVM(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
+}
 
 class ChatViewModel(
     private val connectionRepository: ConnectionRepository,
@@ -86,7 +94,7 @@ class ChatViewModel(
     }
 
     fun connect(serverUrl: String, otaUrl: String, deviceId: String, clientId: String, contactId: String, voiceMode: VoiceMode) {
-        Log.i(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
+        debugLogVM(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
         currentContactId = contactId
         _uiState.update { it.copy(voiceMode = voiceMode) }
         observeMessages(contactId)
@@ -98,7 +106,7 @@ class ChatViewModel(
                 clientId = clientId
             )
             pendingConfig = config
-            Log.i(TAG, "connect: about to call connectionRepository.connect()")
+            debugLogVM(TAG, "connect: about to call connectionRepository.connect()")
             connectionRepository.connect(config, contactId)
         }
     }
@@ -113,7 +121,7 @@ class ChatViewModel(
         val config = pendingConfig ?: return
         val contactId = currentContactId
         if (contactId.isBlank()) return
-        Log.i(TAG, "tryReconnect: attempting reconnection...")
+        debugLogVM(TAG, "tryReconnect: attempting reconnection...")
         viewModelScope.launch {
             connectionRepository.connect(config, contactId)
         }
@@ -143,7 +151,7 @@ class ChatViewModel(
 
     fun sendTextMessage(text: String) {
         viewModelScope.launch {
-            Log.i(TAG, "sendTextMessage: 发送文本: $text")
+            debugLogVM(TAG, "sendTextMessage: 发送文本: $text")
             connectionRepository.sendTextMessage(currentContactId, text)
         }
     }
@@ -169,7 +177,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isRecording: Boolean = false,
     val aiState: AiState = AiState.IDLE,
-    val connectionState: ConnectionState = ConnectionState.Disconnected,
+    val connectionState: com.xiaozhi.aiservice.domain.repository.ConnectionState = com.xiaozhi.aiservice.domain.repository.ConnectionState.Disconnected,
     val emotion: String = "",   // AI情感：happy/sad/angry/worried/thoughtful/gentle/doubtful
     val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 当前语音模式：auto / manual / realtime
     val alert: String? = null,  // 服务器Alert弹窗内容（非null时显示）

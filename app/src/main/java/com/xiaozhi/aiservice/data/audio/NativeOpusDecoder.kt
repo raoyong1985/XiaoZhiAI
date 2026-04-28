@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.util.Log
+import com.xiaozhi.aiservice.BuildConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
@@ -12,6 +13,21 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.abs
+
+/**
+ * 条件日志：仅在 debug 版本输出
+ */
+private fun debugLog(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
+}
+
+private fun debugLogE(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.e(tag, msg)
+}
+
+private fun debugLogW(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.w(tag, msg)
+}
 
 /**
  * 使用 native libopus 解码 + flutter_pcm_player 风格的 AudioTrack
@@ -54,10 +70,10 @@ class NativeOpusDecoder(
         try {
             decoderPtr = nativeCreateDecoder(serverSampleRate, channels)
             if (decoderPtr == 0L) {
-                Log.e(TAG, "Failed to create native Opus decoder")
+                debugLogE(TAG, "Failed to create native Opus decoder")
                 return
             }
-            Log.i(TAG, "Native Opus decoder created: ${serverSampleRate}Hz, $channels ch")
+            debugLog(TAG, "Native Opus decoder created: ${serverSampleRate}Hz, $channels ch")
 
             // ===== 匹配 flutter_pcm_player 的 AudioTrack 配置 =====
             // PcmPlayer.java uses:
@@ -72,7 +88,7 @@ class NativeOpusDecoder(
             )
             // 16倍缓冲：约 960ms @ 16kHz，足以掩盖网络抖动和GC暂停
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
-            Log.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
+            debugLog(TAG, "minBuffer=$minBuffer, using=$bufferSize")
 
             audioTrack = AudioTrack(
                 AudioManager.STREAM_MUSIC,
@@ -83,16 +99,23 @@ class NativeOpusDecoder(
                 AudioTrack.MODE_STREAM
             )
 
+            if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
+                debugLogE(TAG, "AudioTrack 初始化失败")
+                audioTrack?.release()
+                audioTrack = null
+                return
+            }
+
             audioTrack?.play()
             isPlaying.set(true)
 
             warmUpPlayer()
 
-            Log.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
+            debugLog(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
             playThread = Thread {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
-                Log.i(TAG, "Play thread started")
+                debugLog(TAG, "Play thread started")
                 while (isPlaying.get()) {
                     try {
                         // poll 带超时，队列空时不阻塞音频线程
@@ -100,21 +123,20 @@ class NativeOpusDecoder(
                         if (data.isNotEmpty()) {
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
                             if (written < 0) {
-                                Log.e(TAG, "AudioTrack write error: $written")
+                                debugLogE(TAG, "AudioTrack write error: $written")
                             }
                         }
                     } catch (e: InterruptedException) {
                         break
                     } catch (e: Exception) {
-                        Log.e(TAG, "play err: ${e.message}")
+                        debugLogE(TAG, "play err: ${e.message}")
                     }
                 }
-                Log.i(TAG, "Play thread ended")
+                debugLog(TAG, "Play thread ended")
             }.apply { start() }
 
         } catch (e: Exception) {
-            Log.e(TAG, "init failed: ${e.message}")
-            e.printStackTrace()
+            debugLogE(TAG, "init failed: ${e.message}")
         }
     }
 
@@ -125,9 +147,9 @@ class NativeOpusDecoder(
             val warmupSamplesPerFrame = clientSampleRate * 60 / 1000  // 960 @ 16kHz
             val warmupData = ByteArray(warmupSamplesPerFrame * warmupFrames * 2)
             audioTrack?.write(warmupData, 0, warmupData.size)
-            Log.i(TAG, "warmup ${warmupFrames} frames ok (${warmupData.size} bytes)")
+            debugLog(TAG, "warmup ${warmupFrames} frames ok (${warmupData.size} bytes)")
         } catch (e: Exception) {
-            Log.e(TAG, "warmup failed: ${e.message}")
+            debugLogE(TAG, "warmup failed: ${e.message}")
         }
     }
 
@@ -169,9 +191,9 @@ class NativeOpusDecoder(
                 val t0 = System.nanoTime()
                 val pcmResampled = resamplePcm(pcmShorts, samples, serverSampleRate, clientSampleRate)
                 val resampleUs = (System.nanoTime() - t0) / 1000
-                if (resampleUs > 5000) {
-                    Log.w(TAG, "resample 慢: ${resampleUs}us (samples=$samples)")
-                }
+            if (resampleUs > 5000) {
+                     debugLogW(TAG, "resample 慢: ${resampleUs}us (samples=$samples)")
+                 }
 
                 // ===== AGC 处理（与 Flutter 一致） =====
                 val pcmLimiter = applyLimiter(pcmResampled)
@@ -185,11 +207,11 @@ class NativeOpusDecoder(
                 if (audioQueue.remainingCapacity() > 0) {
                     audioQueue.offer(pcmBytes)
                 } else {
-                    Log.w(TAG, "queue full")
+                    debugLogW(TAG, "queue full")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "decode err: ${e.message}")
+            debugLogE(TAG, "decode err: ${e.message}")
         }
     }
 
@@ -272,7 +294,7 @@ class NativeOpusDecoder(
                 decoderPtr = 0L
             }
         } catch (e: Exception) {
-            Log.e(TAG, "release err: ${e.message}")
+            debugLogE(TAG, "release err: ${e.message}")
         }
     }
 

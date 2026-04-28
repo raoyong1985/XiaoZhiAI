@@ -10,6 +10,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 private val Context.messagesDataStore: DataStore<Preferences> by preferencesDataStore(name = "messages")
 
@@ -25,8 +29,10 @@ class MessageRepositoryImpl(
     private val gson: Gson
 ) : MessageRepository {
 
-    // 每个联系人独立的 MutableStateFlow（内存缓存）
-    private val messagesByContact = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // 每个联系人独立的 MutableStateFlow（内存缓存），使用 ConcurrentHashMap 保证并发安全
+    private val messagesByContact = ConcurrentHashMap<String, MutableStateFlow<List<ChatMessage>>>()
 
     companion object {
         // 用联系人ID作为key存储消息列表的JSON
@@ -42,7 +48,7 @@ class MessageRepositoryImpl(
     override fun getMessages(contactId: String): StateFlow<List<ChatMessage>> {
         // 首次加载时异步从持久化存储恢复，不阻塞调用方
         if (getOrCreateFlow(contactId).value.isEmpty()) {
-            kotlinx.coroutines.GlobalScope.launch {
+            scope.launch {
                 val stored = loadFromDisk(contactId)
                 getOrCreateFlow(contactId).value = stored
             }

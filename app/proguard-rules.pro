@@ -1,10 +1,9 @@
 # Add project specific ProGuard rules here.
 
-# Keep MQTT classes
--keep class org.eclipse.paho.** { *; }
-
-# Keep WebSocket
--keep class org.java-websocket.** { *; }
+# Keep OkHttp
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
 
 # Keep Gson
 -keepattributes Signature
@@ -16,4 +15,16 @@
 
 # Keep data classes
 -keep class com.xiaozhi.aiservice.domain.model.** { *; }
--keep class com.xiaozhi.aiservice.data.remote.** { *; }
+
+# Keep JNI native methods
+-keep class com.xiaozhi.aiservice.data.audio.NativeOpusDecoder { *; }
+
+# Keep DataStore Preferences keys (generated class)
+-keep class com.xiaozhi.aiservice.data.repository.MessageRepositoryImpl$** { *; }
+
+# Keep WebSocket callback
+-keep class com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService$** { *; }
+
+# Keep all kotlinx.coroutines for Flow/StateFlow
+-keep class kotlinx.coroutines.** { *; }
+-dontwarn kotlinx.coroutines.**

@@ -19,9 +19,6 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Phone state for device ID (optional, Android 10+) -->
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-
     <!-- Audio permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -29,16 +26,11 @@
     <!-- Notification for Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Storage for chat history -->
+    <!-- Storage for chat history (Android 9 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+        android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-
-    <!-- Camera for video call (future) -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+        android:maxSdkVersion="28" />
 
     <!-- Vibration for notifications -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -57,7 +49,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.XiaoZhiAI"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true"
         tools:targetApi="34">
 

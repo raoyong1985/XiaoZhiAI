@@ -4,17 +4,31 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
-import android.media.AudioFormat
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
+import com.xiaozhi.aiservice.BuildConfig
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
+
+/**
+ * 条件日志：仅在 debug 版本输出
+ */
+private fun debugLogAudio(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
+}
+
+private fun debugLogAudioE(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.e(tag, msg)
+}
+
+private fun debugLogAudioW(tag: String, msg: String) {
+    if (BuildConfig.ENABLE_DEBUG_LOG) Log.w(tag, msg)
+}
 
 class AudioService {
 
@@ -45,8 +59,6 @@ class AudioService {
     private var onSilenceDetected: (() -> Unit)? = null
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
-    private var acousticEchoCanceler: AcousticEchoCanceler? = null
-    private var noiseSuppressor: NoiseSuppressor? = null
 
     fun init(context: Context) {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -58,8 +70,9 @@ class AudioService {
      */
     fun requestAudioFocus(): Boolean {
         if (audioFocusRequest != null) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
         return try {
-            val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val builder = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -68,30 +81,27 @@ class AudioService {
                 )
                 .setAcceptsDelayedFocusGain(true)
                 .setOnAudioFocusChangeListener { }
-                .build()
+            val focusRequest = builder.build()
             val result = audioManager?.requestAudioFocus(focusRequest)
             if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 audioFocusRequest = focusRequest
-                Log.i(TAG, "AudioFocus granted")
+                debugLogAudio(TAG, "AudioFocus granted")
                 true
             } else {
-                Log.w(TAG, "AudioFocus request failed")
+                debugLogAudioW(TAG, "AudioFocus request failed")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "AudioFocus error: ${e.message}")
+            debugLogAudioE(TAG, "AudioFocus error: ${e.message}")
             false
         }
     }
 
-    /**
-     * 放弃音频焦点
-     */
     fun abandonAudioFocus() {
         audioFocusRequest?.let {
             try {
                 audioManager?.abandonAudioFocusRequest(it)
-                Log.i(TAG, "AudioFocus abandoned")
+                debugLogAudio(TAG, "AudioFocus abandoned")
             } catch (_: Exception) {}
         }
         audioFocusRequest = null
@@ -106,7 +116,7 @@ class AudioService {
 
     fun setSampleRate(rate: Int) {
         sampleRate = rate
-        Log.i(TAG, "设置采样率: $rate")
+        debugLogAudio(TAG, "设置采样率: $rate")
     }
 
     fun getSampleRate(): Int = sampleRate
@@ -126,8 +136,8 @@ class AudioService {
     fun startRecording(onAudioData: (ByteArray) -> Unit, enableVAD: Boolean = true): Boolean {
         if (isRecording) return false
 
-        // 16kHz 录音采样率（与 ESP32 AFE 音频处理器一致，语音识别最优化）
-        val recordSampleRate = 16000
+        // 使用设置的采样率（与 ESP32 AFE 音频处理器一致，语音识别最优化）
+        val recordSampleRate = sampleRate
         val minBuffer = AudioRecord.getMinBufferSize(
             recordSampleRate, CHANNEL_CONFIG, AUDIO_FORMAT
         )
@@ -145,7 +155,7 @@ class AudioService {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord初始化失败，尝试降级到MIC")
+                debugLogAudioE(TAG, "AudioRecord初始化失败，尝试降级到MIC")
                 // 降级到 MIC（部分设备不支持 VOICE_COMMUNICATION）
                 audioRecord = AudioRecord(
                     MediaRecorder.AudioSource.MIC,
@@ -155,7 +165,7 @@ class AudioService {
                     bufferSize
                 )
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "AudioRecord降级初始化也失败")
+                    debugLogAudioE(TAG, "AudioRecord降级初始化也失败")
                     return false
                 }
             }
@@ -213,7 +223,7 @@ class AudioService {
                                 if (consecutiveSilenceBuffers >= SILENCE_CONSECUTIVE_BUFFERS &&
                                     now - silenceStartTime >= SILENCE_TIMEOUT_MS &&
                                     speechDuration >= MIN_SPEECH_DURATION_MS) {
-                                    Log.i(TAG, "VAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（RMS=$rmsEnergy, 语音持续${speechDuration}ms）")
+                                    debugLogAudio(TAG, "VAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（RMS=$rmsEnergy, 语音持续${speechDuration}ms）")
                                     onSilenceDetected?.invoke()
                                     break
                                 }
@@ -224,13 +234,13 @@ class AudioService {
             }
             recordingThread?.start()
 
-            Log.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 降级阈值: $SILENCE_RMS_THRESHOLD")
+            debugLogAudio(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 降级阈值: $SILENCE_RMS_THRESHOLD")
             return true
         } catch (e: SecurityException) {
-            Log.e(TAG, "录音权限被拒绝: ${e.message}")
+            debugLogAudioE(TAG, "录音权限被拒绝: ${e.message}")
             return false
         } catch (e: Exception) {
-            Log.e(TAG, "录音启动失败: ${e.message}")
+            debugLogAudioE(TAG, "录音启动失败: ${e.message}")
             return false
         }
     }
@@ -262,7 +272,7 @@ class AudioService {
         } catch (_: Exception) {}
         audioRecord = null
 
-        Log.i(TAG, "录音停止")
+        debugLogAudio(TAG, "录音停止")
     }
 
     fun release() {

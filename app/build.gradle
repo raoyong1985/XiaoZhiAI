@@ -1,7 +1,6 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'kotlin-kapt'
 }
 
 android {
@@ -12,8 +11,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "1.031"
+        versionCode 5
+        versionName "1.0.32"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -34,11 +33,14 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            buildConfigField "boolean", "ENABLE_DEBUG_LOG", "false"
         }
         debug {
             debuggable true
+            buildConfigField "boolean", "ENABLE_DEBUG_LOG", "true"
         }
     }
 
@@ -53,7 +55,7 @@ android {
 
     buildFeatures {
         compose true
-        viewBinding true
+        buildConfig true
     }
 
     externalNativeBuild {
@@ -101,13 +103,8 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-    // Network
-    implementation 'org.java-websocket:Java-WebSocket:1.5.4'
+    // Network (OkHttp includes WebSocket support)
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
-    // Audio
-    // DataStore
-    implementation 'androidx.datastore:datastore-preferences:1.0.0'
 
     // JSON
     implementation 'com.google.code.gson:gson:2.10.1'
@@ -115,11 +112,10 @@ dependencies {
     // Image loading
     implementation 'io.coil-kt:coil-compose:2.5.0'
 
+    // DataStore
+    implementation "androidx.datastore:datastore-preferences:1.0.0"
+
     // Debug
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
-}
-
-kapt {
-    correctErrorTypes true
 }

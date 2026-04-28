@@ -52,7 +52,7 @@ fun ContactsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("智能体", fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                    Text("联系人", fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -309,8 +309,8 @@ fun AddEditContactDialog(
 ) {
     val isEditing = contact != null
     var name by remember { mutableStateOf(contact?.name ?: "") }
-    var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: "wss://api.tenclass.net/xiaozhi/v1/") }
-    var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: "https://api.tenclass.net/xiaozhi/ota/") }
+    var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().serverUrl) }
+    var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().otaUrl) }
     var inputMode by remember { mutableStateOf(contact?.inputMode ?: InputMode.VOICE) }
     var voiceMode by remember { mutableStateOf(contact?.voiceMode ?: VoiceMode.REALTIME) }
 
