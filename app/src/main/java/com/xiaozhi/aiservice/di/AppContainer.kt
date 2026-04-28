@@ -8,9 +8,11 @@ import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.ContactsRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.DeviceRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.MessageRepositoryImpl
+import com.xiaozhi.aiservice.data.repository.GroupChatRepositoryImpl
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.DeviceRepository
+import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -18,15 +20,35 @@ object AppContainer {
     lateinit var context: Context
     val gson: Gson by lazy { Gson() }
     val audioService: AudioService by lazy { AudioService() }
-    val xiaoZhiBackendService: XiaoZhiBackendService by lazy { XiaoZhiBackendService(gson) }
+    
+    // 支持多个WebSocket连接（群聊功能）
+    private val backendServices = mutableMapOf<String, XiaoZhiBackendService>()
+    fun getBackendService(contactId: String): XiaoZhiBackendService {
+        return backendServices.getOrPut(contactId) { XiaoZhiBackendService(gson) }
+    }
 
     val messageRepository: MessageRepository by lazy { MessageRepositoryImpl(context, gson) }
     val deviceRepository: DeviceRepository by lazy { DeviceRepositoryImpl() }
-    val connectionRepository: ConnectionRepository by lazy {
-        ConnectionRepositoryImpl(xiaoZhiBackendService, audioService, messageRepository)
+    
+    // 群聊连接Repository（每个群聊一个）
+    private val groupConnections = mutableMapOf<String, ConnectionRepository>()
+    fun getGroupConnectionRepository(groupId: String): ConnectionRepository {
+        return groupConnections.getOrCreate(groupId) {
+            val service = XiaoZhiBackendService(gson)
+            ConnectionRepositoryImpl(service, audioService, messageRepository)
+        }
     }
+    
+    val connectionRepository: ConnectionRepository by lazy {
+        ConnectionRepositoryImpl(getBackendService("default"), audioService, messageRepository)
+    }
+    
     val contactsRepository: ContactsRepository by lazy {
         ContactsRepositoryImpl(context, gson)
+    }
+    
+    val groupChatRepository: GroupChatRepository by lazy {
+        GroupChatRepositoryImpl(context, gson)
     }
 
     // 设备标识 - 延迟初始化
@@ -50,4 +72,9 @@ object AppContainer {
 
     val clientId: String
         get() = _clientId ?: "unknown"
+}
+
+// 扩展函数：获取或创建
+fun <K, V> MutableMap<K, V>.getOrCreate(key: K, create: () -> V): V {
+    return this.getOrPut(key) { create() }
 }

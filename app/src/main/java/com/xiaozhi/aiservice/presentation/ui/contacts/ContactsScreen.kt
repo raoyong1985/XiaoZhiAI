@@ -40,7 +40,8 @@ import com.xiaozhi.aiservice.utils.DeviceIdHelper
 @Composable
 fun ContactsScreen(
     viewModel: ContactsViewModel,
-    onContactClick: (BotContact) -> Unit
+    onContactClick: (BotContact) -> Unit,
+    onGroupChatClick: () -> Unit
 ) {
     val contacts by viewModel.contacts.collectAsState()
     val context = LocalContext.current
@@ -74,11 +75,22 @@ fun ContactsScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = "添加联系人")
+                FloatingActionButton(
+                    onClick = onGroupChatClick,
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Icon(Icons.Default.Group, contentDescription = "群聊")
+                }
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "添加联系人")
+                }
             }
         },
         containerColor = MaterialTheme.colorScheme.surface

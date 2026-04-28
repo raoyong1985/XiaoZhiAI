@@ -23,6 +23,9 @@ import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
 import com.xiaozhi.aiservice.presentation.ui.chat.ChatScreen
 import com.xiaozhi.aiservice.presentation.ui.contacts.ContactsScreen
+import com.xiaozhi.aiservice.presentation.ui.contacts.CreateGroupScreen
+import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatListScreen
+import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatScreen
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 
@@ -126,24 +129,60 @@ private fun MainNavigation(
     contactsViewModel: ContactsViewModel
 ) {
     var selectedContact by remember { mutableStateOf<BotContact?>(null) }
+    var showGroupChatList by remember { mutableStateOf(false) }
+    var selectedGroupId by remember { mutableStateOf<String?>(null) }
+    var showCreateGroup by remember { mutableStateOf(false) }
 
     // 处理返回键
-    BackHandler(enabled = selectedContact != null) {
-        selectedContact = null
+    BackHandler(enabled = selectedGroupId != null || showCreateGroup || showGroupChatList || selectedContact != null) {
+        when {
+            selectedGroupId != null -> selectedGroupId = null
+            showCreateGroup -> showCreateGroup = false
+            showGroupChatList -> showGroupChatList = false
+            selectedContact != null -> selectedContact = null
+        }
     }
 
-    if (selectedContact != null) {
-        ChatScreen(
-            viewModel = chatViewModel,
-            contact = selectedContact as BotContact,
-            onNavigateBack = { selectedContact = null }
-        )
-    } else {
-        ContactsScreen(
-            viewModel = contactsViewModel,
-            onContactClick = { contact ->
-                selectedContact = contact
-            }
-        )
+    when {
+        selectedGroupId != null -> {
+            GroupChatScreen(
+                groupId = selectedGroupId!!,
+                onNavigateBack = { selectedGroupId = null }
+            )
+        }
+        showCreateGroup -> {
+            CreateGroupScreen(
+                onNavigateBack = { showCreateGroup = false },
+                onGroupCreated = { groupId ->
+                    showCreateGroup = false
+                    selectedGroupId = groupId
+                }
+            )
+        }
+        showGroupChatList -> {
+            GroupChatListScreen(
+                onGroupClick = { groupId ->
+                    selectedGroupId = groupId
+                },
+                onCreateGroupClick = { showCreateGroup = true },
+                onNavigateBack = { showGroupChatList = false }
+            )
+        }
+        selectedContact != null -> {
+            ChatScreen(
+                viewModel = chatViewModel,
+                contact = selectedContact as BotContact,
+                onNavigateBack = { selectedContact = null }
+            )
+        }
+        else -> {
+            ContactsScreen(
+                viewModel = contactsViewModel,
+                onContactClick = { contact ->
+                    selectedContact = contact
+                },
+                onGroupChatClick = { showGroupChatList = true }
+            )
+        }
     }
 }

@@ -117,3 +117,29 @@ data class BotContact(
     val inputMode: InputMode = InputMode.VOICE,
     val voiceMode: VoiceMode = VoiceMode.REALTIME  // 语音模式
 )
+
+/**
+ * 群聊
+ */
+data class GroupChat(
+    val id: String = "",                       // 群聊唯一标识（UUID）
+    val name: String = "",                     // 群聊名称
+    val botIds: List<String> = emptyList(),    // 群内智能体ID列表
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * 群聊消息（扩展普通消息，增加智能体信息）
+ */
+data class GroupMessage(
+    val id: String = "",
+    val groupId: String = "",                  // 所属群聊ID
+    val botId: String = "",                    // 发送消息的智能体ID（空表示用户消息）
+    val botName: String = "",                  // 智能体名称
+    val content: String = "",
+    val type: MessageType = MessageType.TEXT,
+    val direction: MessageDirection = MessageDirection.RECEIVED,
+    val status: MessageStatus = MessageStatus.SENT,
+    val timestamp: Long = System.currentTimeMillis(),
+    val isStreaming: Boolean = false
+)
