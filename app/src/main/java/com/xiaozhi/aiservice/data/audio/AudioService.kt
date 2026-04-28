@@ -18,11 +18,11 @@ class AudioService {
 
     companion object {
         private const val TAG = "AudioService"
-        const val DEFAULT_SAMPLE_RATE = 16000
+        const val DEFAULT_SAMPLE_RATE = 48000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val SILENCE_THRESHOLD = 500
-        private const val SILENCE_TIMEOUT_MS = 3000L
+    private const val SILENCE_THRESHOLD = 200   // 降低阈值（原来500太高，容易把正常语音当静音切掉）
+    private const val SILENCE_TIMEOUT_MS = 4000L  // 静音超时稍微延长
     }
 
     private var audioRecord: AudioRecord? = null
@@ -31,12 +31,9 @@ class AudioService {
     private var sampleRate = DEFAULT_SAMPLE_RATE
     private var onSilenceDetected: (() -> Unit)? = null
     private var audioManager: AudioManager? = null
-    private var context: Context? = null
-    private var isMuted = false
     private var audioFocusRequest: AudioFocusRequest? = null
 
     fun init(context: Context) {
-        this.context = context.applicationContext
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
 
@@ -114,16 +111,18 @@ class AudioService {
     fun startRecording(onAudioData: (ByteArray) -> Unit, enableVAD: Boolean = true): Boolean {
         if (isRecording) return false
 
-        // 使用 16000Hz 录音（与服务器上行一致），缓冲区 4 倍防止丢帧
-        val recordSampleRate = 16000
+        // 录音采样率改为 48kHz（与 Opus 编码器一致，更高保真）
+        val recordSampleRate = 48000
         val minBuffer = AudioRecord.getMinBufferSize(
             recordSampleRate, CHANNEL_CONFIG, AUDIO_FORMAT
         )
-        val bufferSize = maxOf(minBuffer * 4, 8192)  // 至少 8KB 缓冲
+        val bufferSize = maxOf(minBuffer * 4, 16384)  // 16KB 缓冲
 
         try {
+            // VOICE_RECOGNITION 禁用 AEC/NS，保留更干净的语音（对 STT 更好）
+            // 原来用 VOICE_COMMUNICATION 会经过 AEC 处理，导致语音失真
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION, // 含 AEC
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 recordSampleRate,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,

@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class ContactsViewModel(
     private val contactsRepository: ContactsRepository
@@ -37,8 +36,6 @@ class ContactsViewModel(
             AppContainer.messageRepository.clearMessages(contactId)
         }
     }
-
-    fun generateId(): String = UUID.randomUUID().toString()
 
     class Factory : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

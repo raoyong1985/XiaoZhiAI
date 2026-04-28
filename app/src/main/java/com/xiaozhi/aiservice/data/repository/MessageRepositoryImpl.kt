@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 private val Context.messagesDataStore: DataStore<Preferences> by preferencesDataStore(name = "messages")
@@ -39,9 +40,9 @@ class MessageRepositoryImpl(
     }
 
     override fun getMessages(contactId: String): StateFlow<List<ChatMessage>> {
-        // 首次加载时从持久化存储恢复
+        // 首次加载时异步从持久化存储恢复，不阻塞调用方
         if (getOrCreateFlow(contactId).value.isEmpty()) {
-            kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.GlobalScope.launch {
                 val stored = loadFromDisk(contactId)
                 getOrCreateFlow(contactId).value = stored
             }

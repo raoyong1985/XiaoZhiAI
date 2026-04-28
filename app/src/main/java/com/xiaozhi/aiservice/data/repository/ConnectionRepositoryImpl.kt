@@ -49,6 +49,9 @@ class ConnectionRepositoryImpl(
     // 当前联系人ID，用于消息路由
     private var currentContactId: String = ""
 
+    // 跟踪我们自己启动的录音（用于 AI 说话时自动停止，避免回声）
+    private var weStartedRecording = false
+
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private var opusDecoder: NativeOpusDecoder? = null
     // Opus 编码器（录音用）
@@ -72,12 +75,25 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.aiState.collect { state ->
-                _aiState.value = when (state.lowercase()) {
+                val newAiState = when (state.lowercase()) {
                     "listening" -> AiState.LISTENING
                     "speaking" -> AiState.SPEAKING
                     "processing" -> AiState.PROCESSING
                     else -> AiState.IDLE
                 }
+
+                // AI 开始说话时，自动停止我们启动的录音（防止麦克风采集到 AI 自己的声音发往 STT）
+                if (newAiState == AiState.SPEAKING && weStartedRecording) {
+                    Log.i(TAG, "AI 开始说话，自动停止录音以避免回声")
+                    audioService.stopRecording()
+                    audioService.abandonAudioFocus()
+                    opusEncoder?.stop()
+                    opusEncoder = null
+                    backendService.sendListenStop()
+                    weStartedRecording = false
+                }
+
+                _aiState.value = newAiState
             }
         }
 
@@ -122,9 +138,6 @@ class ConnectionRepositoryImpl(
         scope.launch {
             backendService.textMessage.collect { text ->
                 Log.i(TAG, "收到文本消息: $text")
-                if (text.isNotEmpty()) {
-                    // 旧的textMessage流程保留，但已经不被使用了
-                }
             }
         }
 
@@ -222,6 +235,7 @@ class ConnectionRepositoryImpl(
     override suspend fun startListening() {
         backendService.sendListenStart("realtime")
         _aiState.value = AiState.LISTENING
+        weStartedRecording = true  // 标记为我们启动的录音，AI 说话时自动停止
         
         // 设置静音自动停止回调
         audioService.setOnSilenceDetected {
@@ -230,8 +244,8 @@ class ConnectionRepositoryImpl(
             }
         }
         
-        // 启动 Opus 编码器
-        val sampleRate = 16000
+        // 启动 Opus 编码器（48kHz，与 AudioService 录音采样率一致）
+        val sampleRate = 48000
         audioService.requestAudioFocus()  // 录音前请求焦点
         opusEncoder = OpusEncoder(sampleRate = sampleRate)
         val encoder = opusEncoder
@@ -249,9 +263,10 @@ class ConnectionRepositoryImpl(
     override suspend fun stopListening() {
         backendService.sendListenStop()
         audioService.stopRecording()
-        audioService.abandonAudioFocus()  // 放弃焦点
+        audioService.abandonAudioFocus()
         opusEncoder?.stop()
         opusEncoder = null
+        weStartedRecording = false  // 重置标记
         _aiState.value = AiState.IDLE
         Log.i(TAG, "录音已停止")
     }

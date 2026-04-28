@@ -5,3 +5,5 @@
 22	32	1777296828726533210	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/armeabi-v7a/libnative_opus_decoder.so	b72f87e3f61af417
 0	23	1777299460346668289	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	a8d0895e14230ca3
 23	31	1777299460358668473	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/armeabi-v7a/libnative_opus_decoder.so	b72f87e3f61af417
+0	31	1777342497748893067	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	a8d0895e14230ca3
+31	44	1777342497763166511	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/armeabi-v7a/libnative_opus_decoder.so	b72f87e3f61af417

@@ -13,7 +13,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -194,6 +193,7 @@ fun ChatScreen(
             ChatInputArea(
                 isRecording = uiState.isRecording,
                 aiState = uiState.aiState,
+                connectionState = uiState.connectionState,
                 inputMode = inputMode,
                 onSendText = { text ->
                     viewModel.sendTextMessage(text)
@@ -201,13 +201,11 @@ fun ChatScreen(
                 },
                 onStartRecording = { viewModel.startListening() },
                 onStopRecording = { viewModel.stopListening() },
-                onCapture = { viewModel.triggerCapture() }
+                onTryReconnect = { viewModel.tryReconnect() }
             )
         }
     }
 }
-
-// @Removed: private fun ChatTopBar(...) - replaced by inline topBar in Scaffold
 
 @Composable
 private fun MessageBubble(message: ChatMessage) {
@@ -242,17 +240,16 @@ private fun MessageBubble(message: ChatMessage) {
     }
 }
 
-// @Removed: private fun AiStateIndicator(state: AiState) - never used in UI
-
 @Composable
 private fun ChatInputArea(
     isRecording: Boolean,
     aiState: AiState,
+    connectionState: ConnectionState,
     inputMode: Int, // 0=麦克风模式, 1=文本输入模式
     onSendText: (String) -> Unit,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
-    onCapture: () -> Unit
+    onTryReconnect: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
@@ -325,49 +322,33 @@ private fun ChatInputArea(
 
                                 val contentDesc = if (isRecording) "停止录音" else "开始录音/中断"
 
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                IconButton(
+                                    onClick = {
+                                        val isOffline = connectionState is ConnectionState.Disconnected ||
+                                                connectionState is ConnectionState.Error
+                                        if (isOffline) {
+                                            onTryReconnect()
+                                            return@IconButton
+                                        }
+                                        if (isRecording) {
+                                            onStopRecording()
+                                        } else {
+                                            onStartRecording()
+                                        }
+                                    },
+                                    enabled = true,
+                                    modifier = Modifier
+                                        .size(72.dp)
+                                        .scale(if (isRecording) scale else 1f)
+                                        .clip(CircleShape)
+                                        .background(buttonColor)
                                 ) {
-                                    // 相机按钮
-                                    IconButton(
-                                        onClick = onCapture,
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.CameraAlt,
-                                            contentDescription = "拍照",
-                                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                    }
-
-                                    // 麦克风按钮
-                                    IconButton(
-                                        onClick = {
-                                            if (isRecording) {
-                                                onStopRecording()
-                                            } else {
-                                                onStartRecording()
-                                            }
-                                        },
-                                        enabled = true,
-                                        modifier = Modifier
-                                            .size(72.dp)
-                                            .scale(if (isRecording) scale else 1f)
-                                            .clip(CircleShape)
-                                            .background(buttonColor)
-                                    ) {
-                                        Icon(
-                                            imageVector = micIcon,
-                                            contentDescription = contentDesc,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(36.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = micIcon,
+                                        contentDescription = contentDesc,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(36.dp)
+                                    )
                                 }
                             }
                         }
@@ -386,6 +367,12 @@ private fun ChatInputArea(
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
+                                            val isOffline = connectionState is ConnectionState.Disconnected ||
+                                                    connectionState is ConnectionState.Error
+                                            if (isOffline) {
+                                                onTryReconnect()
+                                                return@KeyboardActions
+                                            }
                                             if (text.isNotBlank() && !sending) {
                                                 sending = true
                                                 onSendText(text.trim())
@@ -397,6 +384,12 @@ private fun ChatInputArea(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 FilledIconButton(
                                     onClick = {
+                                        val isOffline = connectionState is ConnectionState.Disconnected ||
+                                                connectionState is ConnectionState.Error
+                                        if (isOffline) {
+                                            onTryReconnect()
+                                            return@FilledIconButton
+                                        }
                                         if (text.isNotBlank() && !sending) {
                                             sending = true
                                             onSendText(text.trim())

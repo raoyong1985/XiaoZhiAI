@@ -5,3 +5,5 @@
 21	31	1777296828674532397	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/arm64-v8a/libnative_opus_decoder.so	774f19502aef3f7c
 0	22	1777299460310667737	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	fc4c475d513505cf
 22	31	1777299460320290917	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/arm64-v8a/libnative_opus_decoder.so	774f19502aef3f7c
+0	23	1777342497692892290	CMakeFiles/native_opus_decoder.dir/src/main/jni/native_opus_decoder.cpp.o	fc4c475d513505cf
+23	32	1777342497705987322	../../../../build/intermediates/cxx/Debug/1y6e6b4k/obj/arm64-v8a/libnative_opus_decoder.so	774f19502aef3f7c

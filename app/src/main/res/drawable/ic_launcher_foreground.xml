@@ -8,7 +8,7 @@
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0"/>
-    <!-- Speech bubble -->
+    <!-- Speech bubble - blue -->
     <path
         android:fillColor="#2196F3"
         android:pathData="M40,42h28c2.2,0 4,1.8 4,4v12c0,2.2 -1.8,4 -4,4h-4l-6,6v-6h-18c-2.2,0 -4,-1.8 -4,-4v-12c0,-2.2 1.8,-4 4,-4z"/>
