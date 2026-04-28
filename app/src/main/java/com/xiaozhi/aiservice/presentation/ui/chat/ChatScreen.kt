@@ -410,7 +410,6 @@ private fun ChatInputArea(
                                 Text(
                                     text = when (aiState) {
                                         AiState.LISTENING -> "正在倾听..."
-                                        AiState.SPEAKING -> "正在回答..."
                                         AiState.PROCESSING -> "思考中..."
                                         else -> ""
                                     },
