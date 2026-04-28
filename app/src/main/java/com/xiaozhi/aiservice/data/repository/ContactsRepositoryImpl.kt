@@ -73,4 +73,6 @@ class ContactsRepositoryImpl(
             preferences[CONTACTS_KEY] = gson.toJson(contacts)
         }
     }
-}
+
+    
+    }
