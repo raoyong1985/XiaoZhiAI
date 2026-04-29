@@ -11,9 +11,7 @@ import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 
 private val Context.contactsDataStore: DataStore<Preferences> by preferencesDataStore(name = "contacts")
 

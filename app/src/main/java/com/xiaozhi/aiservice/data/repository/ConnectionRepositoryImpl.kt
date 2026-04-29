@@ -1,6 +1,5 @@
 package com.xiaozhi.aiservice.data.repository
 
-import android.util.Log
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
@@ -13,7 +12,6 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
-import com.xiaozhi.aiservice.domain.repository.IncomingMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,9 +57,6 @@ class ConnectionRepositoryImpl(
 
     override val streamingEnd: SharedFlow<String> = backendService.streamingEnd
     
-    private val _incomingMessages = MutableSharedFlow<IncomingMessage>(replay = 0)
-    override val incomingMessages: SharedFlow<IncomingMessage> = _incomingMessages.asSharedFlow()
-
     // 记录最后发送的消息内容，用于STT回显去重
     private var lastSentText: String? = null
     private val lastSentTextLock = Any()

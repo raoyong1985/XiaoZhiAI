@@ -41,7 +41,6 @@ import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
-import kotlin.math.abs
 import java.text.SimpleDateFormat
 import java.util.*
 

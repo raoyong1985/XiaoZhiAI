@@ -134,10 +134,6 @@ class ChatViewModel(
         }
     }
 
-    fun setVoiceMode(mode: VoiceMode) {
-        _uiState.update { it.copy(voiceMode = mode) }
-    }
-
     fun dismissAlert() {
         _uiState.update { it.copy(alert = null) }
     }

@@ -249,7 +249,7 @@ class NativeOpusDecoder(
      * 避免 quiet 帧被放大导致 noise 放大
      */
     private fun applyLimiter(pcm: ShortArray): ShortArray {
-        val HARD_CLIP = 30000
+        val HARD_CLIP = Short.MAX_VALUE.toInt()
 
         // 找峰值
         var peak = 0

@@ -70,8 +70,3 @@ class ContactsViewModel(
     }
 }
 
-data class ContactsUiState(
-    val contacts: List<BotContact> = emptyList(),
-    val showAddDialog: Boolean = false,
-    val editingContact: BotContact? = null
-)

@@ -20,25 +20,6 @@ sealed class ConnectionState {
 }
 
 /**
- * 收到的消息类型
- */
-sealed class IncomingMessage {
-    data class SttResult(val text: String) : IncomingMessage()
-    data class TtsState(val state: String) : IncomingMessage()
-    data class LlmEmotion(val emotion: String) : IncomingMessage()
-    data class AudioData(val data: ByteArray) : IncomingMessage() {
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (javaClass != other?.javaClass) return false
-            other as AudioData
-            return data.contentEquals(other.data)
-        }
-        override fun hashCode(): Int = data.contentHashCode()
-    }
-    data class TextMessage(val content: String) : IncomingMessage()
-}
-
-/**
  * 消息仓库接口
  */
 interface MessageRepository {
@@ -72,7 +53,6 @@ interface ConnectionRepository {
     val emotion: StateFlow<String>  // AI情感状态
     val alert: SharedFlow<String>    // 服务器Alert弹窗
     val streamingEnd: SharedFlow<String>  // 流式消息结束信号（消息ID）
-    val incomingMessages: SharedFlow<IncomingMessage>
     suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit>
     suspend fun disconnect()
     suspend fun sendTextMessage(contactId: String, text: String): Result<Unit>

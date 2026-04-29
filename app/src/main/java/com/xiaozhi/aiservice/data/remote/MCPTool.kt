@@ -128,38 +128,53 @@ object MCPToolRegistry {
     }
 
     private fun evaluateSimpleExpression(expr: String): Double {
-        val numbers = mutableListOf<Double>()
-        val operators = mutableListOf<Char>()
-        var currentNum = ""
-        for (ch in expr) {
-            if (ch in "+-*/") {
-                if (currentNum.isNotEmpty()) {
-                    numbers.add(currentNum.toDouble())
-                    currentNum = ""
+        try {
+            val trimmed = expr.replace(" ", "")
+            if (trimmed.isEmpty()) throw IllegalArgumentException("空表达式")
+            val numbers = mutableListOf<Double>()
+            val operators = mutableListOf<Char>()
+            var currentNum = ""
+            var expectNeg = true
+            for (ch in trimmed) {
+                when {
+                    ch == '-' && expectNeg -> { currentNum += ch }
+                    ch in "+-*/" -> {
+                        if (currentNum.isNotEmpty()) {
+                            numbers.add(currentNum.toDouble())
+                            currentNum = ""
+                        }
+                        operators.add(ch)
+                        expectNeg = (ch == '*' || ch == '/')
+                    }
+                    ch.isDigit() || ch == '.' -> {
+                        currentNum += ch
+                        expectNeg = false
+                    }
+                    else -> throw IllegalArgumentException("不支持的字符: $ch")
                 }
-                operators.add(ch)
-            } else if (ch.isDigit() || ch == '.') {
-                currentNum += ch
             }
-        }
-        if (currentNum.isNotEmpty()) numbers.add(currentNum.toDouble())
+            if (currentNum.isNotEmpty()) numbers.add(currentNum.toDouble())
+            if (numbers.isEmpty()) throw IllegalArgumentException("无法解析表达式")
 
-        var i = 0
-        while (i < operators.size) {
-            if (operators[i] == '*' || operators[i] == '/') {
-                val left = numbers[i]
-                val right = numbers[i + 1]
-                numbers[i] = if (operators[i] == '*') left * right else left / right
-                numbers.removeAt(i + 1)
-                operators.removeAt(i)
-            } else { i++ }
-        }
+            var i = 0
+            while (i < operators.size) {
+                if (operators[i] == '*' || operators[i] == '/') {
+                    val left = numbers[i]
+                    val right = numbers[i + 1]
+                    numbers[i] = if (operators[i] == '*') left * right else left / right
+                    numbers.removeAt(i + 1)
+                    operators.removeAt(i)
+                } else { i++ }
+            }
 
-        var result = numbers[0]
-        for (j in operators.indices) {
-            result = if (operators[j] == '+') result + numbers[j + 1] else result - numbers[j + 1]
+            var result = numbers[0]
+            for (j in operators.indices) {
+                result = if (operators[j] == '+') result + numbers[j + 1] else result - numbers[j + 1]
+            }
+            return result
+        } catch (e: Exception) {
+            throw IllegalArgumentException("计算失败: ${e.message}")
         }
-        return result
     }
 
     fun registerTool(

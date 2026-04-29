@@ -13,7 +13,6 @@ import android.os.Build
 import android.util.Log
 import com.xiaozhi.aiservice.BuildConfig
 import androidx.core.content.ContextCompat
-import kotlin.math.abs
 
 /**
  * 条件日志：仅在 debug 版本输出
