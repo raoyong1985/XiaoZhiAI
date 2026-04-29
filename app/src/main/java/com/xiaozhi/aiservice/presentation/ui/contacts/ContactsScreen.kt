@@ -44,6 +44,7 @@ fun ContactsScreen(
     onGroupChatClick: () -> Unit
 ) {
     val contacts by viewModel.contacts.collectAsState()
+    val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var editingContact by remember { mutableStateOf<BotContact?>(null) }
     var contactToDelete by remember { mutableStateOf<BotContact?>(null) }
@@ -98,7 +99,10 @@ fun ContactsScreen(
                         contact = contact,
                         onClick = { onContactClick(contact) },
                         onEdit = { editingContact = contact },
-                        onDelete = { contactToDelete = contact }
+                        onDelete = { contactToDelete = contact },
+                        onClearMessages = { viewModel.clearMessages(contact.id) },
+                        onExportMessages = { viewModel.exportMessages(contact.id, context) },
+                        onToggleInputMode = { viewModel.toggleInputMode(contact) }
                     )
                 }
             }
@@ -124,10 +128,6 @@ fun ContactsScreen(
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
-                editingContact = null
-            },
-            onClearMessages = {
-                viewModel.clearMessages(contact.id)
                 editingContact = null
             }
         )
@@ -191,7 +191,10 @@ private fun ContactItem(
     contact: BotContact,
     onClick: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onClearMessages: () -> Unit,
+    onExportMessages: () -> Unit,
+    onToggleInputMode: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -260,6 +263,41 @@ private fun ContactItem(
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
                     )
                     DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (contact.inputMode == InputMode.VOICE) "切换为文字" else "切换为语音"
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleInputMode()
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (contact.inputMode == InputMode.VOICE) Icons.Default.Keyboard else Icons.Default.Mic,
+                                contentDescription = null
+                            )
+                        }
+                    )
+                    Divider()
+                    DropdownMenuItem(
+                        text = { Text("清空聊天记录") },
+                        onClick = {
+                            showMenu = false
+                            onClearMessages()
+                        },
+                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出聊天记录") },
+                        onClick = {
+                            showMenu = false
+                            onExportMessages()
+                        },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                    )
+                    Divider()
+                    DropdownMenuItem(
                         text = { Text("删除", color = MaterialTheme.colorScheme.error) },
                         onClick = {
                             showMenu = false
@@ -291,15 +329,12 @@ private fun ContactItem(
 fun AddEditContactDialog(
     contact: BotContact?,
     onDismiss: () -> Unit,
-    onSave: (BotContact) -> Unit,
-    onClearMessages: (() -> Unit)? = null
+    onSave: (BotContact) -> Unit
 ) {
     val isEditing = contact != null
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().otaUrl) }
-    var inputMode by remember { mutableStateOf(contact?.inputMode ?: InputMode.VOICE) }
-    var voiceMode by remember { mutableStateOf(contact?.voiceMode ?: VoiceMode.REALTIME) }
 
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
@@ -353,69 +388,6 @@ fun AddEditContactDialog(
                         placeholder = { Text("例如：小智一号") }
                     )
 
-                    // 输入模式
-                    Text("输入模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = inputMode == InputMode.VOICE,
-                            onClick = { inputMode = InputMode.VOICE },
-                            label = {
-                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("语音模式", fontSize = 14.sp)
-                                }
-                            },
-                            modifier = Modifier.height(40.dp).weight(1f),
-                            border = FilterChipDefaults.filterChipBorder(
-                                borderColor = MaterialTheme.colorScheme.outline,
-                                selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                            )
-                        )
-                        FilterChip(
-                            selected = inputMode == InputMode.TEXT,
-                            onClick = { inputMode = InputMode.TEXT },
-                            label = {
-                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("文字模式", fontSize = 14.sp)
-                                }
-                            },
-                            modifier = Modifier.height(40.dp).weight(1f),
-                            border = FilterChipDefaults.filterChipBorder(
-                                borderColor = MaterialTheme.colorScheme.outline,
-                                selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                            )
-                        )
-                    }
-
-                    // 语音模式（仅语音输入模式时显示）
-                    if (inputMode == InputMode.VOICE) {
-                        Text("语音模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (mode in VoiceMode.entries) {
-                                val isSelected = voiceMode == mode
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { voiceMode = mode },
-                                    label = {
-                                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                            Text(mode.displayName, fontSize = 14.sp)
-                                        }
-                                    },
-                                    modifier = Modifier.height(40.dp).weight(1f),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        borderColor = MaterialTheme.colorScheme.outline,
-                                        selectedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                                    )
-                                )
-                            }
-                        }
-                    }
-
                     Divider()
 
                     // 服务器配置
@@ -443,20 +415,6 @@ fun AddEditContactDialog(
                     Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
                     Text("设备ID：$generatedDeviceId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("客户端ID：$generatedClientId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-
-                    // 清除聊天记录（仅编辑时）
-                    if (isEditing && onClearMessages != null) {
-                        Divider()
-                        OutlinedButton(
-                            onClick = onClearMessages,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("清除聊天记录")
-                        }
-                    }
 
                     Spacer(modifier = Modifier.height(80.dp))
                 }
@@ -489,9 +447,7 @@ fun AddEditContactDialog(
                                     serverUrl = serverUrl.trim(),
                                     otaUrl = otaUrl.trim(),
                                     deviceId = generatedDeviceId,
-                                    clientId = generatedClientId,
-                                    inputMode = inputMode,
-                                    voiceMode = voiceMode
+                                    clientId = generatedClientId
                                 )
                                 onSave(newContact)
                             },

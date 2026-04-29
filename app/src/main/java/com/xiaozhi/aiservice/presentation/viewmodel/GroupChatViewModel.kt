@@ -184,6 +184,42 @@ class GroupChatViewModel : ViewModel() {
         sendMessageToGroup(groupId, content)
     }
     
+    suspend fun updateGroupName(groupId: String, newName: String) {
+        groupChatRepository.updateGroupName(groupId, newName)
+        loadGroups()
+    }
+    
+    suspend fun addBotToGroup(groupId: String, botId: String) {
+        groupChatRepository.addBotToGroup(groupId, botId)
+        loadGroups()
+    }
+    
+    suspend fun removeBotFromGroup(groupId: String, botId: String) {
+        groupChatRepository.removeBotFromGroup(groupId, botId)
+        loadGroups()
+    }
+    
+    suspend fun clearGroupMessages(groupId: String) {
+        groupChatRepository.clearGroupMessages(groupId)
+    }
+    
+    fun exportGroupMessages(groupId: String, context: android.content.Context) {
+        viewModelScope.launch {
+            val messages = groupChatRepository.getGroupMessages(groupId).first()
+            if (messages.isEmpty()) return@launch
+            val text = messages.joinToString("\n") { msg ->
+                val sender = if (msg.direction == MessageDirection.SENT) "我" else msg.botName
+                "[${sender}]: ${msg.content}"
+            }
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(android.content.Intent.EXTRA_TEXT, text)
+                putExtra(android.content.Intent.EXTRA_SUBJECT, "群聊记录")
+            }
+            context.startActivity(android.content.Intent.createChooser(intent, "导出群聊记录"))
+        }
+    }
+    
     override fun onCleared() {
         super.onCleared()
         botConnections.clear()

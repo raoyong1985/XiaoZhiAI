@@ -9,8 +9,10 @@ interface GroupChatRepository {
     suspend fun getGroups(): List<GroupChat>
     suspend fun getGroup(groupId: String): GroupChat?
     suspend fun deleteGroup(groupId: String)
+    suspend fun updateGroupName(groupId: String, newName: String)
     suspend fun addBotToGroup(groupId: String, botId: String)
     suspend fun removeBotFromGroup(groupId: String, botId: String)
+    suspend fun clearGroupMessages(groupId: String)
     
     fun getGroupMessages(groupId: String): Flow<List<GroupMessage>>
     suspend fun sendMessage(groupId: String, message: GroupMessage)

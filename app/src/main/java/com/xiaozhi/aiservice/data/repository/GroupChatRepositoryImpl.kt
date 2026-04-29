@@ -77,6 +77,20 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
         }
     }
     
+    override suspend fun updateGroupName(groupId: String, newName: String) {
+        context.groupDataStore.edit { preferences ->
+            val json = preferences[GROUPS_KEY] ?: "[]"
+            val type = object : TypeToken<List<GroupChat>>() {}.type
+            val groups: List<GroupChat> = gson.fromJson(json, type) ?: emptyList()
+            val mutableGroups = groups.toMutableList()
+            val index = mutableGroups.indexOfFirst { it.id == groupId }
+            if (index >= 0) {
+                mutableGroups[index] = mutableGroups[index].copy(name = newName)
+                preferences[GROUPS_KEY] = gson.toJson(mutableGroups)
+            }
+        }
+    }
+    
     override suspend fun addBotToGroup(groupId: String, botId: String) {
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
@@ -106,6 +120,12 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
                 mutableGroups[index] = group.copy(botIds = group.botIds - botId)
                 preferences[GROUPS_KEY] = gson.toJson(mutableGroups)
             }
+        }
+    }
+    
+    override suspend fun clearGroupMessages(groupId: String) {
+        context.messagesDataStore.edit { preferences ->
+            preferences.remove(messagesKey(groupId))
         }
     }
     
