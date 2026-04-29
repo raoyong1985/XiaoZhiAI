@@ -133,7 +133,8 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
         return context.messagesDataStore.data.map { preferences ->
             val json = preferences[messagesKey(groupId)] ?: "[]"
             val type = object : TypeToken<List<GroupMessage>>() {}.type
-            gson.fromJson<List<GroupMessage>>(json, type) ?: emptyList()
+            val messages: List<GroupMessage> = gson.fromJson(json, type) ?: emptyList()
+            messages.sortedBy { it.timestamp }
         }
     }
     

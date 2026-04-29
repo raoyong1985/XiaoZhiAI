@@ -60,7 +60,7 @@ fun GroupChatScreen(
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            if (lastVisible >= messages.size - 2) {
+            if (lastVisible >= messages.size - 2 || messages.size <= 1) {
                 listState.animateScrollToItem(messages.size - 1)
             }
         }
@@ -74,7 +74,7 @@ fun GroupChatScreen(
                     Column {
                         Text(group?.name ?: "群聊", fontSize = 18.sp)
                         Text(
-                            "${group?.botIds?.size ?: 0} 个智能体",
+                            "${group?.botIds?.size ?: 0} 个成员",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
