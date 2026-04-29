@@ -14,12 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.di.AppContainer
-import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
 import com.xiaozhi.aiservice.presentation.ui.chat.ChatScreen
 import com.xiaozhi.aiservice.presentation.ui.contacts.ContactsScreen
@@ -129,18 +129,19 @@ private fun MainNavigation(
     chatViewModel: ChatViewModel,
     contactsViewModel: ContactsViewModel
 ) {
-    var selectedContact by remember { mutableStateOf<BotContact?>(null) }
-    var showGroupChatList by remember { mutableStateOf(false) }
-    var selectedGroupId by remember { mutableStateOf<String?>(null) }
-    var showCreateGroup by remember { mutableStateOf(false) }
+    var selectedContactId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showGroupChatList by rememberSaveable { mutableStateOf(false) }
+    var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCreateGroup by rememberSaveable { mutableStateOf(false) }
+    val contacts by contactsViewModel.contacts.collectAsState()
 
     // 处理返回键
-    BackHandler(enabled = selectedGroupId != null || showCreateGroup || showGroupChatList || selectedContact != null) {
+    BackHandler(enabled = selectedGroupId != null || showCreateGroup || showGroupChatList || selectedContactId != null) {
         when {
             selectedGroupId != null -> selectedGroupId = null
             showCreateGroup -> showCreateGroup = false
             showGroupChatList -> showGroupChatList = false
-            selectedContact != null -> selectedContact = null
+            selectedContactId != null -> selectedContactId = null
         }
     }
 
@@ -169,18 +170,21 @@ private fun MainNavigation(
                 onNavigateBack = { showGroupChatList = false }
             )
         }
-        selectedContact != null -> {
-            ChatScreen(
-                viewModel = chatViewModel,
-                contact = selectedContact as BotContact,
-                onNavigateBack = { selectedContact = null }
-            )
+        selectedContactId != null -> {
+            val contact = contacts.find { it.id == selectedContactId }
+            if (contact != null) {
+                ChatScreen(
+                    viewModel = chatViewModel,
+                    contact = contact,
+                    onNavigateBack = { selectedContactId = null }
+                )
+            }
         }
         else -> {
             ContactsScreen(
                 viewModel = contactsViewModel,
                 onContactClick = { contact ->
-                    selectedContact = contact
+                    selectedContactId = contact.id
                 },
                 onGroupChatClick = { showGroupChatList = true }
             )

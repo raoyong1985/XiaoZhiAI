@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -48,8 +50,9 @@ fun GroupChatListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
-                )
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                windowInsets = WindowInsets.statusBars
             )
         },
         floatingActionButton = {
@@ -239,25 +242,23 @@ fun GroupChatListScreen(
                 if (available.isEmpty()) {
                     Text("没有可添加的智能体")
                 } else {
-                    Column {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                         Text("选择要添加的智能体：")
                         Spacer(modifier = Modifier.height(8.dp))
-                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                            items(available) { contact ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            coroutineScope.launch {
-                                                viewModel.addBotToGroup(group.id, contact.id)
-                                                addingMemberGroup = null
-                                            }
+                        available.forEach { contact ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        coroutineScope.launch {
+                                            viewModel.addBotToGroup(group.id, contact.id)
+                                            addingMemberGroup = null
                                         }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(contact.name, fontSize = 16.sp)
-                                }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(contact.name, fontSize = 16.sp)
                             }
                         }
                     }
@@ -279,26 +280,24 @@ fun GroupChatListScreen(
                 if (group.botIds.isEmpty()) {
                     Text("群聊中没有成员")
                 } else {
-                    Column {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                         Text("选择要删除的智能体：")
                         Spacer(modifier = Modifier.height(8.dp))
-                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                            items(group.botIds) { botId ->
-                                val contact = contacts.find { it.id == botId }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            coroutineScope.launch {
-                                                viewModel.removeBotFromGroup(group.id, botId)
-                                                removingMemberGroup = null
-                                            }
+                        group.botIds.forEach { botId ->
+                            val contact = contacts.find { it.id == botId }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        coroutineScope.launch {
+                                            viewModel.removeBotFromGroup(group.id, botId)
+                                            removingMemberGroup = null
                                         }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(contact?.name ?: botId, fontSize = 16.sp)
-                                }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(contact?.name ?: botId, fontSize = 16.sp)
                             }
                         }
                     }
