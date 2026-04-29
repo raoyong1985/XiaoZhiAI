@@ -2,7 +2,7 @@
 /build/
 /app/build/
 /.app/
-/.cxx/
+.cxx/
 /.gradle/
 **/build/
 
