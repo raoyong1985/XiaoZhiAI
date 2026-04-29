@@ -44,7 +44,6 @@ fun ContactsScreen(
     onGroupChatClick: () -> Unit
 ) {
     val contacts by viewModel.contacts.collectAsState()
-    val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var editingContact by remember { mutableStateOf<BotContact?>(null) }
     var contactToDelete by remember { mutableStateOf<BotContact?>(null) }
@@ -61,13 +60,10 @@ fun ContactsScreen(
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://xiaozhi.me/console/agents"))
-                        ContextCompat.startActivity(context, intent, null)
-                    }) {
+                    IconButton(onClick = onGroupChatClick) {
                         Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = "控制台",
+                            imageVector = Icons.Default.Group,
+                            contentDescription = "群聊",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
@@ -75,22 +71,11 @@ fun ContactsScreen(
             )
         },
         floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                containerColor = MaterialTheme.colorScheme.primary
             ) {
-                FloatingActionButton(
-                    onClick = onGroupChatClick,
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    Icon(Icons.Default.Group, contentDescription = "群聊")
-                }
-                FloatingActionButton(
-                    onClick = { showAddDialog = true },
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "添加联系人")
-                }
+                Icon(Icons.Default.Add, contentDescription = "添加联系人")
             }
         },
         containerColor = MaterialTheme.colorScheme.surface
@@ -220,35 +205,25 @@ private fun ContactItem(
             )
         },
         supportingContent = {
-            Column {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (contact.inputMode == InputMode.VOICE)
+                        Icons.Default.Mic else Icons.Default.Keyboard,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
                 Text(
-                    text = contact.serverUrl,
+                    text = "设备ID: ${contact.deviceId}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    AssistChip(
-                        onClick = {},
-                        label = {
-                            Text(
-                                if (contact.inputMode == InputMode.VOICE) "语音" else "文字",
-                                fontSize = 11.sp
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (contact.inputMode == InputMode.VOICE)
-                                    Icons.Default.Mic else Icons.Default.Keyboard,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        },
-                        modifier = Modifier.height(24.dp)
-                    )
-                }
             }
         },
         leadingContent = {

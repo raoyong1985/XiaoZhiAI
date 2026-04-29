@@ -22,12 +22,16 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.net.Uri
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -112,18 +116,6 @@ fun ChatScreen(
         else -> null
     }
 
-    // 情感emoji映射
-    val emotionEmoji = when (uiState.emotion.lowercase()) {
-        "happy" -> "😄"
-        "sad" -> "😢"
-        "angry" -> "😠"
-        "worried" -> "😟"
-        "thoughtful" -> "🤔"
-        "gentle" -> "😊"
-        "doubtful" -> "😕"
-        else -> null
-    }
-
     // Alert Snackbar 状态
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(uiState.alert) {
@@ -173,11 +165,15 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {}) {
+                    val context = LocalContext.current
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://xiaozhi.me/console/agents"))
+                        ContextCompat.startActivity(context, intent, null)
+                    }) {
                         Icon(
-                            imageVector = Icons.Default.Circle,
-                            contentDescription = "网络状态",
-                            modifier = Modifier.size(12.dp),
+                            imageVector = Icons.Default.Language,
+                            contentDescription = "控制台",
+                            modifier = Modifier.size(24.dp),
                             tint = connectionColor
                         )
                     }
