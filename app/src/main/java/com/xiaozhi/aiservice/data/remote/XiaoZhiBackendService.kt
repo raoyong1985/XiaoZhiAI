@@ -279,7 +279,12 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 debugLog(TAG, "WebSocket已关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
-                if (code != 1000 && code != 1001) {
+                if (code == 1005) {
+                    debugLogW(TAG, "服务器要求激活设备，停止重连")
+                    isReconnecting = false
+                    reconnectAttempt = 0
+                    _connectionState.value = ConnectionState.Error
+                } else if (code != 1000 && code != 1001) {
                     scheduleReconnect()
                 }
             }
@@ -297,6 +302,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         isConnected = false
+        isReconnecting = false
         reconnectAttempt = 0  // 重置重连计数
         wsToken = ""
         pendingActivationChallenge = ""
@@ -433,9 +439,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     /**
-     * 发送文本内容（用于聊天消息）
-     * state="text" 触发 AI 语音对话处理，返回 TTS 音频
-     * 注意：state="detect" 仅用于唤醒词，传长文本会报错
+     * 发送文本内容（用于聊天消息/群聊接龙）
+     * 当前服务器仅支持 state="detect"，且文本需限制在 8 字符以内
+     * state="text" 服务器不会响应
      */
     fun sendTextContent(text: String) {
         android.util.Log.e(TAG, ">>>>>>>>>>>>>>>>>>>> sendTextContent: isConnected=$isConnected text=${text.take(30)}")

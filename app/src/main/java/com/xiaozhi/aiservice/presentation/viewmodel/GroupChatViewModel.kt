@@ -152,8 +152,8 @@ class GroupChatViewModel : ViewModel() {
             // split by all punctuation to get shortest meaningful phrase
             val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
             val lastPhrase = sentences.lastOrNull { it.isNotBlank() }?.trim() ?: lastSequentialContent
-            // detect 仅用于唤醒词，限制在 8 字符以内
-            service.sendTextContent(lastPhrase.take(8))
+            // detect 仅用于唤醒词，限制在 8 字符以内，取句尾更保留语义
+            service.sendTextContent(lastPhrase.takeLast(8))
         }
     }
 
@@ -210,11 +210,13 @@ class GroupChatViewModel : ViewModel() {
 
     suspend fun addBotToGroup(groupId: String, botId: String) {
         groupChatRepository.addBotToGroup(groupId, botId)
+        sequentialBotIds = sequentialBotIds + botId
         loadGroups()
     }
 
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
         groupChatRepository.removeBotFromGroup(groupId, botId)
+        sequentialBotIds = sequentialBotIds - botId
         loadGroups()
     }
 

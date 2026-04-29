@@ -56,10 +56,13 @@ fun GroupChatScreen(
         viewModel.connectGroup(groupId)
     }
     
-    // 自动滚动到底部
+    // 自动滚动到底部（仅在用户已在底部时）
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            if (lastVisible >= messages.size - 2) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
         }
     }
     
