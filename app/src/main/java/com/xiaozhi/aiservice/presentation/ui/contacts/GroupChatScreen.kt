@@ -15,13 +15,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+// 智能体聊天气泡颜色列表（按顺序分配）
+val botBubbleColors = listOf(
+    Color(0xFFE8F5E9),  // 浅绿
+    Color(0xFFE3F2FD),  // 浅蓝
+    Color(0xFFFFF3E0),  // 浅橙
+    Color(0xFFF3E5F5),  // 浅紫
+    Color(0xFFE0F7FA),  // 浅青
+    Color(0xFFFFEBEE),  // 浅红
+)
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun GroupChatScreen(
     groupId: String,
@@ -34,6 +49,7 @@ fun GroupChatScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var inputText by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
     
     // 连接群聊中的智能体
     LaunchedEffect(groupId) {
@@ -89,12 +105,13 @@ fun GroupChatScreen(
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("输入消息...") },
                         singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
                             if (inputText.isNotBlank()) {
                                 coroutineScope.launch {
                                     viewModel.sendMessage(groupId, inputText)
                                     inputText = ""
+                                    keyboardController?.hide()
                                 }
                             }
                         })
@@ -106,6 +123,7 @@ fun GroupChatScreen(
                                 coroutineScope.launch {
                                     viewModel.sendMessage(groupId, inputText)
                                     inputText = ""
+                                    keyboardController?.hide()
                                 }
                             }
                         },
@@ -123,15 +141,23 @@ fun GroupChatScreen(
             state = listState
         ) {
             items(messages) { message ->
-                GroupMessageItem(message = message)
+                val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
+                GroupMessageItem(message = message, botColorIndex = botIndex)
             }
         }
     }
 }
 
 @Composable
-fun GroupMessageItem(message: GroupMessage) {
+fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
+    
+    // 根据 bot 索引选取气泡颜色
+    val bubbleColor = when {
+        isFromMe -> MaterialTheme.colorScheme.primary
+        botColorIndex >= 0 && botColorIndex < botBubbleColors.size -> botBubbleColors[botColorIndex]
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
     
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -148,10 +174,7 @@ fun GroupMessageItem(message: GroupMessage) {
                         bottomEnd = if (isFromMe) 4.dp else 16.dp
                     )
                 )
-                .background(
-                    if (isFromMe) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
+                .background(bubbleColor)
                 .padding(12.dp)
         ) {
             Column {
@@ -166,7 +189,7 @@ fun GroupMessageItem(message: GroupMessage) {
                 }
                 Text(
                     text = message.content,
-                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else Color(0xFF333333),
                     fontSize = 15.sp
                 )
             }

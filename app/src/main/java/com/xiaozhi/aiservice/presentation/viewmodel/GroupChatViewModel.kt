@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.BotContact
@@ -16,32 +17,34 @@ import kotlinx.coroutines.launch
 class GroupChatViewModel : ViewModel() {
     private val groupChatRepository = AppContainer.groupChatRepository
     private val contactsRepository = AppContainer.contactsRepository
-    
-    // 每个智能体的连接: botId -> Pair<XiaoZhiBackendService, ConnectionConfig>
-    private val botConnections = mutableMapOf<String, Pair<XiaoZhiBackendService, com.xiaozhi.aiservice.domain.model.ConnectionConfig>>()
-    
-    // 防止无限循环：记录每条用户消息触发的最大转发轮次
-    private var currentUserMessageId: String = ""
+
+    private val botConnections = mutableMapOf<String, XiaoZhiBackendService>()
+    private val botAudioDecoders = mutableMapOf<String, NativeOpusDecoder>()
+
+    // 接龙顺序控制
+    private var sequentialBotIds = listOf<String>()
+    private var currentSpeakerIndex = 0
     private var forwardRound = 0
-    private val MAX_FORWARD_ROUNDS = 2  // 每轮用户消息，智能体之间最多互动2轮
-    
+    private val MAX_FORWARD_ROUNDS = 100
+    private var lastSequentialContent = ""
+
     private val _groups = MutableStateFlow<List<GroupChat>>(emptyList())
     val groups: StateFlow<List<GroupChat>> = _groups.asStateFlow()
-    
+
     private val _contacts = MutableStateFlow<List<BotContact>>(emptyList())
     val contacts: StateFlow<List<BotContact>> = _contacts.asStateFlow()
-    
+
     init {
         loadGroups()
         loadContacts()
     }
-    
+
     private fun loadGroups() {
         viewModelScope.launch {
             _groups.value = groupChatRepository.getGroups()
         }
     }
-    
+
     private fun loadContacts() {
         viewModelScope.launch {
             contactsRepository.getContacts().collect { contacts ->
@@ -49,8 +52,7 @@ class GroupChatViewModel : ViewModel() {
             }
         }
     }
-    
-    // 连接群聊中的所有智能体
+
     fun connectGroup(groupId: String) {
         viewModelScope.launch {
             val group = groupChatRepository.getGroup(groupId)
@@ -59,34 +61,33 @@ class GroupChatViewModel : ViewModel() {
                     val contact = _contacts.value.find { it.id == botId }
                     contact?.let { c ->
                         if (!botConnections.containsKey(botId)) {
-                            val config = com.xiaozhi.aiservice.domain.model.ConnectionConfig(
-                                serverUrl = c.serverUrl,
-                                otaUrl = c.otaUrl,
-                                deviceId = c.deviceId,
-                                clientId = c.clientId
-                            )
                             val service = XiaoZhiBackendService(AppContainer.gson)
-                            botConnections[botId] = Pair(service, config)
-                            
-                            // 监听这个智能体的回复
+                            botConnections[botId] = service
                             observeBotReplies(botId, groupId, c.name, service)
-                            
-                            // 连接
                             service.connect(c.serverUrl, c.otaUrl, c.deviceId, c.clientId)
                         }
                     }
                 }
+                sequentialBotIds = g.botIds
             }
         }
     }
-    
-    // 监听智能体回复，并转发给其他智能体
+
     private fun observeBotReplies(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
-        // 监听聊天消息
+        // 监听 ttsText（同步更新，无竞态）：有文本时标记待转发
+        var replyContent = ""
+        viewModelScope.launch {
+            service.ttsText.collect { text ->
+                if (text.isNotBlank()) {
+                    replyContent = text
+                }
+            }
+        }
+
+        // 监听聊天消息：只负责保存到群聊，不参与转发控制
         viewModelScope.launch {
             service.chatMessages.collect { chatMsg ->
                 if (chatMsg.direction == MessageDirection.RECEIVED && chatMsg.content.isNotBlank()) {
-                    // 保存这个回复到群聊
                     val replyMessage = GroupMessage(
                         id = java.util.UUID.randomUUID().toString(),
                         groupId = groupId,
@@ -97,71 +98,86 @@ class GroupChatViewModel : ViewModel() {
                         direction = MessageDirection.RECEIVED
                     )
                     groupChatRepository.addMessage(groupId, replyMessage)
-                    
-                    // 如果是当前用户消息触发的回复，且未达到最大转发轮次，转发给其他智能体
-                    if (forwardRound < MAX_FORWARD_ROUNDS && currentUserMessageId.isNotEmpty()) {
+                }
+            }
+        }
+
+        // 监听连接状态：重连后重置转发计数
+        viewModelScope.launch {
+            service.connectionState.collect { state ->
+                if (state is XiaoZhiBackendService.ConnectionState.Connected) {
+                    forwardRound = 0
+                }
+            }
+        }
+
+        // 监听AI状态：idle 时检查是否有待转发内容
+        viewModelScope.launch {
+            service.aiState.collect { state ->
+                if (state == "idle" && replyContent.isNotBlank()) {
+                    lastSequentialContent = replyContent
+                    replyContent = ""
+                    if (forwardRound < MAX_FORWARD_ROUNDS && sequentialBotIds.size > 1) {
                         forwardRound++
-                        
-                        // 转发纯文本内容，让其他智能体看到
-                        val forwardText = chatMsg.content
-                        
-                        botConnections.forEach { (otherBotId, pair) ->
-                            if (otherBotId != botId) {
-                                val (otherService, _) = pair
-                                // 直接发送文本内容，触发其他智能体的回复
-                                otherService.sendTextContent(forwardText)
-                            }
-                        }
+                        triggerNextSpeaker()
                     }
                 }
             }
         }
-        
-        // 也监听 textMessage（作为备用）
+
+        // 监听音频数据（TTS），解码并播放
         viewModelScope.launch {
-            service.textMessage.collect { text ->
-                if (text.isNotBlank()) {
-                    // 检查是否已经是转发格式的消息，避免重复处理
-                    if (!text.startsWith("[")) {
-                        val replyMessage = GroupMessage(
-                            id = java.util.UUID.randomUUID().toString(),
-                            groupId = groupId,
-                            botId = botId,
-                            botName = botName,
-                            content = text,
-                            type = MessageType.TEXT,
-                            direction = MessageDirection.RECEIVED
-                        )
-                        // 不重复添加，因为 chatMessages 可能已经处理了
+            service.audioData.collect { audioData ->
+                if (audioData.isNotEmpty()) {
+                    var decoder = botAudioDecoders[botId]
+                    if (decoder == null) {
+                        val serverRate = service.getServerSampleRate()
+                        val serverCh = service.getServerChannels()
+                        decoder = NativeOpusDecoder(serverRate, 16000, serverCh)
+                        decoder.init()
+                        botAudioDecoders[botId] = decoder
                     }
+                    decoder.decodePacket(audioData)
                 }
             }
         }
     }
-    
+
+    private fun triggerNextSpeaker() {
+        if (sequentialBotIds.size <= 1) return
+        currentSpeakerIndex = (currentSpeakerIndex + 1) % sequentialBotIds.size
+        val speakerId = sequentialBotIds[currentSpeakerIndex]
+        val service = botConnections[speakerId] ?: return
+        if (lastSequentialContent.isNotBlank()) {
+            // split by all punctuation to get shortest meaningful phrase
+            val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
+            val lastPhrase = sentences.lastOrNull { it.isNotBlank() }?.trim() ?: lastSequentialContent
+            // detect 仅用于唤醒词，限制在 8 字符以内
+            service.sendTextContent(lastPhrase.take(8))
+        }
+    }
+
     suspend fun createGroup(name: String, selectedBotIds: List<String>): GroupChat {
         val group = groupChatRepository.createGroup(name, selectedBotIds)
         loadGroups()
         return group
     }
-    
+
     suspend fun deleteGroup(groupId: String) {
         groupChatRepository.deleteGroup(groupId)
+        botConnections.forEach { (_, service) -> service.disconnect() }
         botConnections.clear()
+        botAudioDecoders.values.forEach { it.release() }
+        botAudioDecoders.clear()
         loadGroups()
     }
-    
+
     fun getGroupMessages(groupId: String): Flow<List<GroupMessage>> {
         return groupChatRepository.getGroupMessages(groupId)
     }
-    
-    // 发送消息到群聊中的所有智能体
+
     suspend fun sendMessageToGroup(groupId: String, content: String) {
-        // 保存用户消息
         val userMessageId = java.util.UUID.randomUUID().toString()
-        currentUserMessageId = userMessageId
-        forwardRound = 0  // 重置转发轮次
-        
         val userMessage = GroupMessage(
             id = userMessageId,
             groupId = groupId,
@@ -172,37 +188,40 @@ class GroupChatViewModel : ViewModel() {
             direction = MessageDirection.SENT
         )
         groupChatRepository.addMessage(groupId, userMessage)
-        
-        // 发送给所有智能体
-        botConnections.forEach { (botId, pair) ->
-            val (service, _) = pair
-            service.sendTextContent(content)
+
+        forwardRound = 0
+        currentSpeakerIndex = 0
+        lastSequentialContent = content
+
+        if (sequentialBotIds.isNotEmpty()) {
+            val firstBotId = sequentialBotIds[0]
+            botConnections[firstBotId]?.sendTextContent(content)
         }
     }
-    
-    suspend fun sendMessage(groupId: String, content: String, botId: String = "", botName: String = "我") {
+
+    suspend fun sendMessage(groupId: String, content: String) {
         sendMessageToGroup(groupId, content)
     }
-    
+
     suspend fun updateGroupName(groupId: String, newName: String) {
         groupChatRepository.updateGroupName(groupId, newName)
         loadGroups()
     }
-    
+
     suspend fun addBotToGroup(groupId: String, botId: String) {
         groupChatRepository.addBotToGroup(groupId, botId)
         loadGroups()
     }
-    
+
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
         groupChatRepository.removeBotFromGroup(groupId, botId)
         loadGroups()
     }
-    
+
     suspend fun clearGroupMessages(groupId: String) {
         groupChatRepository.clearGroupMessages(groupId)
     }
-    
+
     fun exportGroupMessages(groupId: String, context: android.content.Context) {
         viewModelScope.launch {
             val messages = groupChatRepository.getGroupMessages(groupId).first()
@@ -219,12 +238,15 @@ class GroupChatViewModel : ViewModel() {
             context.startActivity(android.content.Intent.createChooser(intent, "导出群聊记录"))
         }
     }
-    
+
     override fun onCleared() {
         super.onCleared()
+        botConnections.forEach { (_, service) -> service.disconnect() }
         botConnections.clear()
+        botAudioDecoders.values.forEach { it.release() }
+        botAudioDecoders.clear()
     }
-    
+
     class Factory : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
