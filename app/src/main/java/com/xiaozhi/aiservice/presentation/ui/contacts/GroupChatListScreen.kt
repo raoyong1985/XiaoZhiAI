@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,7 +48,7 @@ fun GroupChatListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = Color.Transparent
                 )
             )
         },
@@ -116,8 +117,8 @@ fun GroupChatListScreen(
                             )
                         },
                         trailingContent = {
-                            var showMenu by remember { mutableStateOf(false) }
-                            Box {
+                            Box(modifier = Modifier.padding(start = 8.dp)) {
+                                var showMenu by remember { mutableStateOf(false) }
                                 IconButton(onClick = { showMenu = true }) {
                                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                                 }

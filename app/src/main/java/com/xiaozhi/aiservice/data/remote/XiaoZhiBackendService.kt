@@ -60,7 +60,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
+        .pingInterval(10, TimeUnit.SECONDS)
         .build()
 
     // 连接状态
@@ -243,6 +243,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
+                reconnectAttempt = 0
+                isReconnecting = false
                 _connectionState.value = ConnectionState.Connected
                 debugLog(TAG, "WebSocket已连接! 发送hello...")
                 sendHello()
@@ -263,13 +265,21 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 debugLog(TAG, "WebSocket关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
-                // 1005 = 服务器强制关闭（设备未激活），不重试
                 if (code == 1005) {
                     debugLogW(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
                     isReconnecting = false
                     reconnectAttempt = 0
                     _connectionState.value = ConnectionState.Error
                 } else {
+                    scheduleReconnect()
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                debugLog(TAG, "WebSocket已关闭: $code $reason")
+                isConnected = false
+                _connectionState.value = ConnectionState.Disconnected
+                if (code != 1000 && code != 1001) {
                     scheduleReconnect()
                 }
             }
@@ -424,9 +434,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
     /**
      * 发送文本内容（用于聊天消息）
-     * 格式参考官方Android app: D0.java 的 d() 方法
+     * state="text" 触发 AI 语音对话处理，返回 TTS 音频
+     * 注意：state="detect" 仅用于唤醒词，传长文本会报错
      */
     fun sendTextContent(text: String) {
+        android.util.Log.e(TAG, ">>>>>>>>>>>>>>>>>>>> sendTextContent: isConnected=$isConnected text=${text.take(30)}")
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -437,7 +449,10 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     private fun sendTextMessage(text: String) {
-        if (!isConnected) return
+        if (!isConnected) {
+            android.util.Log.w(TAG, "WebSocket未连接，消息未发送: ${text.take(50)}")
+            return
+        }
         debugLog(TAG, "发送: ${text.take(200)}")
         webSocket?.send(text)
     }
@@ -531,10 +546,12 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     
                     when (state) {
                         "start" -> {
+                            android.util.Log.e(TAG, "!!!! tts start received, setting aiState=speaking")
                             _aiState.value = "speaking"
                             _ttsText.value = ""
                         }
                         "stop" -> {
+                            android.util.Log.e(TAG, "!!!! tts stop received, setting aiState=idle")
                             _aiState.value = "idle"
                         }
                         "sentence_start" -> {

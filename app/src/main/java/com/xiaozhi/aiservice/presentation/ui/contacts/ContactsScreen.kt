@@ -57,7 +57,7 @@ fun ContactsScreen(
                 },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = Color.Transparent,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
@@ -79,7 +79,7 @@ fun ContactsScreen(
                 Icon(Icons.Default.Add, contentDescription = "添加联系人")
             }
         },
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         if (contacts.isEmpty()) {
             EmptyContactsView(
@@ -245,9 +245,9 @@ private fun ContactItem(
                 )
             }
         },
-        trailingContent = {
-            Box {
-                IconButton(onClick = { showMenu = true }) {
+                    trailingContent = {
+                        Box(modifier = Modifier.padding(start = 8.dp)) {
+                            IconButton(onClick = { showMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
                 DropdownMenu(

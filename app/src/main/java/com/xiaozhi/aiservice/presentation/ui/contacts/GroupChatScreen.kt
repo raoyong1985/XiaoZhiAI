@@ -1,16 +1,19 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,44 +67,52 @@ fun GroupChatScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = Color.Transparent
                 )
             )
         },
         bottomBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shadowElevation = 8.dp,
+                color = MaterialTheme.colorScheme.surface
             ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    modifier = Modifier.weight(1f).padding(end = 8.dp),
-                    placeholder = { Text("输入消息...") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
-                        if (inputText.isNotBlank()) {
-                            coroutineScope.launch {
-                                viewModel.sendMessage(groupId, inputText)
-                                inputText = ""
-                            }
-                        }
-                    })
-                )
-                FloatingActionButton(
-                    onClick = {
-                        if (inputText.isNotBlank()) {
-                            coroutineScope.launch {
-                                viewModel.sendMessage(groupId, inputText)
-                                inputText = ""
-                            }
-                        }
-                    },
-                    modifier = Modifier.size(48.dp),
-                    containerColor = MaterialTheme.colorScheme.primary
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = "发送")
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("输入消息...") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = {
+                            if (inputText.isNotBlank()) {
+                                coroutineScope.launch {
+                                    viewModel.sendMessage(groupId, inputText)
+                                    inputText = ""
+                                }
+                            }
+                        })
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilledIconButton(
+                        onClick = {
+                            if (inputText.isNotBlank()) {
+                                coroutineScope.launch {
+                                    viewModel.sendMessage(groupId, inputText)
+                                    inputText = ""
+                                }
+                            }
+                        },
+                        enabled = inputText.isNotBlank()
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = "发送")
+                    }
                 }
             }
         }
@@ -126,16 +137,24 @@ fun GroupMessageItem(message: GroupMessage) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (isFromMe) 
-                    MaterialTheme.colorScheme.primaryContainer 
-                else 
-                    MaterialTheme.colorScheme.surfaceVariant
-            ),
-            modifier = Modifier.fillMaxWidth(0.8f)
+        Box(
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .clip(
+                    RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (isFromMe) 16.dp else 4.dp,
+                        bottomEnd = if (isFromMe) 4.dp else 16.dp
+                    )
+                )
+                .background(
+                    if (isFromMe) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+                .padding(12.dp)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column {
                 if (!isFromMe) {
                     Text(
                         text = message.botName,
@@ -147,7 +166,8 @@ fun GroupMessageItem(message: GroupMessage) {
                 }
                 Text(
                     text = message.content,
-                    fontSize = 16.sp
+                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 15.sp
                 )
             }
         }
