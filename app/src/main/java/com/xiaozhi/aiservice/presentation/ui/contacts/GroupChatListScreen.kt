@@ -106,7 +106,7 @@ fun GroupChatListScreen(
                         },
                         supportingContent = {
                             Text(
-                                text = "${group.botIds.size} 个智能体",
+                                text = "${group.botIds.size} 个成员",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -146,12 +146,12 @@ fun GroupChatListScreen(
                                     )
                                     Divider()
                                     DropdownMenuItem(
-                                        text = { Text("清空聊天记录") },
+                                        text = { Text("清空群聊记录") },
                                         onClick = { showMenu = false; clearingGroup = group },
                                         leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("导出聊天记录") },
+                                        text = { Text("导出群聊记录") },
                                         onClick = {
                                             showMenu = false
                                             viewModel.exportGroupMessages(group.id, context)
@@ -160,7 +160,7 @@ fun GroupChatListScreen(
                                     )
                                     Divider()
                                     DropdownMenuItem(
-                                        text = { Text("删除群聊", color = MaterialTheme.colorScheme.error) },
+                                        text = { Text("解散该群", color = MaterialTheme.colorScheme.error) },
                                         onClick = { showMenu = false; deletingGroup = group },
                                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
                                     )

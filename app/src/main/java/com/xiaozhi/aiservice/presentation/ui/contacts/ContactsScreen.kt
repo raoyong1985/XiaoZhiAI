@@ -219,7 +219,7 @@ private fun ContactItem(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
                 Text(
-                    text = "设备ID: ${contact.deviceId}",
+                    text = "ID: ${contact.deviceId}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -246,7 +246,7 @@ private fun ContactItem(
                     onDismissRequest = { showMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("编辑") },
+                        text = { Text("编辑联系人") },
                         onClick = {
                             showMenu = false
                             onEdit()
@@ -289,7 +289,7 @@ private fun ContactItem(
                     )
                     Divider()
                     DropdownMenuItem(
-                        text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                        text = { Text("删除联系人", color = MaterialTheme.colorScheme.error) },
                         onClick = {
                             showMenu = false
                             onDelete()
