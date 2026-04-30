@@ -3,7 +3,9 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
+import com.xiaozhi.aiservice.data.audio.OpusEncoder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.BotContact
@@ -21,7 +23,6 @@ class GroupChatViewModel : ViewModel() {
     private val botConnections = mutableMapOf<String, XiaoZhiBackendService>()
     private val botAudioDecoders = mutableMapOf<String, NativeOpusDecoder>()
 
-    // 接龙顺序控制
     private var sequentialBotIds = listOf<String>()
     private var currentSpeakerIndex = 0
     private var forwardRound = 0
@@ -33,6 +34,16 @@ class GroupChatViewModel : ViewModel() {
 
     private val _contacts = MutableStateFlow<List<BotContact>>(emptyList())
     val contacts: StateFlow<List<BotContact>> = _contacts.asStateFlow()
+
+    private val _inputMode = MutableStateFlow(1)
+    val inputMode: StateFlow<Int> = _inputMode.asStateFlow()
+
+    private val _isRecording = MutableStateFlow(false)
+    val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
+
+    private var opusEncoder: OpusEncoder? = null
+    private val audioService = AppContainer.audioService
+    private var currentGroupId = ""
 
     init {
         loadGroups()
@@ -54,6 +65,7 @@ class GroupChatViewModel : ViewModel() {
     }
 
     fun connectGroup(groupId: String) {
+        currentGroupId = groupId
         viewModelScope.launch {
             val group = groupChatRepository.getGroup(groupId)
             group?.let { g ->
@@ -73,8 +85,53 @@ class GroupChatViewModel : ViewModel() {
         }
     }
 
+    fun toggleInputMode() {
+        _inputMode.value = if (_inputMode.value == 0) 1 else 0
+    }
+
+    fun startVoiceInput(groupId: String) {
+        if (_isRecording.value) return
+        if (sequentialBotIds.isEmpty()) return
+
+        currentGroupId = groupId
+        val sampleRate = audioService.getSampleRate()
+        val encoder = OpusEncoder(sampleRate = sampleRate)
+        opusEncoder = encoder
+
+        val firstBotId = sequentialBotIds[0]
+        val service = botConnections[firstBotId]
+
+        if (encoder.init { opusPacket ->
+                service?.sendAudio(opusPacket)
+            }
+        ) {
+            audioService.setOnSilenceDetected {
+                viewModelScope.launch { stopVoiceInput() }
+            }
+            audioService.startRecording({ pcmData ->
+                encoder.encode(pcmData)
+            }, enableVAD = true)
+            _isRecording.value = true
+            service?.sendListenStart("auto")
+        } else {
+            opusEncoder = null
+        }
+    }
+
+    fun stopVoiceInput() {
+        if (!_isRecording.value) return
+
+        audioService.stopRecording()
+        opusEncoder?.stop()
+        opusEncoder = null
+
+        val firstBotId = sequentialBotIds.firstOrNull()
+        botConnections[firstBotId]?.sendListenStop()
+
+        _isRecording.value = false
+    }
+
     private fun observeBotReplies(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
-        // 监听 ttsText（同步更新，无竞态）：有文本时标记待转发
         var replyContent = ""
         viewModelScope.launch {
             service.ttsText.collect { text ->
@@ -84,7 +141,6 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        // 监听聊天消息：只负责保存到群聊，不参与转发控制
         viewModelScope.launch {
             service.chatMessages.collect { chatMsg ->
                 if (chatMsg.direction == MessageDirection.RECEIVED && chatMsg.content.isNotBlank()) {
@@ -102,7 +158,6 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        // 监听连接状态：重连后重置转发计数
         viewModelScope.launch {
             service.connectionState.collect { state ->
                 if (state is XiaoZhiBackendService.ConnectionState.Connected) {
@@ -111,7 +166,6 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        // 监听AI状态：idle 时检查是否有待转发内容
         viewModelScope.launch {
             service.aiState.collect { state ->
                 if (state == "idle" && replyContent.isNotBlank()) {
@@ -125,7 +179,6 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        // 监听音频数据（TTS），解码并播放
         viewModelScope.launch {
             service.audioData.collect { audioData ->
                 if (audioData.isNotEmpty()) {
@@ -149,10 +202,8 @@ class GroupChatViewModel : ViewModel() {
         val speakerId = sequentialBotIds[currentSpeakerIndex]
         val service = botConnections[speakerId] ?: return
         if (lastSequentialContent.isNotBlank()) {
-            // split by all punctuation to get shortest meaningful phrase
             val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
             val lastPhrase = sentences.lastOrNull { it.isNotBlank() }?.trim() ?: lastSequentialContent
-            // detect 仅用于唤醒词，限制在 8 字符以内，取句尾更保留语义
             service.sendTextContent(lastPhrase.takeLast(8))
         }
     }
@@ -243,6 +294,7 @@ class GroupChatViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
+        stopVoiceInput()
         botConnections.forEach { (_, service) -> service.disconnect() }
         botConnections.clear()
         botAudioDecoders.values.forEach { it.release() }
