@@ -11,28 +11,45 @@ import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 class GroupChatRepositoryImpl(private val context: Context, private val gson: Gson) : GroupChatRepository {
-    
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val Context.groupDataStore: DataStore<Preferences> by preferencesDataStore(name = "group_chats")
     private val Context.messagesDataStore: DataStore<Preferences> by preferencesDataStore(name = "group_messages")
-    
+
+    // 内存缓存 + 批量写入
+    private val messagesCache = ConcurrentHashMap<String, MutableStateFlow<List<GroupMessage>>>()
+    private val dirtyGroups = LinkedHashSet<String>()
+    private var flushJob: Job? = null
+    private val loadedFromDisk = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     companion object {
         private val GROUPS_KEY = stringPreferencesKey("groups")
     }
-    
+
     private fun messagesKey(groupId: String) = stringPreferencesKey("messages_$groupId")
-    
+
     override suspend fun createGroup(name: String, botIds: List<String>): GroupChat {
         val group = GroupChat(
             id = java.util.UUID.randomUUID().toString(),
             name = name,
             botIds = botIds
         )
-        
+
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
             val type = object : TypeToken<List<GroupChat>>() {}.type
@@ -41,10 +58,10 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             mutableGroups.add(group)
             preferences[GROUPS_KEY] = gson.toJson(mutableGroups)
         }
-        
+
         return group
     }
-    
+
     override suspend fun getGroups(): List<GroupChat> {
         return try {
             context.groupDataStore.data.map { preferences ->
@@ -56,11 +73,11 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             emptyList()
         }
     }
-    
+
     override suspend fun getGroup(groupId: String): GroupChat? {
         return getGroups().find { it.id == groupId }
     }
-    
+
     override suspend fun deleteGroup(groupId: String) {
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
@@ -70,13 +87,13 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             mutableGroups.removeAll { it.id == groupId }
             preferences[GROUPS_KEY] = gson.toJson(mutableGroups)
         }
-        
-        // 删除消息
+
         context.messagesDataStore.edit { preferences ->
             preferences.remove(messagesKey(groupId))
         }
+        messagesCache.remove(groupId)
     }
-    
+
     override suspend fun updateGroupName(groupId: String, newName: String) {
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
@@ -90,7 +107,7 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             }
         }
     }
-    
+
     override suspend fun updateGroupInputMode(groupId: String, inputMode: Int) {
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
@@ -121,7 +138,7 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             }
         }
     }
-    
+
     override suspend fun removeBotFromGroup(groupId: String, botId: String) {
         context.groupDataStore.edit { preferences ->
             val json = preferences[GROUPS_KEY] ?: "[]"
@@ -136,33 +153,80 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
             }
         }
     }
-    
+
+    private fun getOrCreateFlow(groupId: String): MutableStateFlow<List<GroupMessage>> {
+        return messagesCache.getOrPut(groupId) {
+            MutableStateFlow(emptyList())
+        }
+    }
+
+    private fun markDirty(groupId: String) {
+        synchronized(dirtyGroups) {
+            dirtyGroups.add(groupId)
+            if (flushJob == null) {
+                flushJob = scope.launch {
+                    delay(500)
+                    flushDirty()
+                }
+            }
+        }
+    }
+
+    private suspend fun flushDirty() {
+        val ids: List<String>
+        synchronized(dirtyGroups) {
+            ids = dirtyGroups.toList()
+            dirtyGroups.clear()
+            flushJob = null
+        }
+        for (groupId in ids) {
+            writeToDisk(groupId, getOrCreateFlow(groupId).value)
+        }
+    }
+
+    private suspend fun writeToDisk(groupId: String, messages: List<GroupMessage>) {
+        try {
+            context.messagesDataStore.edit { preferences ->
+                preferences[messagesKey(groupId)] = gson.toJson(messages)
+            }
+        } catch (_: Exception) {}
+    }
+
     override suspend fun clearGroupMessages(groupId: String) {
-        context.messagesDataStore.edit { preferences ->
-            preferences.remove(messagesKey(groupId))
-        }
+        getOrCreateFlow(groupId).value = emptyList()
+        writeToDisk(groupId, emptyList())
     }
-    
+
     override fun getGroupMessages(groupId: String): Flow<List<GroupMessage>> {
-        return context.messagesDataStore.data.map { preferences ->
+        val flow = getOrCreateFlow(groupId)
+        if (loadedFromDisk.putIfAbsent(groupId, true) == null) {
+            scope.launch {
+                val stored = loadMessagesFromDisk(groupId)
+                // 仅在内存仍为空时才写入，防止覆盖加载期间到达的新消息
+                if (stored.isNotEmpty() && flow.value.isEmpty()) {
+                    flow.value = stored
+                }
+            }
+        }
+        return flow.asStateFlow()
+    }
+
+    private suspend fun loadMessagesFromDisk(groupId: String): List<GroupMessage> {
+        return try {
+            val preferences = context.messagesDataStore.data.first()
             val json = preferences[messagesKey(groupId)] ?: "[]"
             val type = object : TypeToken<List<GroupMessage>>() {}.type
-            val messages: List<GroupMessage> = gson.fromJson(json, type) ?: emptyList()
-            messages.sortedBy { it.timestamp }
+            gson.fromJson(json, type) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
         }
     }
-    
+
     override suspend fun sendMessage(groupId: String, message: GroupMessage) {
-        context.messagesDataStore.edit { preferences ->
-            val json = preferences[messagesKey(groupId)] ?: "[]"
-            val type = object : TypeToken<List<GroupMessage>>() {}.type
-            val messages: List<GroupMessage> = gson.fromJson(json, type) ?: emptyList()
-            val mutableMessages = messages.toMutableList()
-            mutableMessages.add(message)
-            preferences[messagesKey(groupId)] = gson.toJson(mutableMessages)
-        }
+        getOrCreateFlow(groupId).value = getOrCreateFlow(groupId).value + message
+        markDirty(groupId)
     }
-    
+
     override suspend fun addMessage(groupId: String, message: GroupMessage) {
         sendMessage(groupId, message)
     }

@@ -127,7 +127,7 @@ fun GroupChatScreen(
             contentPadding = PaddingValues(vertical = 8.dp),
             state = listState
         ) {
-            items(messages) { message ->
+            items(messages, key = { it.id }) { message ->
                 val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
                 GroupMessageItem(message = message, botColorIndex = botIndex)
             }

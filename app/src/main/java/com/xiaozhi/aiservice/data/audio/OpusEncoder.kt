@@ -4,6 +4,8 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
 import com.xiaozhi.aiservice.BuildConfig
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * 条件日志：仅在 debug 版本输出
@@ -33,8 +35,9 @@ class OpusEncoder(
     private var encoder: MediaCodec? = null
     @Volatile private var isEncoding = false
     private var encodingThread: Thread? = null
-    private val pcmQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
+    private val pcmQueue = LinkedBlockingQueue<ByteArray>()
     private var onOpusData: ((ByteArray) -> Unit)? = null
+    private var presentationTimeUs = 0L
 
     fun init(onOpusPacket: (ByteArray) -> Unit): Boolean {
         this.onOpusData = onOpusPacket
@@ -69,10 +72,10 @@ class OpusEncoder(
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             val codec = encoder ?: return@Thread
             val bufferInfo = MediaCodec.BufferInfo()
-            var presentationTimeUs = 0L
+            presentationTimeUs = 0L
 
             while (isEncoding) {
-                val pcm = pcmQueue.poll() ?: try { Thread.sleep(10); null } catch (_: InterruptedException) { break }
+                val pcm = try { pcmQueue.poll(50, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { break }
                 if (pcm == null) continue
 
                 try {
@@ -113,6 +116,15 @@ class OpusEncoder(
 
     fun stop() {
         isEncoding = false
+        // 发送 EOS 让编码器 flush 最后几帧
+        encoder?.let { codec ->
+            try {
+                val inputIndex = codec.dequeueInputBuffer(5000)
+                if (inputIndex >= 0) {
+                    codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                }
+            } catch (_: Exception) {}
+        }
         encodingThread?.interrupt()
         encodingThread = null
 

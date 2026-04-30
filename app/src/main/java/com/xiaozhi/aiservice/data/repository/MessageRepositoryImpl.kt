@@ -12,7 +12,9 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,11 +33,12 @@ class MessageRepositoryImpl(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // 每个联系人独立的 MutableStateFlow（内存缓存），使用 ConcurrentHashMap 保证并发安全
     private val messagesByContact = ConcurrentHashMap<String, MutableStateFlow<List<ChatMessage>>>()
+    private val dirtyContacts = LinkedHashSet<String>()
+    private var flushJob: Job? = null
+    private val loadedFromDisk = ConcurrentHashMap<String, Boolean>()
 
     companion object {
-        // 用联系人ID作为key存储消息列表的JSON
         private fun messagesKey(contactId: String) = stringPreferencesKey("messages_$contactId")
     }
 
@@ -46,17 +49,19 @@ class MessageRepositoryImpl(
     }
 
     override fun getMessages(contactId: String): StateFlow<List<ChatMessage>> {
-        // 首次加载时异步从持久化存储恢复，不阻塞调用方
-        if (getOrCreateFlow(contactId).value.isEmpty()) {
+        val flow = getOrCreateFlow(contactId)
+        if (loadedFromDisk.putIfAbsent(contactId, true) == null) {
             scope.launch {
-                val stored = loadFromDisk(contactId)
-                getOrCreateFlow(contactId).value = stored
+                val stored = scopeLoadFromDisk(contactId)
+                if (stored.isNotEmpty() && flow.value.isEmpty()) {
+                    flow.value = stored
+                }
             }
         }
-        return getOrCreateFlow(contactId).asStateFlow()
+        return flow.asStateFlow()
     }
 
-    private suspend fun loadFromDisk(contactId: String): List<ChatMessage> {
+    private suspend fun scopeLoadFromDisk(contactId: String): List<ChatMessage> {
         return try {
             val preferences = context.messagesDataStore.data.first()
             val json = preferences[messagesKey(contactId)] ?: "[]"
@@ -67,10 +72,36 @@ class MessageRepositoryImpl(
         }
     }
 
-    private suspend fun saveToDisk(contactId: String, messages: List<ChatMessage>) {
-        context.messagesDataStore.edit { preferences ->
-            preferences[messagesKey(contactId)] = gson.toJson(messages)
+    private fun markDirty(contactId: String) {
+        synchronized(dirtyContacts) {
+            dirtyContacts.add(contactId)
+            if (flushJob == null) {
+                flushJob = scope.launch {
+                    delay(500)
+                    flushDirty()
+                }
+            }
         }
+    }
+
+    private suspend fun flushDirty() {
+        val ids: List<String>
+        synchronized(dirtyContacts) {
+            ids = dirtyContacts.toList()
+            dirtyContacts.clear()
+            flushJob = null
+        }
+        for (contactId in ids) {
+            writeToDisk(contactId, getOrCreateFlow(contactId).value)
+        }
+    }
+
+    private suspend fun writeToDisk(contactId: String, messages: List<ChatMessage>) {
+        try {
+            context.messagesDataStore.edit { preferences ->
+                preferences[messagesKey(contactId)] = gson.toJson(messages)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun updateMessages(contactId: String, transform: (List<ChatMessage>) -> List<ChatMessage>) {
@@ -87,7 +118,7 @@ class MessageRepositoryImpl(
             timestamp = System.currentTimeMillis()
         )
         updateMessages(contactId) { it + message }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
         return Result.success(Unit)
     }
 
@@ -103,36 +134,36 @@ class MessageRepositoryImpl(
             audioPath = filePath
         )
         updateMessages(contactId) { it + message }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
         return Result.success(Unit)
     }
 
     override suspend fun addReceivedMessage(contactId: String, message: ChatMessage) {
         updateMessages(contactId) { it + message }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
     }
 
     override suspend fun addSentMessage(contactId: String, message: ChatMessage) {
         updateMessages(contactId) { it + message }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
     }
 
     override suspend fun updateMessageStatus(contactId: String, messageId: String, status: com.xiaozhi.aiservice.domain.model.MessageStatus) {
         updateMessages(contactId) { msgs ->
             msgs.map { msg -> if (msg.id == messageId) msg.copy(status = status) else msg }
         }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
     }
 
     override suspend fun finalizeStreamingMessage(contactId: String, messageId: String) {
         updateMessages(contactId) { msgs ->
             msgs.map { msg -> if (msg.id == messageId) msg.copy(isStreaming = false) else msg }
         }
-        saveToDisk(contactId, getOrCreateFlow(contactId).value)
+        markDirty(contactId)
     }
 
     override suspend fun clearMessages(contactId: String) {
         updateMessages(contactId) { emptyList() }
-        saveToDisk(contactId, emptyList())
+        writeToDisk(contactId, emptyList())
     }
 }

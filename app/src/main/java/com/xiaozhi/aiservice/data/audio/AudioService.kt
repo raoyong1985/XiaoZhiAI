@@ -33,22 +33,35 @@ class AudioService {
 
     companion object {
         private const val TAG = "AudioService"
-        const val DEFAULT_SAMPLE_RATE = 16000  // 16kHz 语音采样率（与 ESP32 一致）
+        const val DEFAULT_SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        // VAD 参数（参考 ESP32 afe_audio_processor.cc: VAD_MODE_0, vad_min_noise_ms=100）
-        // 能量阈值：RMS 能量，700 ≈ 安静房间正常说话（VOICE_COMMUNICATION AEC 处理后动态范围压缩）
-        // 静音持续 3 秒则触发自动停止（ESP32 用 AFE VAD，Android 用 RMS 能量阈值）
-        // 注意：阈值不能太低（<500），否则噪声/呼吸声也会被误判为语音，导致永远不触发停止
         private const val SILENCE_RMS_THRESHOLD = 700
-        private const val SILENCE_TIMEOUT_MS = 3000L  // 静音 3 秒自动停止
-        // 置信度：连续 2 个 buffer 都低于阈值才认定是静音（加快响应，约 512ms）
+        private const val SILENCE_TIMEOUT_MS = 3000L
         private const val SILENCE_CONSECUTIVE_BUFFERS = 2
-        // 语音确认：连续 2 个 buffer 都高于阈值才算有语音（防止瞬时噪声误触发）
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
-        // 最短语音时长：语音必须持续至少 300ms 才能算作有效语音
-        // 防止短促的呼吸声/噪声被误认为语音，导致 VAD 在正常停顿时反而无法触发
         private const val MIN_SPEECH_DURATION_MS = 300L
+        private const val POOL_CAPACITY = 4
+    }
+
+    // ByteArray 池：减少录音→编码链路 GC 压力
+    private val bufferPool = java.util.ArrayDeque<ByteArray>()
+    private val poolLock = Any()
+
+    private fun acquireBuffer(minSize: Int): ByteArray {
+        synchronized(poolLock) {
+            val pooled = bufferPool.pollLast()
+            if (pooled != null && pooled.size >= minSize) return pooled
+        }
+        return ByteArray(minSize)
+    }
+
+    private fun recycleBuffer(buffer: ByteArray) {
+        synchronized(poolLock) {
+            if (bufferPool.size < POOL_CAPACITY) {
+                bufferPool.addLast(buffer)
+            }
+        }
     }
 
     private var audioRecord: AudioRecord? = null
@@ -186,7 +199,8 @@ class AudioService {
                     val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
                     if (readSize <= 0) continue
 
-                    val pcmData = buffer.copyOf(readSize)
+                    val pcmData = acquireBuffer(readSize)
+                    System.arraycopy(buffer, 0, pcmData, 0, readSize)
                     onAudioData(pcmData)
 
                     // VAD 检测（参考 ESP32 afe_audio_processor VAD_MODE_0）
@@ -195,11 +209,9 @@ class AudioService {
                         val now = System.currentTimeMillis()
 
                         if (rmsEnergy > SILENCE_RMS_THRESHOLD) {
-                            // 有语音（需连续 2 个 buffer 确认，防止瞬时噪声误触发）
                             consecutiveSpeechBuffers++
                             consecutiveSilenceBuffers = 0
                             if (consecutiveSpeechBuffers >= SPEECH_CONSECUTIVE_BUFFERS) {
-                                // 第一次确认语音时记录时间（用于 MIN_SPEECH_DURATION_MS 抑制）
                                 if (firstSpeechTime == 0L) {
                                     firstSpeechTime = now
                                 }
@@ -207,17 +219,12 @@ class AudioService {
                                 hadSpeech = true
                             }
                         } else {
-                            // 静音
                             consecutiveSpeechBuffers = 0
                             if (hadSpeech && firstSpeechTime > 0) {
-                                // 之前有过语音，现在静音
                                 if (silenceStartTime == 0L) {
                                     silenceStartTime = now
                                 }
-                                // 连续 2 个 buffer 都静音才认定是语音结束（防噪声误触）
                                 consecutiveSilenceBuffers++
-                                // MIN_SPEECH_DURATION_MS：语音必须持续至少 300ms 才有效
-                                // 防止短促呼吸声/噪声被误认为语音，导致 VAD 在正常停顿时反而无法触发
                                 val speechDuration = silenceStartTime - firstSpeechTime
                                 if (consecutiveSilenceBuffers >= SILENCE_CONSECUTIVE_BUFFERS &&
                                     now - silenceStartTime >= SILENCE_TIMEOUT_MS &&
@@ -229,6 +236,7 @@ class AudioService {
                             }
                         }
                     }
+                    recycleBuffer(pcmData)
                 }
             }
             recordingThread?.start()
