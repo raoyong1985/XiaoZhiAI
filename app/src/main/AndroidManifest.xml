@@ -26,6 +26,9 @@
     <!-- Notification for Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Calendar read -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
     <!-- Storage for chat history (Android 9 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />

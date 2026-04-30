@@ -11,8 +11,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName "1.0.40"
+        versionCode 14
+        versionName "1.0.41"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -102,6 +102,10 @@ dependencies {
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3'
+
+    // Location (FusedLocationProviderClient)
+    implementation 'com.google.android.gms:play-services-location:21.1.0'
 
     // Network (OkHttp includes WebSocket support)
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'

@@ -90,6 +90,18 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // 定位权限（MCP: get_weather/get_location/get_network_info 需要）
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+        // 日历读取权限（MCP: get_calendar 需要）
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.READ_CALENDAR)
+        }
+
         if (permissionsToRequest.isEmpty()) {
             initializeViewModels()
         } else {

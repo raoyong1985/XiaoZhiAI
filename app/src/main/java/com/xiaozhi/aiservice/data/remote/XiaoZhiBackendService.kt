@@ -427,18 +427,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     /**
-     * 发送文本消息 (用于MCP等)
-     */
-    fun sendMcpMessage(payload: JsonObject) {
-        val message = JsonObject().apply {
-            addProperty("session_id", sessionId)
-            addProperty("type", "mcp")
-            add("payload", payload)
-        }
-        sendTextMessage(message.toString())
-    }
-
-    /**
      * 发送文本内容（用于聊天消息/群聊接龙）
      * 当前服务器仅支持 state="detect"，且文本需限制在 8 字符以内
      * state="text" 服务器不会响应
@@ -625,21 +613,21 @@ class XiaoZhiBackendService(private val gson: Gson) {
                             debugLog(TAG, "回复MCP initialized响应")
                         }
                         "tools/list" -> {
+                            val toolList = MCPToolRegistry.getToolList()
                             val response = JsonObject().apply {
                                 addProperty("type", "mcp")
                                 addProperty("session_id", sessionId)
                                 val responsePayload = JsonObject().apply {
                                     addProperty("jsonrpc", "2.0")
                                     add("id", msgId)
-                                    val result = JsonObject().apply {
-                                        add("tools", MCPToolRegistry.getToolList())
-                                    }
-                                    add("result", result)
+                                    add("result", JsonObject().apply {
+                                        add("tools", toolList)
+                                    })
                                 }
                                 add("payload", responsePayload)
                             }
                             sendTextMessage(response.toString())
-                            debugLog(TAG, "回复MCP tools/list响应，工具数: ${MCPToolRegistry.getToolList().size()}")
+                            debugLog(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
                         }
                         "tools/call" -> {
                             val params = payload?.get("params")?.asJsonObject
@@ -658,19 +646,36 @@ class XiaoZhiBackendService(private val gson: Gson) {
                                     else -> v.toString()
                                 }
                             }
-                            val result = MCPToolRegistry.callTool(toolName, argsMap)
-                            val response = JsonObject().apply {
-                                addProperty("type", "mcp")
-                                addProperty("session_id", sessionId)
-                                val responsePayload = JsonObject().apply {
-                                    addProperty("jsonrpc", "2.0")
-                                    add("id", msgId)
-                                    add("result", result)
+                            // 工具执行在 IO 线程，避免阻塞 WebSocket 消息循环
+                            scope.launch(Dispatchers.IO) {
+                                val (isSuccess, result) = MCPToolRegistry.callTool(toolName, argsMap)
+                                val response = JsonObject().apply {
+                                    addProperty("type", "mcp")
+                                    addProperty("session_id", sessionId)
+                                    val responsePayload = JsonObject().apply {
+                                        addProperty("jsonrpc", "2.0")
+                                        add("id", msgId)
+                                        if (isSuccess) {
+                                            add("result", JsonObject().apply {
+                                                add("content", JsonArray().apply {
+                                                    add(JsonObject().apply {
+                                                        addProperty("type", "text")
+                                                        addProperty("text", (result as JsonObject).toString())
+                                                    })
+                                                })
+                                            })
+                                        } else {
+                                            add("error", JsonObject().apply {
+                                                addProperty("code", -32603)
+                                                addProperty("message", result as String)
+                                            })
+                                        }
+                                    }
+                                    add("payload", responsePayload)
                                 }
-                                add("payload", responsePayload)
+                                sendTextMessage(response.toString())
+                                debugLog(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
                             }
-                            sendTextMessage(response.toString())
-                            debugLog(TAG, "回复MCP tools/call响应: $toolName")
                         }
                         else -> {
                             debugLogW(TAG, "未知MCP方法: $method")
