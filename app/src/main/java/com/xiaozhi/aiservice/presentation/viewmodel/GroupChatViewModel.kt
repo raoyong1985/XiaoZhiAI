@@ -147,7 +147,7 @@ class GroupChatViewModel : ViewModel() {
         opusEncoder = null
 
         val firstBotId = sequentialBotIds.firstOrNull()
-        botConnections[firstBotId]?.sendListenStop()
+        botConnections[firstBotId]?.sendListenStopOnly()
 
         _isRecording.value = false
     }

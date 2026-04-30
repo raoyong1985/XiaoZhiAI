@@ -383,6 +383,19 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     /**
+     * 只发送 listen stop 消息，不修改 aiState
+     * 用于群聊接龙场景：避免提前设置 idle 覆盖后续 TTS stop 事件
+     */
+    fun sendListenStopOnly() {
+        val message = JsonObject().apply {
+            addProperty("session_id", sessionId)
+            addProperty("type", "listen")
+            addProperty("state", "stop")
+        }
+        sendTextMessage(message.toString())
+    }
+
+    /**
      * 发送设备激活响应
      * @param challenge 服务器下发的challenge
      * @param code 激活码（用户网站上确认后获取）
