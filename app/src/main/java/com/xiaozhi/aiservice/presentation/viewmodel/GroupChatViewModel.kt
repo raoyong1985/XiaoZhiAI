@@ -65,7 +65,17 @@ class GroupChatViewModel : ViewModel() {
     }
 
     fun connectGroup(groupId: String) {
+        // 断开旧群聊的所有连接
+        botConnections.forEach { (_, service) -> service.disconnect() }
+        botConnections.clear()
+        botAudioDecoders.values.forEach { it.release() }
+        botAudioDecoders.clear()
+        forwardRound = 0
+        currentSpeakerIndex = 0
+        waitingSpeakerIndex = -1
+        lastSequentialContent = ""
         currentGroupId = groupId
+
         viewModelScope.launch {
             val group = groupChatRepository.getGroup(groupId)
             group?.let { g ->
