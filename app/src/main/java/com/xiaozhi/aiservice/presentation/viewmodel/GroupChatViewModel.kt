@@ -230,42 +230,34 @@ class GroupChatViewModel : ViewModel() {
     }
 
     private fun triggerNextSpeaker() {
-        if (sequentialBotIds.size <= 1) {
-            android.util.Log.i("GroupChatVM", "triggerNextSpeaker: only 1 bot, skip")
-            return
+        if (sequentialBotIds.size <= 1) return
+
+        currentSpeakerIndex = (currentSpeakerIndex + 1) % sequentialBotIds.size
+        val speakerId = sequentialBotIds[currentSpeakerIndex]
+        val service = botConnections[speakerId] ?: return
+
+        if (lastSequentialContent.isBlank()) return
+
+        val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
+        val nonEmpty = sentences.map { it.trim() }.filter { it.isNotBlank() }
+        val trigger = if (nonEmpty.size >= 2) {
+            nonEmpty.takeLast(2).joinToString("")
+        } else {
+            nonEmpty.lastOrNull()?.trim() ?: lastSequentialContent.trim()
         }
+
         viewModelScope.launch {
-            currentSpeakerIndex = (currentSpeakerIndex + 1) % sequentialBotIds.size
-            val speakerId = sequentialBotIds[currentSpeakerIndex]
-            val service = botConnections[speakerId]
-            if (service == null) {
-                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: no service for $speakerId")
-                return@launch
-            }
-
-            if (lastSequentialContent.isBlank()) {
-                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: lastSequentialContent is blank")
-                return@launch
-            }
-
-            val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
-            val nonEmpty = sentences.map { it.trim() }.filter { it.isNotBlank() }
-            val trigger = if (nonEmpty.size >= 2) {
-                nonEmpty.takeLast(2).joinToString("")
-            } else {
-                nonEmpty.lastOrNull()?.trim() ?: lastSequentialContent.trim()
-            }.take(30)
-
             if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId not connected, reconnecting...")
+                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId reconnecting...")
                 val contact = _contacts.value.find { it.id == speakerId }
                 if (contact != null) {
                     service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
                 }
-                kotlinx.coroutines.delay(2000)
+                kotlinx.coroutines.withTimeoutOrNull(5000) {
+                    service.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }
+                }
             }
-
-            android.util.Log.i("GroupChatVM", "triggerNextSpeaker: send to speakerIdx=$currentSpeakerIndex id=$speakerId trigger='$trigger'")
+            android.util.Log.i("GroupChatVM", "triggerNextSpeaker: send to speakerIdx=$currentSpeakerIndex id=$speakerId trigger='${trigger.take(20)}'")
             service.sendTextContent(trigger)
         }
     }
