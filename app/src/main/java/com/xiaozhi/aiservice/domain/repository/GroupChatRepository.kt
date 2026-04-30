@@ -10,6 +10,7 @@ interface GroupChatRepository {
     suspend fun getGroup(groupId: String): GroupChat?
     suspend fun deleteGroup(groupId: String)
     suspend fun updateGroupName(groupId: String, newName: String)
+    suspend fun updateGroupInputMode(groupId: String, inputMode: Int)
     suspend fun addBotToGroup(groupId: String, botId: String)
     suspend fun removeBotFromGroup(groupId: String, botId: String)
     suspend fun clearGroupMessages(groupId: String)

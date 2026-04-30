@@ -35,9 +35,6 @@ class GroupChatViewModel : ViewModel() {
     private val _contacts = MutableStateFlow<List<BotContact>>(emptyList())
     val contacts: StateFlow<List<BotContact>> = _contacts.asStateFlow()
 
-    private val _inputMode = MutableStateFlow(1)
-    val inputMode: StateFlow<Int> = _inputMode.asStateFlow()
-
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
@@ -85,8 +82,11 @@ class GroupChatViewModel : ViewModel() {
         }
     }
 
-    fun toggleInputMode() {
-        _inputMode.value = if (_inputMode.value == 0) 1 else 0
+    fun setGroupInputMode(groupId: String, mode: Int) {
+        viewModelScope.launch {
+            groupChatRepository.updateGroupInputMode(groupId, mode)
+            loadGroups()
+        }
     }
 
     fun startVoiceInput(groupId: String) {

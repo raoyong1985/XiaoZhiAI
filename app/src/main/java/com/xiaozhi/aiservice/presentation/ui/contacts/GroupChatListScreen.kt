@@ -105,11 +105,32 @@ fun GroupChatListScreen(
                             )
                         },
                         supportingContent = {
-                            Text(
-                                text = "${group.botIds.size} 个成员",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (group.inputMode == 0) Icons.Default.Mic else Icons.Default.Keyboard,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                )
+                                Text(
+                                    text = if (group.inputMode == 0) "语音" else "文字",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "·",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                                Text(
+                                    text = "${group.botIds.size} 个成员",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         },
                         leadingContent = {
                             Icon(
@@ -133,6 +154,24 @@ fun GroupChatListScreen(
                                         text = { Text("编辑名称") },
                                         onClick = { showMenu = false; editingGroup = group },
                                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (group.inputMode == 0) "切换为文字输入" else "切换为语音输入"
+                                            )
+                                        },
+                                        onClick = {
+                                            showMenu = false
+                                            val newMode = if (group.inputMode == 0) 1 else 0
+                                            viewModel.setGroupInputMode(group.id, newMode)
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (group.inputMode == 0) Icons.Default.Keyboard else Icons.Default.Mic,
+                                                contentDescription = null
+                                            )
+                                        }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("添加成员") },
