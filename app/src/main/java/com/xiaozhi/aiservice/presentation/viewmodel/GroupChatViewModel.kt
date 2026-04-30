@@ -65,11 +65,6 @@ class GroupChatViewModel : ViewModel() {
     private var timeoutJob: kotlinx.coroutines.Job? = null
     private val speakerMutex = Mutex()
 
-    // 音频转发：缓存每个 bot 的 Opus 包，供接龙转发
-    private val audioForwardBuffer = mutableMapOf<String, MutableList<ByteArray>>()
-    // true = 优先转发缓存的 Opus，false = 用 textToPcm 在线合成
-    private var useAudioForward = true
-
     init {
         loadGroups()
         loadContacts()
@@ -96,7 +91,6 @@ class GroupChatViewModel : ViewModel() {
         botAudioDecoders.values.forEach { it.release() }
         botAudioDecoders.clear()
         forwardRound = 0
-        synchronized(audioForwardBuffer) { audioForwardBuffer.clear() }
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
         lastSequentialContent = ""
@@ -139,7 +133,6 @@ class GroupChatViewModel : ViewModel() {
         val service = botConnections[firstBotId] ?: return
 
         forwardRound = 0
-        synchronized(audioForwardBuffer) { audioForwardBuffer.clear() }
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
         lastSequentialContent = ""
@@ -274,7 +267,6 @@ class GroupChatViewModel : ViewModel() {
                 service.connectionState.collect { state ->
                     if (state is XiaoZhiBackendService.ConnectionState.Connected && forwardRound != 0) {
                         forwardRound = 0
-                        synchronized(audioForwardBuffer) { audioForwardBuffer.clear() }
                         waitingSpeakerIndex = -1
                     }
                 }
@@ -319,13 +311,6 @@ class GroupChatViewModel : ViewModel() {
                         botAudioDecoders[botId] = decoder
                     }
                     decoder.decodePacket(audioData)
-
-                    // 缓存 Opus 包，供接龙转发
-                    if (useAudioForward) {
-                        synchronized(audioForwardBuffer) {
-                            audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
-                        }
-                    }
                 }
             }
         }
@@ -365,27 +350,7 @@ class GroupChatViewModel : ViewModel() {
                 waitingSpeakerIndex = -1; return
             }
         }
-        // 优先尝试：直接转发上一个 bot 的 Opus 缓存音频
-        if (useAudioForward) {
-            val prevBotId = sequentialBotIds.getOrNull(currentSpeakerIndex)
-            val cachedOpus = prevBotId?.let {
-                synchronized(audioForwardBuffer) {
-                    audioForwardBuffer.remove(it)
-                }
-            }
-            if (!cachedOpus.isNullOrEmpty()) {
-                android.util.Log.i("GroupChatVM", "音频转发: ${cachedOpus.size} 个Opus包 → $speakerId")
-                try {
-                    service.sendListenStart("auto")
-                    cachedOpus.forEach { service.sendAudio(it) }
-                    service.sendListenStopOnly()
-                    return
-                } catch (e: Exception) {
-                    android.util.Log.w("GroupChatVM", "音频转发失败: ${e.message}")
-                }
-            }
-        }
-        // 回退：TTS 在线合成
+        // 先试 TTS 音频投递（无长度限制），失败则回退 8 字文本
         var ttsOk = false
         try {
             val pcmData = withTimeoutOrNull(15000L) { textToPcm(fullText) } ?: throw Exception("TTS timeout")
@@ -571,7 +536,6 @@ class GroupChatViewModel : ViewModel() {
         groupChatRepository.addMessage(groupId, userMessage)
 
         forwardRound = 0
-        synchronized(audioForwardBuffer) { audioForwardBuffer.clear() }
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
         originalUserQuery = content
