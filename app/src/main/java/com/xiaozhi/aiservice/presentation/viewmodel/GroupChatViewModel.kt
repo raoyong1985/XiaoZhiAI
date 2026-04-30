@@ -13,13 +13,24 @@ import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
+import android.media.MediaCodec
+import android.media.MediaFormat
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import java.io.File
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class GroupChatViewModel : ViewModel() {
     private val groupChatRepository = AppContainer.groupChatRepository
@@ -33,6 +44,8 @@ class GroupChatViewModel : ViewModel() {
     private var forwardRound = 0
     private val MAX_FORWARD_ROUNDS = 100
     private var lastSequentialContent = ""
+    private var originalUserQuery = ""
+    private var prevBotName = ""
 
     private val _groups = MutableStateFlow<List<GroupChat>>(emptyList())
     val groups: StateFlow<List<GroupChat>> = _groups.asStateFlow()
@@ -123,6 +136,8 @@ class GroupChatViewModel : ViewModel() {
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
         lastSequentialContent = ""
+        originalUserQuery = ""
+        prevBotName = ""
 
         recordingGeneration++
         val currentGen = recordingGeneration
@@ -182,6 +197,7 @@ class GroupChatViewModel : ViewModel() {
         sttCollectorJob = viewModelScope.launch {
             service.textMessage.drop(1).collect { text ->
                 if (text.isNotBlank()) {
+                    if (originalUserQuery.isEmpty()) originalUserQuery = text
                     val userMessage = GroupMessage(
                         id = java.util.UUID.randomUUID().toString(),
                         groupId = currentGroupId,
@@ -224,7 +240,7 @@ class GroupChatViewModel : ViewModel() {
         viewModelScope.launch {
             service.ttsText.collect { text ->
                 if (text.isNotBlank()) {
-                    replyContent = text
+                    replyContent = if (replyContent.isBlank()) text else "$replyContent $text"
                 }
             }
         }
@@ -259,6 +275,7 @@ class GroupChatViewModel : ViewModel() {
 
         viewModelScope.launch {
             service.aiState.collect { state ->
+                android.util.Log.i("GroupChatVM", "[$botName] aiState=$state reply='${replyContent.take(20)}' fwd=$forwardRound ws=$waitingSpeakerIndex")
                 if (state == "speaking" && botId == sequentialBotIds.firstOrNull() && _isRecording.value) {
                     android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
                     stopVoiceInput(userExplicitStop = false)
@@ -271,8 +288,10 @@ class GroupChatViewModel : ViewModel() {
                         val isExpected = waitingSpeakerIndex == -1 || botIndex == waitingSpeakerIndex
                         if (isExpected && forwardRound < MAX_FORWARD_ROUNDS && currentBots.size > 1) {
                             lastSequentialContent = replyContent
+                            prevBotName = botName
                             replyContent = ""
                             forwardRound++
+                            android.util.Log.i("GroupChatVM", "[$botName] triggering next, fwd=$forwardRound")
                             triggerNextSpeakerUnsafe()
                         }
                     }
@@ -300,7 +319,8 @@ class GroupChatViewModel : ViewModel() {
     private suspend fun triggerNextSpeakerUnsafe() {
         val currentBots = sequentialBotIds
         if (currentBots.size <= 1) return
-        val available = currentBots.filterIndexed { i, _ -> i != currentSpeakerIndex }
+        val prevIndex = currentSpeakerIndex
+        val available = currentBots.filterIndexed { i, _ -> i != prevIndex }
         if (available.isEmpty()) return
         val nextIndex = currentBots.indexOf(available.random())
         if (nextIndex < 0) return
@@ -309,31 +329,135 @@ class GroupChatViewModel : ViewModel() {
         if (service == null || lastSequentialContent.isBlank()) return
         waitingSpeakerIndex = nextIndex
         currentSpeakerIndex = nextIndex
-        val cleaned = lastSequentialContent.replace(Regex("[，。！？、；：\\n\\s\"'「」『』【】《》（）]"), "")
-            .replace(Regex("[${'\\'}u2600-${'\\'}u27BF${'\\'}uFE00-${'\\'}uFE0F${'\\'}u200D]"), "")
-            .replace(Regex("[${'\\'}uD800-${'\\'}uDFFF]"), "")
+        // 不释放前一个 decoder，让已在队列中的音频自然播完
+        // 构造带上下文的完整文本
+        val fullText = buildString {
+            if (originalUserQuery.isNotEmpty()) append("用户的问题：").append(originalUserQuery).append("。")
+            if (prevBotName.isNotEmpty()) append(prevBotName).append("说：")
+            append(lastSequentialContent).append("。你怎么看？")
+        }
         if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
             android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId disconnected, reconnecting...")
             val contact = _contacts.value.find { it.id == speakerId }
-            if (contact != null) {
-                service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
-            }
-            // 释放锁后等待重连，避免阻塞其他事件处理
+            if (contact != null) service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
             speakerMutex.unlock()
             try {
                 withTimeoutOrNull(5000) {
                     service.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }
                 }
-            } finally {
-                speakerMutex.lock()
-            }
+            } finally { speakerMutex.lock() }
             if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId reconnect failed, skip")
-                waitingSpeakerIndex = -1
-                return
+                waitingSpeakerIndex = -1; return
             }
         }
-        service.sendTextContent(cleaned.takeLast(8))
+        // 先试 TTS 音频投递（无长度限制），失败则回退 8 字文本
+        var ttsOk = false
+        try {
+            val pcmData = withTimeoutOrNull(15000L) { textToPcm(fullText) } ?: throw Exception("TTS timeout")
+            if (pcmData.isNotEmpty()) {
+                val opusPackets = pcmToOpus(pcmData, 16000)
+                if (opusPackets.isNotEmpty()) {
+                    service.sendListenStart("auto")
+                    opusPackets.forEach { service.sendAudio(it) }
+                    service.sendListenStopOnly()
+                    ttsOk = true
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("GroupChatVM", "TTS投递失败: ${e.message}")
+        }
+        if (!ttsOk) {
+            val cleaned = fullText.replace(Regex("[，。！？、；：\\n\\s\"'「」『』【】《》（）]"), "")
+                .replace(Regex("[${'\\'}u2600-${'\\'}u27BF${'\\'}uFE00-${'\\'}uFE0F${'\\'}u200D]"), "")
+                .replace(Regex("[${'\\'}uD800-${'\\'}uDFFF]"), "")
+            service.sendTextContent(cleaned.takeLast(8))
+        }
+    }
+
+    private suspend fun textToPcm(text: String): ByteArray = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        suspendCancellableCoroutine { cont ->
+            val context = AppContainer.context
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val initResult = arrayOfNulls<Int>(1)
+            val tts = TextToSpeech(context) { status ->
+                initResult[0] = status
+                latch.countDown()
+            }
+            if (!latch.await(8000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                tts.shutdown()
+                if (!cont.isCancelled) cont.resumeWithException(Exception("TTS init timeout"))
+                return@suspendCancellableCoroutine
+            }
+            if (initResult[0] != TextToSpeech.SUCCESS) {
+                tts.shutdown()
+                if (!cont.isCancelled) cont.resumeWithException(Exception("TTS init: ${initResult[0]}"))
+                return@suspendCancellableCoroutine
+            }
+            tts.language = Locale.CHINESE
+            tts.setPitch(1.0f)
+            tts.setSpeechRate(1.0f)
+            val file = File(context.cacheDir, "tts_${System.nanoTime()}.wav")
+            val utteranceId = java.util.UUID.randomUUID().toString()
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onDone(id: String?) {
+                    val pcm = try { val r = file.readBytes(); extractPcmFromWav(r) } catch (e: Exception) { null }
+                    file.delete(); tts.shutdown()
+                    if (pcm != null && !cont.isCancelled) cont.resume(pcm)
+                    else if (!cont.isCancelled) cont.resumeWithException(Exception("TTS read failed"))
+                }
+                override fun onError(id: String?) { file.delete(); tts.shutdown(); if (!cont.isCancelled) cont.resumeWithException(Exception("TTS error")) }
+                override fun onStart(id: String?) {}
+            })
+            val extras = android.os.Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId) }
+            val result = tts.synthesizeToFile(text, extras, file, utteranceId)
+            if (result != TextToSpeech.SUCCESS) { file.delete(); tts.shutdown(); if (!cont.isCancelled) cont.resumeWithException(Exception("TTS failed: $result")) }
+        }
+    }
+
+    private fun extractPcmFromWav(wavData: ByteArray): ByteArray? {
+        var offset = 12
+        while (offset + 8 <= wavData.size) {
+            val chunkId = String(wavData, offset, 4)
+            val chunkSize = ((wavData[offset + 7].toInt() and 0xFF) shl 24) or
+                ((wavData[offset + 6].toInt() and 0xFF) shl 16) or
+                ((wavData[offset + 5].toInt() and 0xFF) shl 8) or (wavData[offset + 4].toInt() and 0xFF)
+            if (chunkId == "data") return wavData.copyOfRange(offset + 8, offset + 8 + chunkSize)
+            offset += 8 + chunkSize; if (chunkSize % 2 != 0) offset++
+        }
+        return null
+    }
+
+    private fun pcmToOpus(pcmData: ByteArray, sampleRate: Int): List<ByteArray> {
+        val result = mutableListOf<ByteArray>()
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, sampleRate, 1).apply {
+            setInteger(MediaFormat.KEY_BIT_RATE, 32000); setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+        }
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
+        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        encoder.start()
+        val bufferInfo = MediaCodec.BufferInfo()
+        var inputIndex = encoder.dequeueInputBuffer(10000)
+        if (inputIndex >= 0) {
+            val buf = encoder.getInputBuffer(inputIndex); buf?.clear(); buf?.put(pcmData)
+            encoder.queueInputBuffer(inputIndex, 0, pcmData.size, 0, 0)
+        }
+        inputIndex = encoder.dequeueInputBuffer(10000)
+        if (inputIndex >= 0) encoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        while (true) {
+            val outIndex = encoder.dequeueOutputBuffer(bufferInfo, 20000)
+            if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) continue
+            if (outIndex < 0) continue
+            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) { encoder.releaseOutputBuffer(outIndex, false); break }
+            val buf = encoder.getOutputBuffer(outIndex)
+            if (buf != null && bufferInfo.size > 0) {
+                val opus = ByteArray(bufferInfo.size)
+                buf.position(bufferInfo.offset); buf.get(opus, 0, bufferInfo.size)
+                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) result.add(opus)
+            }
+            encoder.releaseOutputBuffer(outIndex, false)
+        }
+        encoder.stop(); encoder.release()
+        return result
     }
 
     suspend fun createGroup(name: String, selectedBotIds: List<String>): GroupChat {
@@ -371,6 +495,8 @@ class GroupChatViewModel : ViewModel() {
         forwardRound = 0
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
+        originalUserQuery = content
+        prevBotName = ""
         lastSequentialContent = content
 
         if (sequentialBotIds.isNotEmpty()) {
