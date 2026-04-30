@@ -78,11 +78,32 @@ fun GroupChatScreen(
                 title = {
                     Column {
                         Text(group?.name ?: "群聊", fontSize = 18.sp)
-                        Text(
-                            "${group?.botIds?.size ?: 0} 个成员",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${group?.botIds?.size ?: 0} 个成员",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "·",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                imageVector = if (inputMode == 0) Icons.Default.Mic else Icons.Default.Keyboard,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = if (inputMode == 0) "语音" else "文字",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
@@ -91,11 +112,33 @@ fun GroupChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleInputMode() }) {
-                        Icon(
-                            imageVector = if (inputMode == 0) Icons.Default.Keyboard else Icons.Default.Mic,
-                            contentDescription = if (inputMode == 0) "切换到文字输入" else "切换到语音输入"
-                        )
+                    Box {
+                        var showMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "群设置")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (inputMode == 0) "切换为文字输入" else "切换为语音输入"
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    viewModel.toggleInputMode()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        if (inputMode == 0) Icons.Default.Keyboard else Icons.Default.Mic,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
