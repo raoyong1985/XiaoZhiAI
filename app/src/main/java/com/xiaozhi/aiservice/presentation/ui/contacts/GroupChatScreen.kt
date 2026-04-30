@@ -62,11 +62,17 @@ fun GroupChatScreen(
         viewModel.connectGroup(groupId)
     }
 
+    var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            if (lastVisible >= messages.size - 2 || messages.size <= 1) {
-                listState.animateScrollToItem(messages.size - 1)
+            if (initialLoad) {
+                initialLoad = false
+                listState.scrollToItem(messages.size - 1)
+            } else {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                if (lastVisible >= messages.size - 2) {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
             }
         }
     }

@@ -94,27 +94,48 @@ class GroupChatViewModel : ViewModel() {
         if (sequentialBotIds.isEmpty()) return
 
         currentGroupId = groupId
-        val sampleRate = audioService.getSampleRate()
-        val encoder = OpusEncoder(sampleRate = sampleRate)
-        opusEncoder = encoder
-
         val firstBotId = sequentialBotIds[0]
-        val service = botConnections[firstBotId]
+        val service = botConnections[firstBotId] ?: return
 
-        if (encoder.init { opusPacket ->
-                service?.sendAudio(opusPacket)
-            }
-        ) {
+        audioService.stopRecording()
+        opusEncoder?.stop()
+        opusEncoder = null
+
+        viewModelScope.launch {
+            val sampleRate = audioService.getSampleRate()
+            val encoder = OpusEncoder(sampleRate = sampleRate)
+            opusEncoder = encoder
+
             audioService.setOnSilenceDetected {
                 viewModelScope.launch { stopVoiceInput() }
             }
-            audioService.startRecording({ pcmData ->
-                encoder.encode(pcmData)
-            }, enableVAD = true)
+
             _isRecording.value = true
-            service?.sendListenStart("auto")
-        } else {
-            opusEncoder = null
+
+            service.sendListenStart("auto")
+            kotlinx.coroutines.delay(200)
+
+            if (!encoder.init { opusPacket ->
+                    service.sendAudio(opusPacket)
+                }
+            ) {
+                android.util.Log.w("GroupChatVM", "编码器初始化失败")
+                service.sendListenStop()
+                opusEncoder = null
+                _isRecording.value = false
+                return@launch
+            }
+
+            if (!audioService.startRecording({ pcmData ->
+                    encoder.encode(pcmData)
+                }, enableVAD = true)
+            ) {
+                android.util.Log.w("GroupChatVM", "录音启动失败")
+                service.sendListenStop()
+                opusEncoder?.stop()
+                opusEncoder = null
+                _isRecording.value = false
+            }
         }
     }
 
@@ -133,27 +154,35 @@ class GroupChatViewModel : ViewModel() {
 
     private fun observeBotReplies(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
         var replyContent = ""
+        var ttsTextContent = ""
+
         viewModelScope.launch {
             service.ttsText.collect { text ->
                 if (text.isNotBlank()) {
-                    replyContent = text
+                    ttsTextContent = text
                 }
             }
         }
 
         viewModelScope.launch {
             service.chatMessages.collect { chatMsg ->
-                if (chatMsg.direction == MessageDirection.RECEIVED && chatMsg.content.isNotBlank()) {
+                android.util.Log.i("GroupChatVM", "bot=$botName dir=${chatMsg.direction} content=${chatMsg.content.take(50)}")
+                if (chatMsg.content.isNotBlank()) {
+                    if (chatMsg.direction == MessageDirection.RECEIVED) {
+                        replyContent = chatMsg.content
+                    }
+                    val isBot = chatMsg.direction == MessageDirection.RECEIVED
                     val replyMessage = GroupMessage(
                         id = java.util.UUID.randomUUID().toString(),
                         groupId = groupId,
-                        botId = botId,
-                        botName = botName,
+                        botId = if (isBot) botId else "",
+                        botName = if (isBot) botName else "我",
                         content = chatMsg.content,
                         type = MessageType.TEXT,
-                        direction = MessageDirection.RECEIVED
+                        direction = chatMsg.direction
                     )
                     groupChatRepository.addMessage(groupId, replyMessage)
+                    android.util.Log.i("GroupChatVM", "save groupMsg ok botName=${replyMessage.botName}")
                 }
             }
         }
@@ -168,11 +197,15 @@ class GroupChatViewModel : ViewModel() {
 
         viewModelScope.launch {
             service.aiState.collect { state ->
-                if (state == "idle" && replyContent.isNotBlank()) {
-                    lastSequentialContent = replyContent
+                val text = replyContent.ifBlank { ttsTextContent }
+                android.util.Log.i("GroupChatVM", "aiState=$state replyContent='${text.take(20)}' bots=${sequentialBotIds.size} forwardRound=$forwardRound")
+                if (state == "idle" && text.isNotBlank()) {
+                    lastSequentialContent = text
                     replyContent = ""
+                    ttsTextContent = ""
                     if (forwardRound < MAX_FORWARD_ROUNDS && sequentialBotIds.size > 1) {
                         forwardRound++
+                        android.util.Log.i("GroupChatVM", "calling triggerNextSpeaker forwardRound=$forwardRound")
                         triggerNextSpeaker()
                     }
                 }
@@ -197,14 +230,43 @@ class GroupChatViewModel : ViewModel() {
     }
 
     private fun triggerNextSpeaker() {
-        if (sequentialBotIds.size <= 1) return
-        currentSpeakerIndex = (currentSpeakerIndex + 1) % sequentialBotIds.size
-        val speakerId = sequentialBotIds[currentSpeakerIndex]
-        val service = botConnections[speakerId] ?: return
-        if (lastSequentialContent.isNotBlank()) {
+        if (sequentialBotIds.size <= 1) {
+            android.util.Log.i("GroupChatVM", "triggerNextSpeaker: only 1 bot, skip")
+            return
+        }
+        viewModelScope.launch {
+            currentSpeakerIndex = (currentSpeakerIndex + 1) % sequentialBotIds.size
+            val speakerId = sequentialBotIds[currentSpeakerIndex]
+            val service = botConnections[speakerId]
+            if (service == null) {
+                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: no service for $speakerId")
+                return@launch
+            }
+
+            if (lastSequentialContent.isBlank()) {
+                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: lastSequentialContent is blank")
+                return@launch
+            }
+
             val sentences = lastSequentialContent.split(Regex("[，。！？、；：\\n]"))
-            val lastPhrase = sentences.lastOrNull { it.isNotBlank() }?.trim() ?: lastSequentialContent
-            service.sendTextContent(lastPhrase.takeLast(8))
+            val nonEmpty = sentences.map { it.trim() }.filter { it.isNotBlank() }
+            val trigger = if (nonEmpty.size >= 2) {
+                nonEmpty.takeLast(2).joinToString("")
+            } else {
+                nonEmpty.lastOrNull()?.trim() ?: lastSequentialContent.trim()
+            }.take(30)
+
+            if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
+                android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId not connected, reconnecting...")
+                val contact = _contacts.value.find { it.id == speakerId }
+                if (contact != null) {
+                    service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
+                }
+                kotlinx.coroutines.delay(2000)
+            }
+
+            android.util.Log.i("GroupChatVM", "triggerNextSpeaker: send to speakerIdx=$currentSpeakerIndex id=$speakerId trigger='$trigger'")
+            service.sendTextContent(trigger)
         }
     }
 

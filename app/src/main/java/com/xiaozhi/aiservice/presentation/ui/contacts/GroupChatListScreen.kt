@@ -106,7 +106,7 @@ fun GroupChatListScreen(
                         },
                         supportingContent = {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
@@ -114,16 +114,6 @@ fun GroupChatListScreen(
                                     contentDescription = null,
                                     modifier = Modifier.size(14.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                )
-                                Text(
-                                    text = if (group.inputMode == 0) "语音" else "文字",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "·",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                 )
                                 Text(
                                     text = "${group.botIds.size} 个成员",
