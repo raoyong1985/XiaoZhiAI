@@ -349,6 +349,440 @@ object MCPToolRegistry {
                 addProperty("count", results.size)
             }
         }
+
+        registerTool(
+            name = "open_app",
+            description = "在手机上打开指定的应用，通过包名启动",
+            inputSchema = jsonSchema(
+                "package_name" to jsonStringProp("应用包名，如 com.tencent.mm"),
+                "fallback_search" to jsonBoolProp("如果未找到，是否在应用商店搜索（默认 true）"),
+                required = listOf("package_name")
+            )
+        ) { args ->
+            val pkg = (args["package_name"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("package_name 不能为空")
+            val fallback = (args["fallback_search"] as? Boolean) ?: true
+            val ctx = AppContainer.context
+            try {
+                ctx.packageManager.getLaunchIntentForPackage(pkg)?.let {
+                    it.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    ctx.startActivity(it)
+                    JsonObject().apply { addProperty("success", true); addProperty("package", pkg) }
+                } ?: throw Exception("未找到应用 $pkg")
+            } catch (e: Exception) {
+                if (fallback) {
+                    try {
+                        val market = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=$pkg"))
+                        market.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        ctx.startActivity(market)
+                        JsonObject().apply { addProperty("success", true); addProperty("package", pkg); addProperty("note", "已跳转应用商店") }
+                    } catch (_: Exception) { throw Exception("未找到应用 $pkg") }
+                } else throw Exception("未找到应用 $pkg: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "open_url",
+            description = "在系统浏览器中打开指定链接",
+            inputSchema = jsonSchema(
+                "url" to jsonStringProp("完整的网页链接，需包含 https:// 或 http://"),
+                required = listOf("url")
+            )
+        ) { args ->
+            val url = (args["url"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("url 不能为空")
+            val finalUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(finalUrl)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                AppContainer.context.startActivity(this)
+            }
+            JsonObject().apply { addProperty("success", true); addProperty("url", finalUrl) }
+        }
+
+        registerTool(
+            name = "set_volume",
+            description = "调节手机音量，支持媒体、闹钟、通知、通话音量",
+            inputSchema = jsonSchema(
+                "type" to jsonStringProp("音量类型：media/alarm/ring/notification，默认 media"),
+                "level" to jsonNumberProp("音量 0-100，百分比"),
+                required = listOf("level")
+            )
+        ) { args ->
+            val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100) ?: throw Exception("level 必须为 0-100")
+            val type = (args["type"] as? String)?.lowercase() ?: "media"
+            val audioManager = AppContainer.context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                ?: throw Exception("无法获取 AudioManager")
+            val streamType = when (type) {
+                "media" -> android.media.AudioManager.STREAM_MUSIC
+                "alarm" -> android.media.AudioManager.STREAM_ALARM
+                "ring" -> android.media.AudioManager.STREAM_RING
+                "notification" -> android.media.AudioManager.STREAM_NOTIFICATION
+                else -> throw Exception("不支持的音量类型: $type，支持 media/alarm/ring/notification")
+            }
+            val maxVol = audioManager.getStreamMaxVolume(streamType)
+            val realLevel = (level * maxVol / 100).coerceAtLeast(0)
+            audioManager.setStreamVolume(streamType, realLevel, 0)
+            JsonObject().apply {
+                addProperty("success", true); addProperty("type", type)
+                addProperty("level", level); addProperty("real_level", realLevel); addProperty("max", maxVol)
+            }
+        }
+
+        registerTool(
+            name = "set_timer",
+            description = "设置一个倒计时器，到时间会响铃提醒",
+            inputSchema = jsonSchema(
+                "seconds" to jsonNumberProp("倒计时秒数"),
+                "label" to jsonStringProp("倒计时标签/备注"),
+                required = listOf("seconds")
+            )
+        ) { args ->
+            val seconds = (args["seconds"] as? Number)?.toInt() ?: throw Exception("seconds 必须为整数秒")
+            require(seconds in 1..86400) { "seconds 必须在 1-86400 之间" }
+            val label = args["label"] as? String ?: ""
+            val display = if (seconds >= 60) "${seconds / 60}分${seconds % 60}秒" else "${seconds}秒"
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                try {
+                    Intent(AlarmClock.ACTION_SET_TIMER).apply {
+                        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        AppContainer.context.startActivity(this)
+                    }
+                    JsonObject().apply { addProperty("success", true); addProperty("seconds", seconds); addProperty("display", display) }
+                } catch (e: Exception) { throw Exception("无法设置倒计时: ${e.message}") }
+            } else {
+                JsonObject().apply { addProperty("success", true); addProperty("note", "此设备不支持倒计时，请手动设置"); addProperty("seconds", seconds); addProperty("display", display) }
+            }
+        }
+
+        registerTool(
+            name = "get_memory_info",
+            description = "获取设备的内存（RAM）和存储空间使用情况",
+            inputSchema = jsonSchema()
+        ) { _ ->
+            val stats = android.os.StatFs("/data")
+            val blockSize = stats.blockSizeLong
+            val totalBlocks = stats.blockCountLong
+            val freeBlocks = stats.freeBlocksLong
+            val availBlocks = stats.availableBlocksLong
+            val runtime = Runtime.getRuntime()
+            JsonObject().apply {
+                addProperty("ram_total_mb", runtime.totalMemory() / 1024 / 1024)
+                addProperty("ram_free_mb", runtime.freeMemory() / 1024 / 1024)
+                addProperty("ram_max_mb", runtime.maxMemory() / 1024 / 1024)
+                addProperty("storage_total_gb", String.format(Locale.US, "%.1f", totalBlocks * blockSize / 1e9))
+                addProperty("storage_used_gb", String.format(Locale.US, "%.1f", (totalBlocks - freeBlocks) * blockSize / 1e9))
+                addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
+                addProperty("storage_avail_gb", String.format(Locale.US, "%.1f", availBlocks * blockSize / 1e9))
+            }
+        }
+
+        registerTool(
+            name = "vibrate",
+            description = "让手机震动，可指定时长和模式",
+            inputSchema = jsonSchema(
+                "duration_ms" to jsonNumberProp("震动时长（毫秒），默认 500"),
+                "pattern" to jsonStringProp("震动模式：once/short/long/rapid，默认 once")
+            )
+        ) { args ->
+            val duration = (args["duration_ms"] as? Number)?.toLong() ?: 500L
+            val pattern = (args["pattern"] as? String)?.lowercase() ?: "once"
+            val vibrator = AppContainer.context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                ?: throw Exception("此设备不支持震动")
+            val patternArr = when (pattern) {
+                "short" -> longArrayOf(0, 100)
+                "long" -> longArrayOf(0, 1000)
+                "rapid" -> longArrayOf(0, 200, 100, 200, 100, 200)
+                else -> longArrayOf(0, duration)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(android.os.VibrationEffect.createWaveform(patternArr, -1))
+            } else {
+                @Suppress("DEPRECATION") vibrator.vibrate(patternArr, -1)
+            }
+            JsonObject().apply { addProperty("success", true); addProperty("pattern", pattern); addProperty("duration_ms", patternArr.sum()) }
+        }
+
+        registerTool(
+            name = "screen_brightness",
+            description = "获取当前屏幕亮度，或设置亮度百分比",
+            inputSchema = jsonSchema(
+                "level" to jsonNumberProp("设置亮度 0-100（百分比），不传则只读取当前亮度"),
+            )
+        ) { args ->
+            val ctx = AppContainer.context
+            val resolver = ctx.contentResolver
+            try {
+                val current = android.provider.Settings.System.getInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+                val level = args["level"] as? Number
+                if (level != null) {
+                    val v = level.toInt().coerceIn(0, 100)
+                    val sysVal = (v * 255 / 100).coerceIn(0, 255)
+                    android.provider.Settings.System.putInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, sysVal)
+                    JsonObject().apply { addProperty("success", true); addProperty("previous", current * 100 / 255); addProperty("current", v) }
+                } else {
+                    JsonObject().apply { addProperty("success", true); addProperty("current", current * 100 / 255); addProperty("note", "不传 level 参数只读取亮度，传 level=N 可设置亮度") }
+                }
+            } catch (e: Exception) {
+                throw Exception("获取/设置亮度失败: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "get_public_ip",
+            description = "获取设备的公网 IP 地址和所在地",
+            inputSchema = jsonSchema()
+        ) { _ ->
+            try {
+                val text = httpGet("https://httpbin.org/ip", timeoutMs = 5000)
+                if (text.isEmpty()) throw Exception("请求失败")
+                val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
+                val ip = json?.get("origin")?.asString ?: text.trim()
+                val locText = httpGet("https://ipapi.co/$ip/json/", timeoutMs = 5000)
+                var city = ""; var country = ""; var isp = ""
+                try {
+                    val loc = JsonParser.parseString(locText).asJsonObject
+                    city = loc.get("city")?.asString ?: ""
+                    country = loc.get("country_name")?.asString ?: ""
+                    isp = loc.get("org")?.asString ?: ""
+                } catch (_: Exception) {}
+                JsonObject().apply {
+                    addProperty("ip", ip)
+                    if (city.isNotEmpty()) addProperty("city", city)
+                    if (country.isNotEmpty()) addProperty("country", country)
+                    if (isp.isNotEmpty()) addProperty("isp", isp)
+                }
+            } catch (e: Exception) { throw Exception("获取公网 IP 失败: ${e.message}") }
+        }
+
+        registerTool(
+            name = "get_news",
+            description = "获取最新新闻头条，支持指定类别",
+            inputSchema = jsonSchema(
+                "category" to jsonStringProp("新闻类别：top/general/world/business/technology/science/sports/entertainment，默认 top"),
+                "country" to jsonStringProp("国家代码：cn/us/jp/etc，默认 cn"),
+                "max_results" to jsonNumberProp("最多返回条数，默认 5"),
+            )
+        ) { args ->
+            val category = (args["category"] as? String)?.lowercase()?.takeIf { it.isNotBlank() } ?: "top"
+            val country = (args["country"] as? String)?.lowercase()?.takeIf { it.isNotBlank() } ?: "cn"
+            val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 20) ?: 5
+            val catParam = if (category == "top") "" else "&category=$category"
+            val url = "https://newsapi.org/v2/top-headlines?country=$country$catParam&pageSize=$maxResults&apiKey=a1c2e3f4g5h6i7j8k9l0m1n2o3p4q5r"
+            try {
+                var text = httpGet(url, timeoutMs = 6000)
+                var json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
+                var articles = json?.getAsJsonArray("articles")
+                if (articles == null || articles.size() == 0) {
+                    text = httpGet("https://tenapi.cn/v2/topnews?type=hot", timeoutMs = 5000)
+                    json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
+                    articles = json?.getAsJsonArray("data")
+                    if (articles != null) {
+                        val arr = JsonArray()
+                        for (i in 0 until minOf(articles.size(), maxResults)) {
+                            val a = articles[i].asJsonObject
+                            arr.add(JsonObject().apply {
+                                addProperty("title", a.get("title")?.asString ?: "")
+                                addProperty("desc", a.get("desc")?.asString ?: a.get("content")?.asString ?: "")
+                            })
+                        }
+                        return@registerTool JsonObject().apply { add("articles", arr); addProperty("count", arr.size()) }
+                    }
+                }
+                if (articles != null) {
+                    val arr = JsonArray()
+                    for (i in 0 until minOf(articles.size(), maxResults)) {
+                        val a = articles[i].asJsonObject
+                        arr.add(JsonObject().apply {
+                            addProperty("title", a.get("title")?.asString ?: "")
+                            addProperty("description", a.get("description")?.asString ?: "")
+                            addProperty("source", a.getAsJsonObject("source")?.get("name")?.asString ?: "")
+                            addProperty("url", a.get("url")?.asString ?: "")
+                        })
+                    }
+                    JsonObject().apply { add("articles", arr); addProperty("count", arr.size()) }
+                } else throw Exception("未获取到新闻")
+            } catch (e: Exception) { throw Exception("获取新闻失败: ${e.message}") }
+        }
+
+        registerTool(
+            name = "random_number",
+            description = "生成指定范围内的随机整数，或随机浮点数",
+            inputSchema = jsonSchema(
+                "min" to jsonNumberProp("最小值（含），默认 0"),
+                "max" to jsonNumberProp("最大值（含），默认 100"),
+                "type" to jsonStringProp("类型：int/float，默认 int"),
+            )
+        ) { args ->
+            val min = (args["min"] as? Number)?.toInt() ?: 0
+            val max = (args["max"] as? Number)?.toInt() ?: 100
+            val type = (args["type"] as? String)?.lowercase() ?: "int"
+            require(min <= max) { "min 必须 <= max" }
+            if (type == "float") {
+                val v = min + Math.random() * (max - min)
+                JsonObject().apply { addProperty("result", v); addProperty("min", min); addProperty("max", max); addProperty("type", "float") }
+            } else {
+                val v = (min + Math.random() * (max - min + 1)).toInt()
+                JsonObject().apply { addProperty("result", v); addProperty("min", min); addProperty("max", max); addProperty("type", "int") }
+            }
+        }
+
+        registerTool(
+            name = "encode_decode",
+            description = "对文本进行 Base64 或 URL 编码/解码",
+            inputSchema = jsonSchema(
+                "text" to jsonStringProp("要编解码的文本"),
+                "mode" to jsonStringProp("模式：base64_encode/base64_decode/url_encode/url_decode"),
+                required = listOf("text", "mode")
+            )
+        ) { args ->
+            val text = (args["text"] as? String).takeIf { it != null } ?: throw Exception("text 不能为空")
+            val mode = (args["mode"] as? String)?.lowercase() ?: throw Exception("mode 不能为空")
+            when (mode) {
+                "base64_encode" -> JsonObject().apply { addProperty("result", android.util.Base64.encodeToString(text.toByteArray(), android.util.Base64.NO_WRAP)) }
+                "base64_decode" -> JsonObject().apply { addProperty("result", String(android.util.Base64.decode(text, android.util.Base64.DEFAULT))) }
+                "url_encode" -> JsonObject().apply { addProperty("result", java.net.URLEncoder.encode(text, "UTF-8")) }
+                "url_decode" -> JsonObject().apply { addProperty("result", java.net.URLDecoder.decode(text, "UTF-8")) }
+                else -> throw Exception("不支持的 mode：$mode，支持 base64_encode/base64_decode/url_encode/url_decode")
+            }.also { it.addProperty("mode", mode) }
+        }
+
+        registerTool(
+            name = "get_orientation",
+            description = "获取设备当前的屏幕方向和旋转角度",
+            inputSchema = jsonSchema()
+        ) { _ ->
+            val ctx = AppContainer.context
+            val display = (ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager)?.defaultDisplay
+            val rotation = display?.rotation ?: -1
+            val orientation = ctx.resources.configuration.orientation
+            val rotationStr = when (rotation) {
+                0 -> "0° (竖屏-正常)"
+                1 -> "90° (横屏)"
+                2 -> "180° (竖屏-倒置)"
+                3 -> "270° (横屏-倒置)"
+                else -> "未知"
+            }
+            val orientationStr = when (orientation) {
+                android.content.res.Configuration.ORIENTATION_PORTRAIT -> "竖屏"
+                android.content.res.Configuration.ORIENTATION_LANDSCAPE -> "横屏"
+                else -> "未知"
+            }
+            JsonObject().apply {
+                addProperty("orientation", orientationStr)
+                addProperty("rotation", rotationStr)
+                addProperty("rotation_degrees", rotation * 90)
+            }
+        }
+
+        registerTool(
+            name = "get_installed_apps",
+            description = "列出手机上安装的应用包名和名称（非系统应用）",
+            inputSchema = jsonSchema(
+                "max_results" to jsonNumberProp("最多返回数量，默认 30"),
+                "keyword" to jsonStringProp("搜索关键词，只返回名称或包名包含此关键词的应用"),
+            )
+        ) { args ->
+            val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 200) ?: 30
+            val keyword = (args["keyword"] as? String)?.lowercase() ?: ""
+            val pm = AppContainer.context.packageManager
+            val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+            val apps = pm.queryIntentActivities(intent, 0)
+                .map { it.activityInfo }
+                .distinctBy { it.packageName }
+                .filter { keyword.isEmpty() || it.packageName.lowercase().contains(keyword) || it.loadLabel(pm).toString().lowercase().contains(keyword) }
+                .take(maxResults)
+            val arr = JsonArray()
+            apps.forEach { a ->
+                arr.add(JsonObject().apply {
+                    addProperty("name", a.loadLabel(pm).toString())
+                    addProperty("package", a.packageName)
+                })
+            }
+            JsonObject().apply { add("apps", arr); addProperty("count", arr.size()) }
+        }
+
+        registerTool(
+            name = "dict_lookup",
+            description = "中英文词典查询，返回单词释义、音标、例句等",
+            inputSchema = jsonSchema(
+                "word" to jsonStringProp("要查询的单词或词语（中文或英文）"),
+                required = listOf("word")
+            )
+        ) { args ->
+            val word = (args["word"] as? String)?.takeIf { it.isNotBlank() } ?: throw Exception("word 不能为空")
+            try {
+                val text = httpGet("https://api.dictionaryapi.dev/api/v2/entries/en/${java.net.URLEncoder.encode(word, "UTF-8")}", timeoutMs = 6000)
+                if (text.isEmpty() || text.startsWith("<")) {
+                    val cnText = httpGet("https://dict.youdao.com/suggest?q=${java.net.URLEncoder.encode(word, "UTF-8")}&le=zh", timeoutMs = 5000)
+                    val cnJson = try { JsonParser.parseString(cnText).asJsonObject } catch (_: Exception) { null }
+                    val entries = cnJson?.getAsJsonArray("data")?.get(0)?.asJsonObject?.getAsJsonArray("entries")
+                    if (entries != null && entries.size() > 0) {
+                        val e = entries[0].asJsonObject
+                        val explains = e.getAsJsonArray("explains")
+                        val arr = JsonArray()
+                        for (i in 0 until explains.size()) arr.add(explains[i].asString)
+                        return@registerTool JsonObject().apply { add("explanations", arr); addProperty("word", e.get("key")?.asString ?: word) }
+                    }
+                    throw Exception("未找到释义")
+                }
+                val json = JsonParser.parseString(text).asJsonArray
+                val first = json[0].asJsonObject
+                val meanings = first.getAsJsonArray("meanings")
+                val arr = JsonArray()
+                meanings.forEach { m ->
+                    val obj = m.asJsonObject
+                    val defs = obj.getAsJsonArray("definitions")
+                    for (i in 0 until minOf(defs.size(), 3)) {
+                        arr.add("[${obj.get("partOfSpeech")?.asString}] ${defs[i].asJsonObject.get("definition")?.asString}")
+                    }
+                }
+                val phonetics = first.getAsJsonArray("phonetics")
+                var phonetic = ""
+                for (i in 0 until (phonetics?.size() ?: 0)) {
+                    val p = phonetics!![i].asJsonObject
+                    val textStr = p.get("text")?.asString
+                    if (textStr != null) { phonetic = textStr; break }
+                }
+                JsonObject().apply {
+                    addProperty("word", first.get("word")?.asString ?: word)
+                    if (phonetic.isNotEmpty()) addProperty("phonetic", phonetic)
+                    add("definitions", arr)
+                }
+            } catch (e: Exception) {
+                if (e.message?.contains("释义") == true) throw e
+                throw Exception("查词失败: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "joke",
+            description = "讲一个随机笑话，支持中文或英文",
+            inputSchema = jsonSchema(
+                "lang" to jsonStringProp("语言：zh/en，默认 zh"),
+            )
+        ) { args ->
+            val lang = (args["lang"] as? String)?.lowercase()?.takeIf { it == "en" } ?: "zh"
+            try {
+                if (lang == "en") {
+                    val text = httpGet("https://v2.jokeapi.dev/joke/Any?type=single&safe-mode", timeoutMs = 5000)
+                    val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
+                    val joke = json?.get("joke")?.asString
+                    if (joke != null) return@registerTool JsonObject().apply { addProperty("joke", joke); addProperty("lang", "en") }
+                }
+                val text = httpGet("https://tenapi.cn/v2/joke", timeoutMs = 5000)
+                val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
+                val joke = json?.get("data")?.asJsonObject?.get("content")?.asString
+                    ?: json?.get("joke")?.asString
+                    ?: json?.get("data")?.asString
+                    ?: "程序员问老婆：我写的代码哪里有问题？老婆：你的问题就是写代码的时候想着我。"
+                JsonObject().apply { addProperty("joke", joke); addProperty("lang", "zh") }
+            } catch (e: Exception) {
+                JsonObject().apply { addProperty("joke", "为什么 AI 不会讲笑话？因为它的幽默感被404了。"); addProperty("note", "在线获取失败，使用默认笑话") }
+            }
+        }
     }
 
     private fun evaluateSimpleExpression(expr: String): Double {
@@ -477,6 +911,11 @@ object MCPToolRegistry {
 
     private fun jsonNumberProp(description: String): JsonObject = JsonObject().apply {
         addProperty("type", "number")
+        addProperty("description", description)
+    }
+
+    private fun jsonBoolProp(description: String): JsonObject = JsonObject().apply {
+        addProperty("type", "boolean")
         addProperty("description", description)
     }
 

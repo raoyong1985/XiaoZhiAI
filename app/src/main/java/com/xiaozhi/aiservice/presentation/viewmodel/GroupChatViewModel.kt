@@ -370,62 +370,105 @@ class GroupChatViewModel : ViewModel() {
             val cleaned = fullText.replace(Regex("[，。！？、；：\\n\\s\"'「」『』【】《》（）]"), "")
                 .replace(Regex("[${'\\'}u2600-${'\\'}u27BF${'\\'}uFE00-${'\\'}uFE0F${'\\'}u200D]"), "")
                 .replace(Regex("[${'\\'}uD800-${'\\'}uDFFF]"), "")
-            service.sendTextContent(cleaned.takeLast(8))
+            try { service.sendTextContent(cleaned.takeLast(8)) } catch (_: Exception) {}
         }
     }
 
-    private suspend fun textToPcm(text: String): ByteArray = withContext(kotlinx.coroutines.Dispatchers.IO) {
-        suspendCancellableCoroutine { cont ->
-            val context = AppContainer.context
-            val latch = java.util.concurrent.CountDownLatch(1)
-            val initResult = arrayOfNulls<Int>(1)
-            val tts = TextToSpeech(context) { status ->
-                initResult[0] = status
-                latch.countDown()
-            }
-            if (!latch.await(8000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                tts.shutdown()
-                if (!cont.isCancelled) cont.resumeWithException(Exception("TTS init timeout"))
-                return@suspendCancellableCoroutine
-            }
-            if (initResult[0] != TextToSpeech.SUCCESS) {
-                tts.shutdown()
-                if (!cont.isCancelled) cont.resumeWithException(Exception("TTS init: ${initResult[0]}"))
-                return@suspendCancellableCoroutine
-            }
-            tts.language = Locale.CHINESE
-            tts.setPitch(1.0f)
-            tts.setSpeechRate(1.0f)
-            val file = File(context.cacheDir, "tts_${System.nanoTime()}.wav")
-            val utteranceId = java.util.UUID.randomUUID().toString()
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onDone(id: String?) {
-                    val pcm = try { val r = file.readBytes(); extractPcmFromWav(r) } catch (e: Exception) { null }
-                    file.delete(); tts.shutdown()
-                    if (pcm != null && !cont.isCancelled) cont.resume(pcm)
-                    else if (!cont.isCancelled) cont.resumeWithException(Exception("TTS read failed"))
+    private var ttsFailed = false
+
+    private suspend fun textToPcm(text: String): ByteArray {
+        if (ttsFailed) throw Exception("TTS previously failed")
+        val encoded = java.net.URLEncoder.encode(text, "UTF-8")
+        // 依次尝试多个免费 TTS API
+        val urls = listOf(
+            "https://dict.youdao.com/dictvoice?audio=$encoded&le=zh",
+            "https://translate.google.com/translate_tts?ie=UTF-8&q=$encoded&tl=zh-CN&client=tw-ob",
+        )
+        for (urlStr in urls) {
+            try {
+                val mp3Data = withContext(Dispatchers.IO) {
+                    val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    conn.connectTimeout = 5000; conn.readTimeout = 5000
+                    try { conn.inputStream.use { it.readBytes() } } finally { conn.disconnect() }
                 }
-                override fun onError(id: String?) { file.delete(); tts.shutdown(); if (!cont.isCancelled) cont.resumeWithException(Exception("TTS error")) }
-                override fun onStart(id: String?) {}
-            })
-            val extras = android.os.Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId) }
-            val result = tts.synthesizeToFile(text, extras, file, utteranceId)
-            if (result != TextToSpeech.SUCCESS) { file.delete(); tts.shutdown(); if (!cont.isCancelled) cont.resumeWithException(Exception("TTS failed: $result")) }
+                if (mp3Data.isNotEmpty() && mp3Data.size > 1000) {
+                    android.util.Log.i("GroupChatVM", "TTS OK via $urlStr, size=${mp3Data.size}")
+                    return decodeMp3ToPcm(mp3Data)
+                }
+            } catch (_: Exception) { continue }
         }
+        ttsFailed = true
+        throw Exception("All TTS APIs failed")
     }
 
-    private fun extractPcmFromWav(wavData: ByteArray): ByteArray? {
-        var offset = 12
-        while (offset + 8 <= wavData.size) {
-            val chunkId = String(wavData, offset, 4)
-            val chunkSize = ((wavData[offset + 7].toInt() and 0xFF) shl 24) or
-                ((wavData[offset + 6].toInt() and 0xFF) shl 16) or
-                ((wavData[offset + 5].toInt() and 0xFF) shl 8) or (wavData[offset + 4].toInt() and 0xFF)
-            if (chunkId == "data") return wavData.copyOfRange(offset + 8, offset + 8 + chunkSize)
-            offset += 8 + chunkSize; if (chunkSize % 2 != 0) offset++
+    private fun decodeMp3ToPcm(mp3Data: ByteArray): ByteArray {
+        val tempFile = File(AppContainer.context.cacheDir, "tts_${System.nanoTime()}.mp3")
+        tempFile.writeBytes(mp3Data)
+        val extractor = android.media.MediaExtractor()
+        extractor.setDataSource(tempFile.absolutePath)
+        var trackIdx = -1
+        for (i in 0 until extractor.trackCount) {
+            val f = extractor.getTrackFormat(i)
+            if (f.getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { trackIdx = i; break }
         }
-        return null
+        if (trackIdx < 0) { tempFile.delete(); extractor.release(); throw Exception("No audio track") }
+        extractor.selectTrack(trackIdx)
+        val fmt = extractor.getTrackFormat(trackIdx)
+        val sampleRate = fmt.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE)
+        val decoder = MediaCodec.createDecoderByType("audio/mpeg")
+        decoder.configure(fmt, null, null, 0)
+        decoder.start()
+        val info = MediaCodec.BufferInfo()
+        val pcmList = mutableListOf<ByteArray>()
+        var eos = false
+        while (true) {
+            if (!eos) {
+                val inIdx = decoder.dequeueInputBuffer(10000)
+                if (inIdx >= 0) {
+                    val buf = decoder.getInputBuffer(inIdx)!!
+                    val sz = extractor.readSampleData(buf, 0)
+                    if (sz < 0) { decoder.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eos = true }
+                    else { decoder.queueInputBuffer(inIdx, 0, sz, extractor.sampleTime, 0); extractor.advance() }
+                }
+            }
+            val outIdx = decoder.dequeueOutputBuffer(info, 10000)
+            if (outIdx >= 0) {
+                if (info.size > 0) {
+                    val buf = decoder.getOutputBuffer(outIdx)!!
+                    val p = ByteArray(info.size)
+                    buf.position(info.offset); buf.get(p, 0, info.size)
+                    pcmList.add(p)
+                }
+                decoder.releaseOutputBuffer(outIdx, false)
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+            }
+        }
+        decoder.stop(); decoder.release(); extractor.release(); tempFile.delete()
+        val total = pcmList.sumOf { it.size }
+        val all = ByteArray(total)
+        var off = 0
+        for (p in pcmList) { System.arraycopy(p, 0, all, off, p.size); off += p.size }
+        return if (sampleRate == 16000) all else resamplePcm(all, sampleRate, 16000)
     }
+
+    private fun resamplePcm(input: ByteArray, inRate: Int, outRate: Int): ByteArray {
+        val inSamples = input.size / 2
+        val outSamples = (inSamples.toLong() * outRate / inRate).toInt()
+        val out = ByteArray(outSamples * 2)
+        for (i in 0 until outSamples) {
+            val src = i.toDouble() * inRate / outRate
+            val si = src.toInt(); val frac = src - si
+            val s0 = if (si < inSamples) readSample(input, si) else 0
+            val s1 = if (si + 1 < inSamples) readSample(input, si + 1) else s0
+            val v = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32767, 32767)
+            out[i * 2] = (v and 0xFF).toByte(); out[i * 2 + 1] = (v shr 8).toByte()
+        }
+        return out
+    }
+
+    private fun readSample(data: ByteArray, idx: Int): Short =
+        ((data[idx * 2].toInt() and 0xFF) or ((data[idx * 2 + 1].toInt()) shl 8)).toShort()
 
     private fun pcmToOpus(pcmData: ByteArray, sampleRate: Int): List<ByteArray> {
         val result = mutableListOf<ByteArray>()
