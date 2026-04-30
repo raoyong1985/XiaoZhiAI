@@ -613,7 +613,9 @@ object MCPToolRegistry {
                 != PackageManager.PERMISSION_GRANTED
             ) { throw Exception("未授予日历读取权限（READ_CALENDAR），请在设置中开启") }
 
-            val formatter = dateOnlyFmt.get()
+            val dateFmt = dateOnlyFmt.get()!!
+            val dateTimeFormat = dateTimeFmt.get()!!
+            val timeFormat = timeOnlyFmt.get()!!
             val now = java.util.Calendar.getInstance()
 
             val start = if (startDate.isNullOrEmpty()) {
@@ -624,21 +626,20 @@ object MCPToolRegistry {
                     set(java.util.Calendar.MILLISECOND, 0)
                 }.timeInMillis
             } else {
-                formatter.parse(startDate)?.time
+                dateFmt.parse(startDate)?.time
                     ?: throw Exception("start_date 格式错误，请使用 yyyy-MM-dd")
             }
 
             val end = if (endDate.isNullOrEmpty()) {
                 start + 24 * 60 * 60 * 1000 - 1
             } else {
-                val endCal = formatter.parse(endDate)
+                val endCal = dateFmt.parse(endDate)
                     ?: throw Exception("end_date 格式错误，请使用 yyyy-MM-dd")
                 java.util.Calendar.getInstance().apply {
                     time = endCal
                     set(java.util.Calendar.HOUR_OF_DAY, 23)
                     set(java.util.Calendar.MINUTE, 59)
                     set(java.util.Calendar.SECOND, 59)
-                    set(java.util.Calendar.MILLISECOND, 999)
                 }.timeInMillis
             }
 
@@ -661,10 +662,10 @@ object MCPToolRegistry {
                     val allDay = it.getInt(5) == 1
                     val location = it.getString(6) ?: ""
 
-                    val startStr = if (allDay) formatter.format(Date(dtStart))
-                    else dateTimeFmt.get().format(Date(dtStart))
+                    val startStr = if (allDay) dateFmt.format(Date(dtStart))
+                    else dateTimeFormat.format(Date(dtStart))
                     val endStr = if (allDay || dtEnd <= 0) ""
-                    else timeOnlyFmt.get().format(Date(dtEnd))
+                    else timeFormat.format(Date(dtEnd))
 
                     events.add(CalendarEvent(id, title, description, startStr, endStr, allDay, location))
                 }
