@@ -278,17 +278,20 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
+        var hasSpoken = false
+
         viewModelScope.launch {
             service.aiState.collect { state ->
                 android.util.Log.i("GroupChatVM", "[$botName] aiState=$state reply='${replyContent.take(20)}' fwd=$forwardRound ws=$waitingSpeakerIndex")
                 if (state == "speaking") {
-                    audioForwardBuffer.remove(botId)
+                    hasSpoken = true
                     if (botId == sequentialBotIds.firstOrNull() && _isRecording.value) {
                         android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
                         stopVoiceInput(userExplicitStop = false)
                     }
                 }
-                if (state == "idle" && replyContent.isNotBlank()) {
+                if (state == "idle" && hasSpoken) {
+                    hasSpoken = false
                     speakerMutex.withLock {
                         val currentBots = sequentialBotIds
                         val botIndex = currentBots.indexOf(botId)
@@ -335,7 +338,7 @@ class GroupChatViewModel : ViewModel() {
         if (nextIndex < 0) return
         val speakerId = currentBots[nextIndex]
         val service = botConnections[speakerId]
-        if (service == null || lastSequentialContent.isBlank()) return
+        if (service == null) return
         waitingSpeakerIndex = nextIndex
         currentSpeakerIndex = nextIndex
         if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
