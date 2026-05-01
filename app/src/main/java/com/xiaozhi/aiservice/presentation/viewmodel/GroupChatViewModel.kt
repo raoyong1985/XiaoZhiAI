@@ -65,6 +65,8 @@ class GroupChatViewModel : ViewModel() {
     private var timeoutJob: kotlinx.coroutines.Job? = null
     private val speakerMutex = Mutex()
 
+    private val audioForwardBuffer = mutableMapOf<String, MutableList<ByteArray>>()
+
     init {
         loadGroups()
         loadContacts()
@@ -94,6 +96,7 @@ class GroupChatViewModel : ViewModel() {
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
         lastSequentialContent = ""
+        audioForwardBuffer.clear()
         currentGroupId = groupId
 
         viewModelScope.launch {
@@ -138,6 +141,7 @@ class GroupChatViewModel : ViewModel() {
         lastSequentialContent = ""
         originalUserQuery = ""
         prevBotName = ""
+        audioForwardBuffer.clear()
 
         recordingGeneration++
         val currentGen = recordingGeneration
@@ -267,6 +271,7 @@ class GroupChatViewModel : ViewModel() {
                 service.connectionState.collect { state ->
                     if (state is XiaoZhiBackendService.ConnectionState.Connected && forwardRound != 0) {
                         forwardRound = 0
+                        audioForwardBuffer.clear()
                         waitingSpeakerIndex = -1
                     }
                 }
@@ -276,9 +281,12 @@ class GroupChatViewModel : ViewModel() {
         viewModelScope.launch {
             service.aiState.collect { state ->
                 android.util.Log.i("GroupChatVM", "[$botName] aiState=$state reply='${replyContent.take(20)}' fwd=$forwardRound ws=$waitingSpeakerIndex")
-                if (state == "speaking" && botId == sequentialBotIds.firstOrNull() && _isRecording.value) {
-                    android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
-                    stopVoiceInput(userExplicitStop = false)
+                if (state == "speaking") {
+                    audioForwardBuffer.remove(botId)
+                    if (botId == sequentialBotIds.firstOrNull() && _isRecording.value) {
+                        android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
+                        stopVoiceInput(userExplicitStop = false)
+                    }
                 }
                 if (state == "idle" && replyContent.isNotBlank()) {
                     speakerMutex.withLock {
@@ -311,6 +319,7 @@ class GroupChatViewModel : ViewModel() {
                         botAudioDecoders[botId] = decoder
                     }
                     decoder.decodePacket(audioData)
+                    audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
                 }
             }
         }
@@ -329,13 +338,6 @@ class GroupChatViewModel : ViewModel() {
         if (service == null || lastSequentialContent.isBlank()) return
         waitingSpeakerIndex = nextIndex
         currentSpeakerIndex = nextIndex
-        // 不释放前一个 decoder，让已在队列中的音频自然播完
-        // 构造带上下文的完整文本
-        val fullText = buildString {
-            if (originalUserQuery.isNotEmpty()) append("用户的问题：").append(originalUserQuery).append("。")
-            if (prevBotName.isNotEmpty()) append(prevBotName).append("说：")
-            append(lastSequentialContent).append("。你怎么看？")
-        }
         if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
             android.util.Log.w("GroupChatVM", "triggerNextSpeaker: $speakerId disconnected, reconnecting...")
             val contact = _contacts.value.find { it.id == speakerId }
@@ -350,28 +352,23 @@ class GroupChatViewModel : ViewModel() {
                 waitingSpeakerIndex = -1; return
             }
         }
-        // 先试 TTS 音频投递（无长度限制），失败则回退 8 字文本
-        var ttsOk = false
-        try {
-            val pcmData = withTimeoutOrNull(15000L) { textToPcm(fullText) } ?: throw Exception("TTS timeout")
-            if (pcmData.isNotEmpty()) {
-                val opusPackets = pcmToOpus(pcmData, 16000)
-                if (opusPackets.isNotEmpty()) {
-                    service.sendListenStart("auto")
-                    opusPackets.forEach { service.sendAudio(it) }
-                    service.sendListenStopOnly()
-                    ttsOk = true
-                }
+        // 直接转发前一个 bot 的 Opus 缓存语音
+        val prevBotId = sequentialBotIds.getOrNull(prevIndex)
+        val cachedOpus = prevBotId?.let { audioForwardBuffer.remove(it) }
+        if (!cachedOpus.isNullOrEmpty()) {
+            android.util.Log.i("GroupChatVM", "语音转发: ${cachedOpus.size}个Opus包 → $speakerId")
+            try {
+                service.sendListenStart("auto")
+                cachedOpus.forEach { service.sendAudio(it) }
+                service.sendListenStopOnly()
+                return
+            } catch (e: Exception) {
+                android.util.Log.w("GroupChatVM", "语音转发失败: ${e.message}")
             }
-        } catch (e: Exception) {
-            android.util.Log.w("GroupChatVM", "TTS投递失败: ${e.message}")
         }
-        if (!ttsOk) {
-            val cleaned = fullText.replace(Regex("[，。！？、；：\\n\\s\"'「」『』【】《》（）]"), "")
-                .replace(Regex("[${'\\'}u2600-${'\\'}u27BF${'\\'}uFE00-${'\\'}uFE0F${'\\'}u200D]"), "")
-                .replace(Regex("[${'\\'}uD800-${'\\'}uDFFF]"), "")
-            try { service.sendTextContent(cleaned.takeLast(8)) } catch (_: Exception) {}
-        }
+
+        android.util.Log.w("GroupChatVM", "语音缓存为空，跳过本轮转发")
+        waitingSpeakerIndex = -1
     }
 
     private var ttsFailed = false
@@ -538,6 +535,7 @@ class GroupChatViewModel : ViewModel() {
         forwardRound = 0
         currentSpeakerIndex = 0
         waitingSpeakerIndex = -1
+        audioForwardBuffer.clear()
         originalUserQuery = content
         prevBotName = ""
         lastSequentialContent = content
