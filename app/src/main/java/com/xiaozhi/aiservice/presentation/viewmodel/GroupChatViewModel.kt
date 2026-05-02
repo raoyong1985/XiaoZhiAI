@@ -52,6 +52,7 @@ class GroupChatViewModel : ViewModel() {
     private var recordingGeneration = 0
     private var timeoutJob: kotlinx.coroutines.Job? = null
     private val speakerMutex = Mutex()
+    private var relaySessionId = 0L  // 递增，用于判断aiState回调是否属于当前轮次
 
     private val audioForwardBuffer = ConcurrentHashMap<String, MutableList<ByteArray>>()
 
@@ -122,6 +123,11 @@ class GroupChatViewModel : ViewModel() {
         currentGroupId = groupId
         val firstBotId = sequentialBotIds[0]
         val service = botConnections[firstBotId] ?: return
+
+        // 递增轮次ID，让旧轮次的 aiState 回调不再触发下一人
+        relaySessionId++
+        // 中止所有正在说话的智能体（停掉旧轮次的TTS）
+        botConnections.values.forEach { try { it.sendAbort("new_input") } catch (_: Exception) {} }
 
         forwardRound = 0
         currentSpeakerIndex = 0
@@ -290,12 +296,14 @@ class GroupChatViewModel : ViewModel() {
         }
 
         var hasSpoken = false
+        var speakerSession = 0L  // 记录此bot开始说话时的轮次ID
 
         viewModelScope.launch {
             service.aiState.collect { state ->
                 android.util.Log.i("GroupChatVM", "[$botName] aiState=$state reply='${replyContent.take(20)}' fwd=$forwardRound ws=$waitingSpeakerIndex")
                 if (state == "speaking") {
                     hasSpoken = true
+                    speakerSession = relaySessionId  // 记住当前轮次
                     if (botId == sequentialBotIds.firstOrNull() && _isRecording.value) {
                         android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
                         stopVoiceInput(userExplicitStop = false)
@@ -304,6 +312,11 @@ class GroupChatViewModel : ViewModel() {
                 if (state == "idle" && hasSpoken) {
                     hasSpoken = false
                     speakerMutex.withLock {
+                        // 如果本轮次已被新输入取代（relaySessionId已递增），不触发下一人
+                        if (speakerSession != relaySessionId) {
+                            android.util.Log.i("GroupChatVM", "[$botName] 跳过旧轮次触发 speakerSession=$speakerSession currentSession=$relaySessionId")
+                            return@withLock
+                        }
                         val currentBots = sequentialBotIds
                         val botIndex = currentBots.indexOf(botId)
                         if (botIndex < 0) return@withLock
@@ -419,6 +432,9 @@ class GroupChatViewModel : ViewModel() {
             direction = MessageDirection.SENT
         )
         groupChatRepository.addMessage(groupId, userMessage)
+
+        relaySessionId++
+        botConnections.values.forEach { try { it.sendAbort("new_input") } catch (_: Exception) {} }
 
         forwardRound = 0
         currentSpeakerIndex = 0
