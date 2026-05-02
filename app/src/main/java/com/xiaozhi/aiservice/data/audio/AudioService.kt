@@ -156,10 +156,10 @@ class AudioService {
         val bufferSize = maxOf(minBuffer * 4, 8192)  // 8KB 缓冲
 
         try {
-            // VOICE_COMMUNICATION 启用系统 AEC/NS + AGC，参考 ESP32 AEC_MODE_VOIP_HIGH_PERF
-            // 回声消除防止扬声器播放的 AI 声音被麦克风采集，VAD 才能准确检测语音结束
+            // VOICE_RECOGNITION 保留原始音频不做 AEC/NS 处理，STT 准确率最高
+            // 参考 ESP32 AFE VAD_MODE_0 配置
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 recordSampleRate,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,

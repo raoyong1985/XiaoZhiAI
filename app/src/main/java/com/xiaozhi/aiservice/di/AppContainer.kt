@@ -26,6 +26,9 @@ object AppContainer {
     fun getBackendService(contactId: String): XiaoZhiBackendService {
         return backendServices.getOrPut(contactId) { XiaoZhiBackendService(gson) }
     }
+    fun removeBackendService(contactId: String) {
+        backendServices.remove(contactId)?.disconnect()
+    }
 
     val messageRepository: MessageRepository by lazy { MessageRepositoryImpl(context, gson) }
     val deviceRepository: DeviceRepository by lazy { DeviceRepositoryImpl() }
@@ -37,6 +40,14 @@ object AppContainer {
             val service = XiaoZhiBackendService(gson)
             ConnectionRepositoryImpl(service, audioService, messageRepository)
         }
+    }
+    fun removeGroupConnection(groupId: String) {
+        groupConnections.remove(groupId)
+    }
+    fun clearAllConnections() {
+        backendServices.values.forEach { it.disconnect() }
+        backendServices.clear()
+        groupConnections.clear()
     }
     
     val connectionRepository: ConnectionRepository by lazy {

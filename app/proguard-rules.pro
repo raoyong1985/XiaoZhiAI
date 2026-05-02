@@ -16,6 +16,17 @@
 # Keep data classes
 -keep class com.xiaozhi.aiservice.domain.model.** { *; }
 
+# Keep Gson-serialized group chat model classes
+-keep class com.xiaozhi.aiservice.domain.model.GroupMessage { *; }
+-keep class com.xiaozhi.aiservice.domain.model.GroupChat { *; }
+-keep class com.xiaozhi.aiservice.domain.model.BotContact { *; }
+-keep class com.xiaozhi.aiservice.domain.model.ChatMessage { *; }
+
+# Keep all Kotlin data classes (Gson serialization)
+-keepclassmembers class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+
 # Keep JNI native methods
 -keep class com.xiaozhi.aiservice.data.audio.NativeOpusDecoder { *; }
 
