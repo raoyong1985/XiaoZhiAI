@@ -390,12 +390,11 @@ class GroupChatViewModel : ViewModel() {
             android.util.Log.i("GroupChatVM", "转发: ${cachedOpus.size}个包/${totalBytes}B → $speakerId, 首包=${cachedOpus.firstOrNull()?.size}B")
             try {
                 service.sendListenStart("auto")
-                // 前10帧保持60ms间隔让ASR初始化，后续帧批量发出减少总耗时
-                cachedOpus.forEachIndexed { i, packet ->
+                // 逐帧发送，保持帧间隔让ASR正常识别
+                // 15ms/帧 ≈ 实际帧时长的1/4，500帧约7.5秒，避免服务器超时
+                cachedOpus.forEach { packet ->
                     service.sendAudio(packet)
-                    if (i < 10) {
-                        kotlinx.coroutines.delay(60)
-                    }
+                    kotlinx.coroutines.delay(15)
                 }
                 service.sendListenStopOnly()
                 return
