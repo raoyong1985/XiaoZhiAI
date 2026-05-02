@@ -393,7 +393,7 @@ class GroupChatViewModel : ViewModel() {
                 // 模拟自然语音节奏，逐帧发送（每帧间隔≈实际帧时长）
                 cachedOpus.forEach { packet ->
                     service.sendAudio(packet)
-                    kotlinx.coroutines.delay(30)  // 30ms间隔 ≈ 60ms帧半速
+                    kotlinx.coroutines.delay(60)  // 60ms间隔 ≈ 正常帧时长
                 }
                 service.sendListenStopOnly()
                 return
