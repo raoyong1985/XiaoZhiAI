@@ -718,6 +718,10 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
     /**
      * 处理服务器二进制消息 (Opus音频)
+     * 协议格式自动检测并剥离：
+     * - BinaryProtocol3 (ESP32): type(1) + reserved(1) + payload_size(2大端) + payload[]
+     * - 小智AI 1字节协议: type(1) + payload[]
+     * 剥离后只发射纯Opus payload，保证音频缓存和转发不走样
      */
     private fun handleBinaryMessage(data: ByteArray) {
         if (data.isEmpty()) {
@@ -725,9 +729,31 @@ class XiaoZhiBackendService(private val gson: Gson) {
             return
         }
         debugLog(TAG, "收到二进制音频: ${data.size} bytes")
-        // 使用emit发送Opus音频数据包
+        // 剥离协议头，只发射纯Opus payload
+        val opusPayload = stripProtocolHeader(data)
         scope.launch {
-            _audioData.emit(data)
+            _audioData.emit(opusPayload)
         }
+    }
+
+    /**
+     * 自动检测并剥离二进制协议头
+     * 返回纯Opus数据
+     */
+    private fun stripProtocolHeader(data: ByteArray): ByteArray {
+        if (data.size < 2) return data
+        val type = data[0].toInt() and 0xFF
+        if (data.size >= 4) {
+            val payloadSize = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
+            if (payloadSize > 0 && payloadSize + 4 <= data.size) {
+                // BinaryProtocol3: 4字节头有效
+                return data.copyOfRange(4, 4 + payloadSize)
+            }
+        }
+        if (type == 0x01 || type == 0x02) {
+            // 小智AI 1字节协议: [type(1)][payload...]
+            return data.copyOfRange(1, data.size)
+        }
+        return data
     }
 }
