@@ -126,8 +126,6 @@ class GroupChatViewModel : ViewModel() {
 
         // 递增轮次ID，让旧轮次的 aiState 回调不再触发下一人
         relaySessionId++
-        // 中止所有正在说话的智能体（停掉旧轮次的TTS）
-        botConnections.values.forEach { try { it.sendAbort("new_input") } catch (_: Exception) {} }
 
         forwardRound = 0
         currentSpeakerIndex = 0
@@ -355,6 +353,12 @@ class GroupChatViewModel : ViewModel() {
     private suspend fun triggerNextSpeakerUnsafe() {
         val currentBots = sequentialBotIds
         if (currentBots.size <= 1) return
+        // 用户正在录音时禁止转发（防止干扰）
+        if (_isRecording.value) {
+            android.util.Log.w("GroupChatVM", "triggerNextSpeaker: 用户正在录音，跳过转发")
+            waitingSpeakerIndex = -1
+            return
+        }
         val prevIndex = currentSpeakerIndex
         val available = currentBots.filterIndexed { i, _ -> i != prevIndex }
         if (available.isEmpty()) return
@@ -434,7 +438,6 @@ class GroupChatViewModel : ViewModel() {
         groupChatRepository.addMessage(groupId, userMessage)
 
         relaySessionId++
-        botConnections.values.forEach { try { it.sendAbort("new_input") } catch (_: Exception) {} }
 
         forwardRound = 0
         currentSpeakerIndex = 0
