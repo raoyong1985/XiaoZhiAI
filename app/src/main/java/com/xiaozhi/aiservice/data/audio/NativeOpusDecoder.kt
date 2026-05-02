@@ -158,7 +158,7 @@ class NativeOpusDecoder(
      * 协议头已在 XiaoZhiBackendService.handleBinaryMessage 中剥离，
      * 这里收到的 data 是纯 Opus payload，直接送 native 解码器
      */
-    fun decodePacket(opusData: ByteArray) {
+    fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
         if (decoderPtr == 0L || !isPlaying.get()) return
 
         try {
@@ -187,6 +187,9 @@ class NativeOpusDecoder(
                     .order(ByteOrder.LITTLE_ENDIAN)
                 byteBuffer.asShortBuffer().put(pcmLimiter)
                 val pcmBytes = byteBuffer.array()
+
+                // PCM回调：用于后续重编码提高转发质量
+                onPcm?.invoke(pcmBytes)
 
                 if (audioQueue.remainingCapacity() > 0) {
                     audioQueue.offer(pcmBytes)

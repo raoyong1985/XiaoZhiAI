@@ -330,8 +330,10 @@ class GroupChatViewModel : ViewModel() {
                         decoder.init()
                         botAudioDecoders[botId] = decoder
                     }
+                    // 解码播放
                     decoder.decodePacket(audioData)
-                    audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
+                    val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
+                    buf.add(audioData)
                 }
             }
         }
@@ -361,25 +363,30 @@ class GroupChatViewModel : ViewModel() {
                 waitingSpeakerIndex = -1; return
             }
         }
-        // Opus 缓存转发（直接转发上一 bot 的语音给下一 bot）
+        // 转发上一bot的Opus音频给下一bot
         val prevBotId = sequentialBotIds.getOrNull(prevIndex)
+        // 等待音频数据全部落盘（避免最后几帧协程还没跑到就被拿走）
+        kotlinx.coroutines.delay(500)
         val cachedOpus = prevBotId?.let { audioForwardBuffer.remove(it) }
         if (!cachedOpus.isNullOrEmpty()) {
-            android.util.Log.i("GroupChatVM", "Opus转发: ${cachedOpus.size}个包 → $speakerId")
+            val totalBytes = cachedOpus.sumOf { it.size }
+            android.util.Log.i("GroupChatVM", "转发: ${cachedOpus.size}个包/${totalBytes}B → $speakerId, 首包=${cachedOpus.firstOrNull()?.size}B")
             try {
                 service.sendListenStart("auto")
-                cachedOpus.forEach { service.sendAudio(it) }
+                // 模拟自然语音节奏，逐帧发送（每帧间隔≈实际帧时长）
+                cachedOpus.forEach { packet ->
+                    service.sendAudio(packet)
+                    kotlinx.coroutines.delay(30)  // 30ms间隔 ≈ 60ms帧半速
+                }
                 service.sendListenStopOnly()
                 return
             } catch (e: Exception) {
-                android.util.Log.w("GroupChatVM", "Opus转发失败: ${e.message}")
+                android.util.Log.w("GroupChatVM", "转发失败: ${e.message}")
             }
         }
-        android.util.Log.w("GroupChatVM", "无Opus缓存，跳过本轮")
+        android.util.Log.w("GroupChatVM", "无音频缓存，跳过本轮")
         waitingSpeakerIndex = -1
     }
-
-    // 注意：Opus语音缓存转发现在直接走 audioForwardBuffer，无需 TTS PCM 路径
 
     suspend fun createGroup(name: String, selectedBotIds: List<String>): GroupChat {
         val group = groupChatRepository.createGroup(name, selectedBotIds)
