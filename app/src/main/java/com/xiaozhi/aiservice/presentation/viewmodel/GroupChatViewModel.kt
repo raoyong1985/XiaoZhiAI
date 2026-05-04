@@ -289,18 +289,6 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        if (botId == sequentialBotIds.firstOrNull()) {
-            viewModelScope.launch {
-                service.connectionState.collect { state ->
-                    if (state is XiaoZhiBackendService.ConnectionState.Connected && forwardRound != 0) {
-                        forwardRound = 0
-                        audioForwardBuffer.clear()
-                        waitingSpeakerIndex = -1
-                    }
-                }
-            }
-        }
-
         var hasSpoken = false
         var speakerSession = 0L  // 记录此bot开始说话时的轮次ID
 
