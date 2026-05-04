@@ -46,8 +46,8 @@ class NativeOpusDecoder(
 
     // 帧大小
     private val serverFrameSamples = serverSampleRate * 60 / 1000  // 60ms @ 24kHz = 1440
-    // 静音帧 (200ms @ 16kHz = 3200 samples = 6400 bytes)，队列空时填充防 underrun
-    private val silenceFrame = ByteArray(6400)
+    // 静音帧 (400ms @ 16kHz = 6400 samples = 12800 bytes)，队列空时填充防 underrun
+    private val silenceFrame = ByteArray(12800)
 
     init {
         System.loadLibrary("native_opus_decoder")
@@ -96,7 +96,7 @@ class NativeOpusDecoder(
             audioTrack?.play()
             isPlaying.set(true)
 
-            warmUpPlayer()
+            warmUpPlayer(bufferSize)
 
             Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
@@ -113,9 +113,12 @@ class NativeOpusDecoder(
                                 Logger.e(TAG, "AudioTrack write error: $written")
                             }
                         } else {
-                            // 队列空时写 1 帧静音 (60ms @ 16kHz)，防止 AudioTrack underrun
+                            // 队列空时连续写静音，维持缓冲水位防 underrun
                             try {
-                                audioTrack?.write(silenceFrame, 0, silenceFrame.size)
+                                for (i in 0 until 3) {
+                                    val ret = audioTrack?.write(silenceFrame, 0, silenceFrame.size)
+                                    if (ret == null || ret < 0) break
+                                }
                             } catch (_: Exception) {}
                         }
                     } catch (e: InterruptedException) {
@@ -132,14 +135,12 @@ class NativeOpusDecoder(
         }
     }
 
-    private fun warmUpPlayer() {
+    private fun warmUpPlayer(bufferSize: Int) {
         try {
-            // 预填充 6帧静音（360ms），让 AudioTrack 有足够数据开始播放不卡顿
-            val warmupFrames = 6
-            val warmupSamplesPerFrame = clientSampleRate * 60 / 1000  // 960 @ 16kHz
-            val warmupData = ByteArray(warmupSamplesPerFrame * warmupFrames * 2)
+            // 预填充整个 AudioTrack 缓冲区（~4秒静音），最大化抗网络抖动能力
+            val warmupData = ByteArray(bufferSize)
             audioTrack?.write(warmupData, 0, warmupData.size)
-            Logger.i(TAG, "warmup ${warmupFrames} frames ok (${warmupData.size} bytes)")
+            Logger.i(TAG, "warmup ok (${warmupData.size} bytes = ~${bufferSize / 32000}s)")
         } catch (e: Exception) {
             Logger.e(TAG, "warmup failed: ${e.message}")
         }
