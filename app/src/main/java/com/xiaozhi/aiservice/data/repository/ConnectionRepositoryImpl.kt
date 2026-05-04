@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.data.repository
 
+import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
@@ -18,24 +19,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 private const val TAG = "ConnectionRepo"
-
-/**
- * 条件日志：仅在 debug 版本输出
- */
-private fun debugLogRepo(tag: String, msg: String) {
-    if (com.xiaozhi.aiservice.BuildConfig.ENABLE_DEBUG_LOG) android.util.Log.i(tag, msg)
-}
-
-private fun debugLogRepoE(tag: String, msg: String) {
-    if (com.xiaozhi.aiservice.BuildConfig.ENABLE_DEBUG_LOG) android.util.Log.e(tag, msg)
-}
-
-private fun debugLogRepoW(tag: String, msg: String) {
-    if (com.xiaozhi.aiservice.BuildConfig.ENABLE_DEBUG_LOG) android.util.Log.w(tag, msg)
-}
 
 class ConnectionRepositoryImpl(
     private val backendService: XiaoZhiBackendService,
@@ -74,85 +62,93 @@ class ConnectionRepositoryImpl(
     // Opus 编码器（录音用）
     private var opusEncoder: OpusEncoder? = null
 
+    // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
+    private val stateMutex = Mutex()
+
     init {
         observeBackendService()
     }
-    
+
+    // 将后端连接状态映射到领域层连接状态
+    private fun XiaoZhiBackendService.ConnectionState.toDomainState(): ConnectionState = when (this) {
+        is XiaoZhiBackendService.ConnectionState.Connected -> ConnectionState.Connected
+        is XiaoZhiBackendService.ConnectionState.Connecting -> ConnectionState.Connecting
+        is XiaoZhiBackendService.ConnectionState.Error -> ConnectionState.Error("连接错误")
+        is XiaoZhiBackendService.ConnectionState.Disconnected -> ConnectionState.Disconnected
+    }
+
     private fun observeBackendService() {
         scope.launch {
             backendService.connectionState.collect { state ->
-                _connectionState.value = when (state) {
-                    is XiaoZhiBackendService.ConnectionState.Connected -> ConnectionState.Connected
-                    is XiaoZhiBackendService.ConnectionState.Connecting -> ConnectionState.Connecting
-                    is XiaoZhiBackendService.ConnectionState.Error -> ConnectionState.Error("连接错误")
-                    is XiaoZhiBackendService.ConnectionState.Disconnected -> ConnectionState.Disconnected
-                }
+                _connectionState.value = state.toDomainState()
             }
         }
 
         scope.launch {
             backendService.aiState.collect { state ->
-                val newAiState = when (state.lowercase()) {
-                    "listening" -> AiState.LISTENING
-                    "speaking" -> AiState.SPEAKING
-                    "processing" -> AiState.PROCESSING
-                    else -> AiState.IDLE
-                }
-                val oldAiState = _aiState.value
-
-                // AUTO 模式：TTS 开始时如果还在 LISTENING 状态（VAD auto-stop 后等待 TTS）
-                if (newAiState == AiState.SPEAKING && oldAiState == AiState.LISTENING && isAutoMode) {
-                    debugLogRepo(TAG, "AUTO 模式：TTS 开始（从 LISTENING → SPEAKING），停止 encoder 防止回声")
-                    audioService.stopRecording()
-                    opusEncoder?.stop()
-                    opusEncoder = null
-                    weStartedRecording = false
-                    // 不发送 abort，服务器知道我们在 listening 状态
-                    _aiState.value = newAiState
-                    return@collect
-                }
-
-                // AI 开始说话时，自动停止我们启动的录音（防止麦克风采集到 AI 自己的声音发往 STT）
-                if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
-                    debugLogRepo(TAG, "AI 开始说话，自动停止录音以避免回声")
-                    backendService.sendAbort("playback_start")
-                    audioService.stopRecording()
-                    audioService.abandonAudioFocus()
-                    opusEncoder?.stop()
-                    opusEncoder = null
-                    backendService.sendListenStop()
-                    weStartedRecording = false
-                }
-
-                // 更新状态
-                _aiState.value = newAiState
-
-                // AI 说完话回到 IDLE，且是 AUTO 模式 → 立刻重启监听
-                if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
-                    debugLogRepo(TAG, "AI 说完话，AUTO 模式立即重启监听")
-                    // 复用之前的 encoder（避免重新初始化延迟），或立即创建新的
-                    var encoder = opusEncoder
-                    if (encoder == null) {
-                        val sampleRate = audioService.getSampleRate()
-                        opusEncoder = OpusEncoder(sampleRate = sampleRate)
-                        encoder = opusEncoder
+                stateMutex.withLock {
+                    val newAiState = when (state.lowercase()) {
+                        "listening" -> AiState.LISTENING
+                        "speaking" -> AiState.SPEAKING
+                        "processing" -> AiState.PROCESSING
+                        else -> AiState.IDLE
                     }
-                    if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-                        audioService.setOnSilenceDetected {
-                            scope.launch { stopListening(userExplicitStop = false) }
-                        }
-                        audioService.startRecording({ pcmData ->
-                            encoder.encode(pcmData)
-                        }, enableVAD = true)
-                        backendService.sendListenStart("auto")
-                        _aiState.value = AiState.LISTENING
-                        weStartedRecording = true
-                        debugLogRepo(TAG, "AUTO 模式监听已重启")
-                    } else {
-                        debugLogRepoE(TAG, "AUTO 模式重启监听失败：Opus 编码器初始化失败")
+                    val oldAiState = _aiState.value
+
+                    // AUTO 模式：TTS 开始时如果还在 LISTENING 状态（VAD auto-stop 后等待 TTS）
+                    if (newAiState == AiState.SPEAKING && oldAiState == AiState.LISTENING && isAutoMode) {
+                        Logger.i(TAG, "AUTO 模式：TTS 开始（从 LISTENING → SPEAKING），停止 encoder 防止回声")
+                        audioService.stopRecording()
+                        opusEncoder?.stop()
                         opusEncoder = null
-                        isAutoMode = false
-                        _aiState.value = AiState.IDLE
+                        weStartedRecording = false
+                        // 不发送 abort，服务器知道我们在 listening 状态
+                        _aiState.value = newAiState
+                        return@withLock
+                    }
+
+                    // AI 开始说话时，自动停止我们启动的录音（防止麦克风采集到 AI 自己的声音发往 STT）
+                    if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
+                        Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声")
+                        backendService.sendAbort("playback_start")
+                        audioService.stopRecording()
+                        audioService.abandonAudioFocus()
+                        opusEncoder?.stop()
+                        opusEncoder = null
+                        backendService.sendListenStop()
+                        weStartedRecording = false
+                    }
+
+                    // 更新状态
+                    _aiState.value = newAiState
+
+                    // AI 说完话回到 IDLE，且是 AUTO 模式 → 立刻重启监听
+                    if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
+                        Logger.i(TAG, "AI 说完话，AUTO 模式立即重启监听")
+                        // 复用之前的 encoder（避免重新初始化延迟），或立即创建新的
+                        var encoder = opusEncoder
+                        if (encoder == null) {
+                            val sampleRate = audioService.getSampleRate()
+                            opusEncoder = OpusEncoder(sampleRate = sampleRate)
+                            encoder = opusEncoder
+                        }
+                        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
+                            audioService.setOnSilenceDetected {
+                                scope.launch { stopListening(userExplicitStop = false) }
+                            }
+                            audioService.startRecording({ pcmData ->
+                                encoder.encode(pcmData)
+                            }, enableVAD = true)
+                            backendService.sendListenStart("auto")
+                            _aiState.value = AiState.LISTENING
+                            weStartedRecording = true
+                            Logger.i(TAG, "AUTO 模式监听已重启")
+                        } else {
+                            Logger.e(TAG, "AUTO 模式重启监听失败：Opus 编码器初始化失败")
+                            opusEncoder = null
+                            isAutoMode = false
+                            _aiState.value = AiState.IDLE
+                        }
                     }
                 }
             }
@@ -167,12 +163,12 @@ class ConnectionRepositoryImpl(
                     val serverSampleRate = backendService.getServerSampleRate()
                     audioService.setSampleRate(serverSampleRate)
                     // 不在这初始化解码器，等 hello 收到后再初始化
-                    debugLogRepo(TAG, "已连接，等待服务器hello...")
+                    Logger.i(TAG, "已连接，等待服务器hello...")
                 } else if (state is XiaoZhiBackendService.ConnectionState.Disconnected ||
                            state is XiaoZhiBackendService.ConnectionState.Error) {
                     opusDecoder?.release()
                     opusDecoder = null
-                    debugLogRepo(TAG, "连接断开，解码器已释放")
+                    Logger.i(TAG, "连接断开，解码器已释放")
                 }
             }
         }
@@ -180,13 +176,13 @@ class ConnectionRepositoryImpl(
         // 观察聊天消息流（stt/tts消息）
         scope.launch {
             backendService.chatMessages.collect { message ->
-                debugLogRepo(TAG, "收到聊天消息: ${message.direction.name} - ${message.content.take(100)}")
+                Logger.i(TAG, "收到聊天消息: ${message.direction.name} - ${message.content.take(100)}")
                 // STT回显的消息如果是自己刚发的，跳过（避免重复显示用户发送的消息）
                 // 注意：STT的direction可能是SENT（用户说话）或RECEIVED（AI说话），两种都要检查
                 if (message.type == MessageType.TEXT) {
                     synchronized(lastSentTextLock) {
                         if (message.content == lastSentText) {
-                            debugLogRepo(TAG, "跳过STT回显的消息（与最后发送的消息相同）")
+                            Logger.i(TAG, "跳过STT回显的消息（与最后发送的消息相同）")
                             lastSentText = null
                             return@collect
                         }
@@ -198,7 +194,7 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.textMessage.collect { text ->
-                debugLogRepo(TAG, "收到文本消息: ${text.take(100)}")
+                Logger.i(TAG, "收到文本消息: ${text.take(100)}")
             }
         }
 
@@ -214,12 +210,12 @@ class ConnectionRepositoryImpl(
                         decoder = NativeOpusDecoder(serverRate, 16000, serverCh)
                         decoder.init()
                         opusDecoder = decoder
-                        debugLogRepo(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch)")
+                        Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch)")
                     }
                     decoder.decodePacket(audioData)
                     val dt = (System.nanoTime() - t0) / 1000
                     if (dt > 5000) {
-                        debugLogRepoW(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
+                        Logger.w(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
                     }
                 }
             }
@@ -227,12 +223,12 @@ class ConnectionRepositoryImpl(
     }
 
     override suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit> {
-        debugLogRepo(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
+        Logger.i(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
         
         // 互斥：连接新联系人前先断开旧连接
         if (_connectionState.value is ConnectionState.Connected || 
             _connectionState.value is ConnectionState.Connecting) {
-            debugLogRepo(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
+            Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
             opusEncoder?.stop()
             opusEncoder = null
@@ -245,12 +241,12 @@ class ConnectionRepositoryImpl(
         currentContactId = contactId
         return try {
             _connectionState.value = ConnectionState.Connecting
-            debugLogRepo(TAG, "ConnectionRepositoryImpl: calling backendService.connect()...")
+            Logger.i(TAG, "ConnectionRepositoryImpl: calling backendService.connect()...")
             backendService.connect(config.serverUrl, config.otaUrl, config.deviceId, config.clientId, config.accessToken)
-            debugLogRepo(TAG, "ConnectionRepositoryImpl: backendService.connect() returned successfully")
+            Logger.i(TAG, "ConnectionRepositoryImpl: backendService.connect() returned successfully")
             Result.success(Unit)
         } catch (e: Exception) {
-            debugLogRepoE(TAG, "ConnectionRepositoryImpl.connect() failed: ${e.message}")
+            Logger.e(TAG, "ConnectionRepositoryImpl.connect() failed: ${e.message}")
             _connectionState.value = ConnectionState.Error(e.message ?: "连接失败")
             Result.failure(e)
         }
@@ -268,6 +264,11 @@ class ConnectionRepositoryImpl(
     
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
         currentContactId = contactId
+        // 先检查连接状态
+        if (_connectionState.value !is ConnectionState.Connected) {
+            Logger.w(TAG, "sendTextMessage: 未连接，消息未发送: $text")
+            return Result.failure(Exception("未连接到服务器"))
+        }
         // 先添加到本地消息列表（用户发送）
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -299,56 +300,60 @@ class ConnectionRepositoryImpl(
     }
     
     override suspend fun startListening(mode: String) {
-        backendService.sendListenStart(mode)
-        _aiState.value = AiState.LISTENING
-        weStartedRecording = true
-        isAutoMode = (mode == "auto")
+        stateMutex.withLock {
+            backendService.sendListenStart(mode)
+            _aiState.value = AiState.LISTENING
+            weStartedRecording = true
+            isAutoMode = (mode == "auto")
 
-        audioService.setOnSilenceDetected {
-            scope.launch { stopListening(userExplicitStop = false) }
-        }
+            audioService.setOnSilenceDetected {
+                scope.launch { stopListening(userExplicitStop = false) }
+            }
 
-        val sampleRate = audioService.getSampleRate()
-        opusEncoder = OpusEncoder(sampleRate = sampleRate)
-        val encoder = opusEncoder
-        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-            audioService.startRecording({ pcmData ->
-                encoder.encode(pcmData)
-            }, enableVAD = true)
-        } else {
-            debugLogRepoE(TAG, "Opus 编码器初始化失败")
-            opusEncoder = null
-            weStartedRecording = false
-            isAutoMode = false
-            _aiState.value = AiState.IDLE
+            val sampleRate = audioService.getSampleRate()
+            opusEncoder = OpusEncoder(sampleRate = sampleRate)
+            val encoder = opusEncoder
+            if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
+                audioService.startRecording({ pcmData ->
+                    encoder.encode(pcmData)
+                }, enableVAD = true)
+            } else {
+                Logger.e(TAG, "Opus 编码器初始化失败")
+                opusEncoder = null
+                weStartedRecording = false
+                isAutoMode = false
+                _aiState.value = AiState.IDLE
+            }
         }
     }
 
     override suspend fun stopListening(userExplicitStop: Boolean) {
-        if (weStartedRecording && userExplicitStop) {
-            backendService.sendAbort("user_stop")
-        }
-        backendService.sendListenStop()
+        stateMutex.withLock {
+            if (weStartedRecording && userExplicitStop) {
+                backendService.sendAbort("user_stop")
+            }
+            backendService.sendListenStop()
 
-        // AUTO 模式 VAD 自然结束：只停录音和 encoder，保持状态等 TTS
-        val isAutoStop = !userExplicitStop && isAutoMode
-        audioService.stopRecording()
-        opusEncoder?.stop()
-        opusEncoder = null
-        weStartedRecording = false
+            // AUTO 模式 VAD 自然结束：只停录音和 encoder，保持状态等 TTS
+            val isAutoStop = !userExplicitStop && isAutoMode
+            audioService.stopRecording()
+            opusEncoder?.stop()
+            opusEncoder = null
+            weStartedRecording = false
 
-        if (!isAutoStop) {
-            audioService.abandonAudioFocus()
-        }
+            if (!isAutoStop) {
+                audioService.abandonAudioFocus()
+            }
 
-        if (userExplicitStop) {
-            isAutoMode = false
-            _aiState.value = AiState.IDLE
-        } else if (!isAutoMode) {
-            _aiState.value = AiState.IDLE
-        } else {
-            debugLogRepo(TAG, "VAD auto-stop (AUTO 模式)，保持状态等待 TTS")
+            if (userExplicitStop) {
+                isAutoMode = false
+                _aiState.value = AiState.IDLE
+            } else if (!isAutoMode) {
+                _aiState.value = AiState.IDLE
+            } else {
+                Logger.i(TAG, "VAD auto-stop (AUTO 模式)，保持状态等待 TTS")
+            }
+            Logger.i(TAG, "stopListening: userExplicitStop=$userExplicitStop, isAutoMode=$isAutoMode, isAutoStop=$isAutoStop")
         }
-        debugLogRepo(TAG, "stopListening: userExplicitStop=$userExplicitStop, isAutoMode=$isAutoMode, isAutoStop=$isAutoStop")
     }
 }

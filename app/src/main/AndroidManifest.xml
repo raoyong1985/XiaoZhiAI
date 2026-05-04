@@ -54,6 +54,7 @@
         android:theme="@style/Theme.XiaoZhiAI"
         android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
         <activity

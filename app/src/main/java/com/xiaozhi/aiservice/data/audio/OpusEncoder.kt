@@ -2,21 +2,10 @@ package com.xiaozhi.aiservice.data.audio
 
 import android.media.MediaCodec
 import android.media.MediaFormat
-import android.util.Log
+import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.BuildConfig
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-
-/**
- * 条件日志：仅在 debug 版本输出
- */
-private fun debugLogEnc(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
-}
-
-private fun debugLogEncE(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.e(tag, msg)
-}
 
 /**
  * Opus 音频编码器
@@ -53,10 +42,10 @@ class OpusEncoder(
             isEncoding = true
             startEncodeLoop()
 
-            debugLogEnc(TAG, "Opus 编码器初始化成功: sampleRate=$sampleRate, bitRate=$bitRate")
+            Logger.i(TAG, "Opus 编码器初始化成功: sampleRate=$sampleRate, bitRate=$bitRate")
             return true
         } catch (e: Exception) {
-            debugLogEncE(TAG, "Opus 编码器初始化失败: ${e.message}")
+            Logger.e(TAG, "Opus 编码器初始化失败: ${e.message}")
             return false
         }
     }
@@ -108,7 +97,7 @@ class OpusEncoder(
                         outputIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
                     }
                     } catch (e: Exception) {
-                        if (isEncoding) debugLogEncE(TAG, "编码错误: ${e.message}")
+                        if (isEncoding) Logger.e(TAG, "编码错误: ${e.message}")
                     }
             }
         }, "opus-encoder").apply { start() }
@@ -136,6 +125,6 @@ class OpusEncoder(
 
         pcmQueue.clear()
         onOpusData = null
-        debugLogEnc(TAG, "Opus 编码器已停止")
+        Logger.i(TAG, "Opus 编码器已停止")
     }
 }

@@ -30,6 +30,10 @@
 # Keep JNI native methods
 -keep class com.xiaozhi.aiservice.data.audio.NativeOpusDecoder { *; }
 
+# Keep MCP tools registry and tool class (release 混淆会丢失 tools/list 响应)
+-keep class com.xiaozhi.aiservice.data.remote.MCPToolRegistry { *; }
+-keep class com.xiaozhi.aiservice.data.remote.MCPTool { *; }
+
 # Keep DataStore Preferences keys (generated class)
 -keep class com.xiaozhi.aiservice.data.repository.MessageRepositoryImpl$** { *; }
 

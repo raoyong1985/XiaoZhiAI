@@ -14,12 +14,17 @@ import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.DeviceRepository
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
 object AppContainer {
     lateinit var context: Context
     val gson: Gson by lazy { Gson() }
     val audioService: AudioService by lazy { AudioService() }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     // 支持多个WebSocket连接（群聊功能）
     private val backendServices = mutableMapOf<String, XiaoZhiBackendService>()
@@ -42,11 +47,18 @@ object AppContainer {
         }
     }
     fun removeGroupConnection(groupId: String) {
-        groupConnections.remove(groupId)
+        groupConnections.remove(groupId)?.let { repo ->
+            scope.launch {
+                repo.disconnect()
+            }
+        }
     }
     fun clearAllConnections() {
         backendServices.values.forEach { it.disconnect() }
         backendServices.clear()
+        groupConnections.values.forEach { repo ->
+            scope.launch { repo.disconnect() }
+        }
         groupConnections.clear()
     }
     

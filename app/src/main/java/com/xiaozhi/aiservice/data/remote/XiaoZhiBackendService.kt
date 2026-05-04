@@ -1,14 +1,16 @@
 package com.xiaozhi.aiservice.data.remote
 
-import android.util.Log
+import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonNull
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.model.AiStateStr
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,21 +24,6 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-
-/**
- * 条件日志：仅在 debug 版本输出
- */
-private fun debugLog(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
-}
-
-private fun debugLogE(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.e(tag, msg)
-}
-
-private fun debugLogW(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.w(tag, msg)
-}
 
 /**
  * 小智AI WebSocket客户端
@@ -75,7 +62,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     // AI状态: idle, listening, speaking
-    private val _aiState = MutableStateFlow("idle")
+    private val _aiState = MutableStateFlow<String>(AiStateStr.IDLE)
     val aiState: StateFlow<String> = _aiState.asStateFlow()
 
     // 收到服务器转写的文本
@@ -121,6 +108,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
     private var isReconnecting = false     // 是否正在重连
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
+    private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
+    private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
 
     /**
      * 连接服务器
@@ -137,15 +126,15 @@ class XiaoZhiBackendService(private val gson: Gson) {
         this.accessToken = accessToken
         this.reconnectAttempt = 0
         _connectionState.value = ConnectionState.Connecting
-        debugLog(TAG, "连接中: $url")
+        Logger.i(TAG, "连接中: $url")
 
         // 先进行OTA注册（设备激活），注册完成后建立WebSocket连接
         scope.launch {
             try {
                 registerDevice(otaUrl, deviceId, clientId)
-                debugLog(TAG, "OTA注册完成，开始建立WebSocket连接")
+                Logger.i(TAG, "OTA注册完成，开始建立WebSocket连接")
             } catch (e: Exception) {
-                debugLogE(TAG, "OTA注册失败: ${e.message}，但仍尝试连接")
+                Logger.e(TAG, "OTA注册失败: ${e.message}，但仍尝试连接")
             }
             doConnect(url, deviceId, clientId, accessToken)
         }
@@ -170,7 +159,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         }
 
         val body = systemInfo.toString()
-        debugLog(TAG, "OTA注册请求: $body")
+        Logger.i(TAG, "OTA注册请求: $body")
 
         val requestBody = body.toRequestBody("application/json".toMediaTypeOrNull())
 
@@ -185,7 +174,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         val client = OkHttpClient()
         val response = client.newCall(request).execute()
         val responseBody = response.body?.string() ?: "empty"
-        debugLog(TAG, "OTA注册响应: ${response.code} - ${responseBody.take(200)}")
+        Logger.i(TAG, "OTA注册响应: ${response.code} - ${responseBody.take(200)}")
 
         if (response.isSuccessful) {
             try {
@@ -194,14 +183,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 val wsObj = json.getAsJsonObject("websocket")
                 if (wsObj != null) {
                     wsToken = wsObj.get("token")?.asString ?: ""
-                    debugLog(TAG, "WebSocket token 已获取")
+                    Logger.i(TAG, "WebSocket token 已获取")
                 }
                 // 保存激活challenge（如果有）
                 if (json.has("activation")) {
                     val activation = json.getAsJsonObject("activation")
                     pendingActivationChallenge = activation?.get("challenge")?.asString ?: ""
                     val code = activation?.get("code")?.asString ?: ""
-                    debugLog(TAG, "设备需要激活，验证码: $code")
+                    Logger.i(TAG, "设备需要激活，验证码: $code")
                     // 显示验证码到聊天界面
                     val message = ChatMessage(
                         id = java.util.UUID.randomUUID().toString(),
@@ -214,13 +203,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     scope.launch { _chatMessages.emit(message) }
                 }
             } catch (e: Exception) {
-                debugLogE(TAG, "解析OTA响应失败: ${e.message}")
+                Logger.e(TAG, "解析OTA响应失败: ${e.message}")
             }
         }
     }
 
     private fun doConnect(url: String, deviceId: String, clientId: String, accessToken: String) {
-        debugLog(TAG, "Device-Id: $deviceId, Client-Id: $clientId")
+        Logger.i(TAG, "Device-Id: $deviceId, Client-Id: $clientId")
 
         val headers = Headers.Builder().apply {
             add("Protocol-Version", PROTOCOL_VERSION)
@@ -229,7 +218,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             // 优先使用OTA注册返回的websocket token
             if (wsToken.isNotEmpty()) {
                 add("Authorization", "Bearer $wsToken")
-                debugLog(TAG, "使用WebSocket token认证")
+                Logger.i(TAG, "使用WebSocket token认证")
             } else if (accessToken.isNotEmpty()) {
                 add("Authorization", "Bearer $accessToken")
             }
@@ -239,34 +228,32 @@ class XiaoZhiBackendService(private val gson: Gson) {
             .url(url)
             .headers(headers)
             .build()
-        debugLog(TAG, "发送WebSocket请求...")
+        Logger.i(TAG, "发送WebSocket请求...")
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
                 reconnectAttempt = 0
                 isReconnecting = false
                 _connectionState.value = ConnectionState.Connected
-                debugLog(TAG, "WebSocket已连接! 发送hello...")
+                Logger.i(TAG, "WebSocket已连接! 发送hello...")
                 sendHello()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                debugLog(TAG, "收到文本: ${text.take(200)}")
+                Logger.i(TAG, "收到文本: ${text.take(200)}")
                 handleTextMessage(text)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                val ba = bytes.toByteArray()
-                debugLog(TAG, "收到二进制: ${ba.size} bytes")
                 handleBinaryMessage(bytes.toByteArray())
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                debugLog(TAG, "WebSocket关闭: $code $reason")
+                Logger.i(TAG, "WebSocket关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
                 if (code == 1005) {
-                    debugLogW(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
+                    Logger.w(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
                     isReconnecting = false
                     reconnectAttempt = 0
                     _connectionState.value = ConnectionState.Error
@@ -276,11 +263,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                debugLog(TAG, "WebSocket已关闭: $code $reason")
+                Logger.i(TAG, "WebSocket已关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
                 if (code == 1005) {
-                    debugLogW(TAG, "服务器要求激活设备，停止重连")
+                    Logger.w(TAG, "服务器要求激活设备，停止重连")
                     isReconnecting = false
                     reconnectAttempt = 0
                     _connectionState.value = ConnectionState.Error
@@ -290,7 +277,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                debugLogE(TAG, "WebSocket失败: ${t.message}")
+                Logger.e(TAG, "WebSocket失败: ${t.message}")
                 isConnected = false
                 _connectionState.value = ConnectionState.Error
                 scheduleReconnect()
@@ -299,6 +286,10 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     fun disconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        idleDebounceJob?.cancel()
+        idleDebounceJob = null
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         isConnected = false
@@ -307,7 +298,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         wsToken = ""
         pendingActivationChallenge = ""
         _connectionState.value = ConnectionState.Disconnected
-        _aiState.value = "idle"
+        _aiState.value = AiStateStr.IDLE
     }
 
     /**
@@ -322,12 +313,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
         // 指数退避: 1s, 2s, 4s, 8s, 16s, 32s, 最多2分钟
         val delay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(7))).coerceAtMost(120000L)
-        debugLog(TAG, "计划 ${reconnectAttempt}s 后重连 (延迟: ${delay}ms)")
+        Logger.i(TAG, "计划 ${reconnectAttempt}s 后重连 (延迟: ${delay}ms)")
 
-        scope.launch {
+        // 取消上一次重连协程（如果有），避免 disconnect 后残留
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
             delay(delay)
             isReconnecting = false
-            debugLog(TAG, "执行重连... (第 $reconnectAttempt 次)")
+            Logger.i(TAG, "执行重连... (第 $reconnectAttempt 次)")
             _connectionState.value = ConnectionState.Connecting
             doConnect(serverUrl, deviceId, clientId, accessToken)
         }
@@ -366,7 +359,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             addProperty("mode", mode)
         }
         sendTextMessage(message.toString())
-        _aiState.value = "listening"
+        _aiState.value = AiStateStr.LISTENING
     }
 
     /**
@@ -379,7 +372,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             addProperty("state", "stop")
         }
         sendTextMessage(message.toString())
-        _aiState.value = "idle"
+        _aiState.value = AiStateStr.IDLE
     }
 
     /**
@@ -406,7 +399,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             addProperty("challenge", challenge)
             addProperty("code", code)
         }
-        debugLog(TAG, "发送激活响应")
+        Logger.i(TAG, "发送激活响应")
         sendTextMessage(message.toString())
     }
 
@@ -422,7 +415,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             }
         }
         sendTextMessage(message.toString())
-        _aiState.value = "idle"
+        _aiState.value = AiStateStr.IDLE
     }
 
     /**
@@ -445,7 +438,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * state="text" 服务器不会响应
      */
     fun sendTextContent(text: String) {
-        android.util.Log.e(TAG, ">>>>>>>>>>>>>>>>>>>> sendTextContent: isConnected=$isConnected text=${text.take(30)}")
+        Logger.e(TAG, ">>>>>>>>>>>>>>>>>>>> sendTextContent: isConnected=$isConnected text=${text.take(30)}")
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -457,10 +450,10 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
     private fun sendTextMessage(text: String) {
         if (!isConnected) {
-            android.util.Log.w(TAG, "WebSocket未连接，消息未发送: ${text.take(50)}")
+            Logger.w(TAG, "WebSocket未连接，消息未发送: ${text.take(50)}")
             return
         }
-        debugLog(TAG, "发送: ${text.take(200)}")
+        Logger.i(TAG, "发送: ${text.take(200)}")
         webSocket?.send(text)
     }
 
@@ -480,11 +473,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
         try {
             val json = gson.fromJson(text, JsonObject::class.java) ?: return
             val type = json.get("type")?.asString ?: return
-            debugLog(TAG, "处理消息类型: $type")
+            Logger.i(TAG, "处理消息类型: $type")
 
             when (type) {
                 "hello" -> {
-                    debugLog(TAG, "收到hello响应! 设备已连接")
+                    Logger.i(TAG, "收到hello响应! 设备已连接")
                     // 解析session_id
                     sessionId = json.get("session_id")?.asString ?: ""
                     // 解析服务器返回的采样率
@@ -492,16 +485,16 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     if (audioParams != null) {
                         serverSampleRate = audioParams.get("sample_rate")?.asInt ?: 16000
                         serverChannels = audioParams.get("channels")?.asInt ?: 1
-                        debugLog(TAG, "服务器音频参数: ${serverSampleRate}Hz, ${serverChannels}ch")
+                        Logger.i(TAG, "服务器音频参数: ${serverSampleRate}Hz, ${serverChannels}ch")
                     }
-                    debugLog(TAG, "Session ID: $sessionId")
+                    Logger.i(TAG, "Session ID: $sessionId")
 
                     // 检查hello中是否包含激活challenge（服务器要求激活）
                     val activation = json.getAsJsonObject("activation")
                     if (activation != null) {
                         val challenge = activation.get("challenge")?.asString ?: ""
                         val challengeCode = activation.get("code")?.asString ?: ""
-                        debugLog(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
+                        Logger.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
                         // 立即发送激活响应
                         if (challenge.isNotEmpty()) {
                             sendActivation(challenge, challengeCode)
@@ -510,7 +503,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 }
                 "activation" -> {
                     val code = json.get("code")?.asString
-                    debugLog(TAG, "收到激活码: $code")
+                    Logger.i(TAG, "收到激活码: $code")
                     // 通知UI显示激活码
                     _textMessage.value = "激活码: $code"
                 }
@@ -540,28 +533,32 @@ class XiaoZhiBackendService(private val gson: Gson) {
                         ?: json.get("audio_data")?.asString
 
                     if (audioBase64 != null && audioBase64.isNotEmpty()) {
-                        debugLog(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
+                        Logger.i(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
                         try {
                             val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
                             if (audioData.isNotEmpty()) {
                                 scope.launch { _audioData.emit(audioData) }
                             }
                         } catch (e: Exception) {
-                            debugLogE(TAG, "Base64 解码失败: ${e.message}")
+                            Logger.e(TAG, "Base64 解码失败: ${e.message}")
                         }
                     }
                     
                     when (state) {
                         "start" -> {
-                            android.util.Log.e(TAG, "!!!! tts start received, setting aiState=speaking")
-                            _aiState.value = "speaking"
+                            idleDebounceJob?.cancel()
+                            Logger.e(TAG, "!!!! tts start received, setting aiState=speaking")
+                            _aiState.value = AiStateStr.SPEAKING
                             _ttsText.value = ""
                         }
                         "stop" -> {
-                            android.util.Log.e(TAG, "!!!! tts stop received, setting aiState=idle")
-                            _aiState.value = "idle"
+                            idleDebounceJob?.cancel()
+                            Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
+                            _aiState.value = AiStateStr.IDLE
                         }
                         "sentence_start" -> {
+                            // 新句子到来，取消空闲防抖
+                            idleDebounceJob?.cancel()
                             // 流式TTS：立即发出消息，让用户看到AI正在"思考"
                             if (ttsTextContent.isNotEmpty()) {
                                 val id = java.util.UUID.randomUUID().toString()
@@ -586,6 +583,16 @@ class XiaoZhiBackendService(private val gson: Gson) {
                                 streamingMessageId = ""
                             }
                             _ttsText.value = ""
+                            // 防抖：3s后无新sentence_start或音频则切idle
+                            // 部分服务器不发送tts state=stop，导致群聊接龙卡住
+                            idleDebounceJob?.cancel()
+                            idleDebounceJob = scope.launch {
+                                delay(3000)
+                                if (_aiState.value == AiStateStr.SPEAKING) {
+                                    Logger.i(TAG, "tts sentence_end 超时无后续，自动切 idle")
+                                    _aiState.value = AiStateStr.IDLE
+                                }
+                            }
                         }
                     }
                 }
@@ -623,7 +630,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                                 add("payload", responsePayload)
                             }
                             sendTextMessage(response.toString())
-                            debugLog(TAG, "回复MCP initialized响应")
+                            Logger.i(TAG, "回复MCP initialized响应")
                         }
                         "tools/list" -> {
                             val toolList = MCPToolRegistry.getToolList()
@@ -640,7 +647,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                                 add("payload", responsePayload)
                             }
                             sendTextMessage(response.toString())
-                            debugLog(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
+                            Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
                         }
                         "tools/call" -> {
                             val params = payload?.get("params")?.asJsonObject
@@ -687,17 +694,20 @@ class XiaoZhiBackendService(private val gson: Gson) {
                                     add("payload", responsePayload)
                                 }
                                 sendTextMessage(response.toString())
-                                debugLog(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
+                                Logger.i(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
                             }
                         }
+                        "notifications/initialized" -> {
+                            // JSON-RPC 通知，无需回复
+                        }
                         else -> {
-                            debugLogW(TAG, "未知MCP方法: $method")
+                            Logger.w(TAG, "未知MCP方法: $method")
                         }
                     }
                 }
                 "abort" -> {
                     // 服务器中止当前操作
-                    _aiState.value = "idle"
+                    _aiState.value = AiStateStr.IDLE
                     val reason = json.get("reason")?.asString ?: ""
                     _textMessage.value = "[中断] $reason"
                 }
@@ -707,7 +717,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                         ?: json.get("message")?.asString
                         ?: json.get("content")?.asString
                         ?: "收到通知"
-                    debugLog(TAG, "收到Alert: $alertText")
+                    Logger.i(TAG, "收到Alert: $alertText")
                     scope.launch { _alert.emit(alertText) }
                 }
             }
@@ -725,10 +735,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
      */
     private fun handleBinaryMessage(data: ByteArray) {
         if (data.isEmpty()) {
-            debugLogW(TAG, "收到空二进制消息")
+            Logger.w(TAG, "收到空二进制消息")
             return
         }
-        debugLog(TAG, "收到二进制音频: ${data.size} bytes")
+        // 有音频数据到达，取消空闲防抖
+        idleDebounceJob?.cancel()
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
         scope.launch {

@@ -1,6 +1,6 @@
 package com.xiaozhi.aiservice.presentation.viewmodel
 
-import android.util.Log
+import com.xiaozhi.aiservice.utils.Logger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -18,13 +18,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 private const val TAG = "ChatViewModel"
-
-/**
- * 条件日志：仅在 debug 版本输出
- */
-private fun debugLogVM(tag: String, msg: String) {
-    if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(tag, msg)
-}
 
 class ChatViewModel(
     private val connectionRepository: ConnectionRepository,
@@ -94,7 +87,7 @@ class ChatViewModel(
     }
 
     fun connect(serverUrl: String, otaUrl: String, deviceId: String, clientId: String, contactId: String, voiceMode: VoiceMode) {
-        debugLogVM(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
+        Logger.i(TAG, "connect() called: serverUrl=$serverUrl, contactId=$contactId, deviceId=$deviceId")
         currentContactId = contactId
         _uiState.update { it.copy(voiceMode = voiceMode) }
         observeMessages(contactId)
@@ -106,7 +99,7 @@ class ChatViewModel(
                 clientId = clientId
             )
             pendingConfig = config
-            debugLogVM(TAG, "connect: about to call connectionRepository.connect()")
+            Logger.i(TAG, "connect: about to call connectionRepository.connect()")
             connectionRepository.connect(config, contactId)
         }
     }
@@ -121,7 +114,7 @@ class ChatViewModel(
         val config = pendingConfig ?: return
         val contactId = currentContactId
         if (contactId.isBlank()) return
-        debugLogVM(TAG, "tryReconnect: attempting reconnection...")
+        Logger.i(TAG, "tryReconnect: attempting reconnection...")
         viewModelScope.launch {
             connectionRepository.connect(config, contactId)
         }
@@ -147,7 +140,7 @@ class ChatViewModel(
 
     fun sendTextMessage(text: String) {
         viewModelScope.launch {
-            debugLogVM(TAG, "sendTextMessage: 发送文本: $text")
+            Logger.i(TAG, "sendTextMessage: 发送文本: $text")
             connectionRepository.sendTextMessage(currentContactId, text)
         }
     }

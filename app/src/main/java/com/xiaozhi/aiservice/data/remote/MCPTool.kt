@@ -119,6 +119,7 @@ object MCPToolRegistry {
                 }
 
                 val cacheKey = "${lat},${lon}"
+                evictExpiredWeatherCache()  // 清理过期条目后再查缓存
                 val cached = weatherCache[cacheKey]
                 if (cached != null && System.currentTimeMillis() - cached.timestamp < 300_000) {
                     return@registerTool cached.data
@@ -1021,6 +1022,13 @@ object MCPToolRegistry {
 
     private data class CacheEntry(val data: JsonObject, val timestamp: Long)
     private val weatherCache = ConcurrentHashMap<String, CacheEntry>()
+
+    // 天气缓存：定期清理过期条目（每30分钟执行一次）
+    private fun evictExpiredWeatherCache() {
+        val now = System.currentTimeMillis()
+        val maxAge = 300_000L  // 5分钟
+        weatherCache.entries.removeIf { (now - it.value.timestamp) > maxAge }
+    }
 
     // ========== CalendarHelper ==========
 

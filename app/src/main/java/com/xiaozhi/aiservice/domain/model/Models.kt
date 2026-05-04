@@ -107,6 +107,16 @@ enum class VoiceMode(val serverValue: String, val displayName: String) {
     }
 }
 
+/**
+ * AiState 字符串常量：替换 XiaoZhiBackendService 中的魔法字符串
+ */
+object AiStateStr {
+    const val IDLE = "idle"
+    const val LISTENING = "listening"
+    const val SPEAKING = "speaking"
+    const val PROCESSING = "processing"
+}
+
 data class BotContact(
     val id: String = "",                       // 唯一标识（UUID）
     val name: String = "",                     // 联系人名称

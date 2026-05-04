@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
+import com.xiaozhi.aiservice.utils.Logger
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -35,9 +36,6 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
     }
 
-    private fun debugLogMainActivity(msg: String) {
-        if (BuildConfig.ENABLE_DEBUG_LOG) Log.i(TAG, msg)
-    }
     private lateinit var chatViewModel: ChatViewModel
     private lateinit var contactsViewModel: ContactsViewModel
 
@@ -45,7 +43,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
-        debugLogMainActivity("权限结果: RECORD_AUDIO=$audioGranted")
+        Logger.i(TAG, "权限结果: RECORD_AUDIO=$audioGranted")
         // 网络类权限安装时已授权，只要有 RECORD_AUDIO 结果就继续
         initializeViewModels()
     }
