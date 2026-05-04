@@ -341,12 +341,15 @@ class GroupChatViewModel : ViewModel() {
                     botLastAudioTime[botId] = System.currentTimeMillis()
                     var decoder = botAudioDecoders[botId]
                     if (decoder == null) {
+                        // 释放所有旧解码器，避免多个AudioTrack同时播放导致卡顿
+                        botAudioDecoders.values.forEach { it.release() }
+                        botAudioDecoders.clear()
+                        android.util.Log.i("GroupChatVM", "[$botName] 释放旧解码器，创建新解码器")
                         val serverRate = service.getServerSampleRate()
                         val serverCh = service.getServerChannels()
                         decoder = NativeOpusDecoder(serverRate, 16000, serverCh)
                         decoder.init()
                         botAudioDecoders[botId] = decoder
-                        android.util.Log.i("GroupChatVM", "[$botName] 创建解码器")
                     }
                     // 解码播放
                     decoder.decodePacket(audioData)
