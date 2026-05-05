@@ -21,8 +21,8 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val MAX_QUEUE_SIZE = 400
-        private const val BUFFER_MULTIPLIER = 32
+        private const val MAX_QUEUE_SIZE = 200
+        private const val BUFFER_MULTIPLIER = 6
     }
 
     private var decoderPtr: Long = 0
@@ -80,7 +80,11 @@ class NativeOpusDecoder(
             audioTrack?.play()
             isPlaying.set(true)
 
-            warmUpPlayer(bufferSize)
+            // 写入少量静音预填充 AudioTrack 缓冲，防止部分设备不出声
+            try {
+                val prime = ByteArray(4096)  // 256ms @16kHz
+                audioTrack?.write(prime, 0, prime.size)
+            } catch (_: Exception) {}
 
             Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
@@ -119,18 +123,6 @@ class NativeOpusDecoder(
 
         } catch (e: Exception) {
             Logger.e(TAG, "init failed: ${e.message}")
-        }
-    }
-
-    private fun warmUpPlayer(bufferSize: Int) {
-        try {
-            val targetBytes = minOf(bufferSize / 2, 64000)
-            val warmupData = ByteArray(targetBytes)
-            val written = audioTrack?.write(warmupData, 0, warmupData.size) ?: 0
-            if (written > 0) totalBytesWritten += written
-            Logger.i(TAG, "warmup ok (${written} bytes = ~${targetBytes / 32000}s)")
-        } catch (e: Exception) {
-            Logger.e(TAG, "warmup failed: ${e.message}")
         }
     }
 

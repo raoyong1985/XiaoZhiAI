@@ -45,7 +45,10 @@ val botBubbleColors = listOf(
 @Composable
 fun GroupChatScreen(
     groupId: String,
-    viewModel: GroupChatViewModel = viewModel(factory = GroupChatViewModel.Factory()),
+    viewModel: GroupChatViewModel = viewModel(
+        key = groupId,
+        factory = GroupChatViewModel.Factory()
+    ),
     onNavigateBack: () -> Unit
 ) {
     val groups by viewModel.groups.collectAsState()
