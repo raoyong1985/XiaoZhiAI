@@ -14,19 +14,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.abs
 
-/**
- * 使用 native libopus 解码 + flutter_pcm_player 风格的 AudioTrack
- * 
- * Flutter 声音正常的架构：
- * 1. opus_dart (libopus 原生) 解码 → 24kHz PCM
- * 2. 线性插值 24kHz→16kHz 重采样
- * 3. AGC 处理
- * 4. flutter_pcm_player (STREAM_MUSIC, 无 AudioAttributes, minBuffer)
- * 
- * 这里复现第4步：用 native AudioTrack 匹配 flutter_pcm_player 的配置
- * 
- * 16kHz 输出，与 Flutter 保持一致
- */
 class NativeOpusDecoder(
     private val serverSampleRate: Int = 24000,
     private val clientSampleRate: Int = 16000,
@@ -34,20 +21,24 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val MAX_QUEUE_SIZE = 400      // 队列缓冲网络抖动
-        private const val BUFFER_MULTIPLIER = 32    // 32倍 minBuffer ≈ 2s，吸收网络抖动避免 underrun
+        private const val MAX_QUEUE_SIZE = 400
+        private const val BUFFER_MULTIPLIER = 32
     }
 
-    private var decoderPtr: Long = 0  // native decoder pointer
+    private var decoderPtr: Long = 0
     private var audioTrack: AudioTrack? = null
     private val isPlaying = AtomicBoolean(false)
+    val isReleased: Boolean get() = decoderPtr == 0L && audioTrack == null
     private val audioQueue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE_SIZE)
     private var playThread: Thread? = null
 
-    // 帧大小
-    private val serverFrameSamples = serverSampleRate * 60 / 1000  // 60ms @ 24kHz = 1440
-    // 静音帧 (400ms @ 16kHz = 6400 samples = 12800 bytes)，队列空时填充防 underrun
+    @Volatile
+    private var totalBytesWritten: Long = 0L
+
+    private val serverFrameSamples = serverSampleRate * 60 / 1000
     private val silenceFrame = ByteArray(12800)
+
+    private var pendingDecodePackets = 0
 
     init {
         System.loadLibrary("native_opus_decoder")
@@ -62,18 +53,11 @@ class NativeOpusDecoder(
             }
             Logger.i(TAG, "Native Opus decoder created: ${serverSampleRate}Hz, $channels ch")
 
-            // ===== 匹配 flutter_pcm_player 的 AudioTrack 配置 =====
-            // PcmPlayer.java uses:
-            //   new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelConfig, format, mBufferSize, AudioTrack.MODE_STREAM)
-            //   mBufferSize = AudioTrack.getMinBufferSize(sampleRate, channelConfig, format)
-            // NO AudioAttributes, NO special usage
-            
             val minBuffer = AudioTrack.getMinBufferSize(
-                clientSampleRate,  // 16kHz (与 Flutter 一致)
+                clientSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            // 16倍缓冲：约 960ms @ 16kHz，足以掩盖网络抖动和GC暂停
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
             Logger.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
 
@@ -87,7 +71,7 @@ class NativeOpusDecoder(
             )
 
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
-                Logger.e(TAG, "AudioTrack 初始化失败")
+                Logger.e(TAG, "AudioTrack init failed")
                 audioTrack?.release()
                 audioTrack = null
                 return
@@ -105,19 +89,22 @@ class NativeOpusDecoder(
                 Logger.i(TAG, "Play thread started")
                 while (isPlaying.get()) {
                     try {
-                        // poll 带超时，队列空时写静音避免 underrun
                         val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
+                            pendingDecodePackets = maxOf(pendingDecodePackets - 1, 0)
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
-                            if (written < 0) {
+                            if (written > 0) {
+                                totalBytesWritten += written
+                            } else if (written < 0) {
                                 Logger.e(TAG, "AudioTrack write error: $written")
                             }
                         } else {
-                            // 队列空时连续写静音，维持缓冲水位防 underrun
                             try {
                                 for (i in 0 until 3) {
                                     val ret = audioTrack?.write(silenceFrame, 0, silenceFrame.size)
-                                    if (ret == null || ret < 0) break
+                                    if (ret != null && ret > 0) {
+                                        totalBytesWritten += ret
+                                    } else break
                                 }
                             } catch (_: Exception) {}
                         }
@@ -137,55 +124,44 @@ class NativeOpusDecoder(
 
     private fun warmUpPlayer(bufferSize: Int) {
         try {
-            // 预填充整个 AudioTrack 缓冲区（~4秒静音），最大化抗网络抖动能力
-            val warmupData = ByteArray(bufferSize)
-            audioTrack?.write(warmupData, 0, warmupData.size)
-            Logger.i(TAG, "warmup ok (${warmupData.size} bytes = ~${bufferSize / 32000}s)")
+            val targetBytes = minOf(bufferSize / 2, 64000)
+            val warmupData = ByteArray(targetBytes)
+            val written = audioTrack?.write(warmupData, 0, warmupData.size) ?: 0
+            if (written > 0) totalBytesWritten += written
+            Logger.i(TAG, "warmup ok (${written} bytes = ~${targetBytes / 32000}s)")
         } catch (e: Exception) {
             Logger.e(TAG, "warmup failed: ${e.message}")
         }
     }
 
-    /**
-     * 接收 Opus 数据包，解码并播放
-     * 协议头已在 XiaoZhiBackendService.handleBinaryMessage 中剥离，
-     * 这里收到的 data 是纯 Opus payload，直接送 native 解码器
-     */
     fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
         if (decoderPtr == 0L || !isPlaying.get()) return
 
         try {
-            val audioPayload = opusData  // 数据已干净，直接使用
-
-            // 分配 PCM 缓冲区
+            val audioPayload = opusData
             val pcmShorts = ShortArray(serverFrameSamples)
-
-            // 调用 native Opus 解码
             val samples = nativeDecode(decoderPtr, audioPayload, pcmShorts, serverFrameSamples)
 
             if (samples > 0) {
-                // ===== 重采样 24kHz → 16kHz（线性插值，与 Flutter 一致） =====
                 val t0 = System.nanoTime()
                 val pcmResampled = resamplePcm(pcmShorts, samples, serverSampleRate, clientSampleRate)
                 val resampleUs = (System.nanoTime() - t0) / 1000
-            if (resampleUs > 5000) {
-                     Logger.w(TAG, "resample 慢: ${resampleUs}us (samples=$samples)")
-                 }
+                if (resampleUs > 5000) {
+                    Logger.w(TAG, "resample slow: ${resampleUs}us (samples=$samples)")
+                }
 
-                // ===== AGC 处理（与 Flutter 一致） =====
                 val pcmLimiter = applyLimiter(pcmResampled)
 
-                // 转换为字节
                 val byteBuffer = ByteBuffer.allocate(pcmLimiter.size * 2)
                     .order(ByteOrder.LITTLE_ENDIAN)
                 byteBuffer.asShortBuffer().put(pcmLimiter)
                 val pcmBytes = byteBuffer.array()
 
-                // PCM回调：用于后续重编码提高转发质量
                 onPcm?.invoke(pcmBytes)
 
                 if (audioQueue.remainingCapacity() > 0) {
                     audioQueue.offer(pcmBytes)
+                    pendingDecodePackets++
                 } else {
                     Logger.w(TAG, "queue full")
                 }
@@ -195,9 +171,6 @@ class NativeOpusDecoder(
         }
     }
 
-    /**
-     * 线性插值重采样（与 Flutter audio_util.dart 完全一致）
-     */
     private fun resamplePcm(input: ShortArray, inputSamples: Int, inputRate: Int, outputRate: Int): ShortArray {
         if (inputRate == outputRate) {
             return input.copyOf(inputSamples)
@@ -224,21 +197,15 @@ class NativeOpusDecoder(
         return output
     }
 
-    /**
-     * 软限幅器（替代原 AGC）——只在峰值超限时才压缩，减少不必要的处理
-     * 避免 quiet 帧被放大导致 noise 放大
-     */
     private fun applyLimiter(pcm: ShortArray): ShortArray {
         val HARD_CLIP = Short.MAX_VALUE.toInt()
 
-        // 找峰值
         var peak = 0
         for (v in pcm) {
             val abs = abs(v.toInt())
             if (abs > peak) peak = abs
         }
 
-        // 峰值正常 → 直接 clamp 到 30000，不做任何增益调整
         if (peak <= HARD_CLIP) {
             val result = ShortArray(pcm.size)
             for (i in pcm.indices) {
@@ -247,12 +214,10 @@ class NativeOpusDecoder(
             return result
         }
 
-        // 峰值过高 → 软压缩（避免硬 clip 产生的谐波）
         val ratio = HARD_CLIP.toDouble() / peak
         val result = ShortArray(pcm.size)
         for (i in pcm.indices) {
             val s = pcm[i].toInt()
-            // 软压缩：对峰值以下的部分做 sqrt 压缩
             val compressed = if (s >= 0) {
                 ((s * ratio) + (s - s * ratio) * kotlin.math.sqrt(s.toDouble() / peak)).toInt()
             } else {
@@ -261,6 +226,41 @@ class NativeOpusDecoder(
             result[i] = compressed.coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
         }
         return result
+    }
+
+    /**
+     * 获取AudioTrack缓冲中尚未播放的总字节数（warmup + 音频 + 静音）
+     * 全部计入，因为 playbackHeadPosition 包含所有已播放字节
+     */
+    fun getRemainingBytes(): Long {
+        val track = audioTrack ?: return 0L
+        return try {
+            val playedFrames = track.playbackHeadPosition.toLong()
+            val playedBytes = playedFrames * 2L * channels
+            (totalBytesWritten - playedBytes).coerceAtLeast(0L)
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    /**
+     * 等待音频缓冲排空（队列写入 + AudioTrack播放）
+     */
+    fun drainAudio(timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        try {
+            while (System.currentTimeMillis() < deadline) {
+                if (audioQueue.isEmpty()) break
+                Thread.sleep(30)
+            }
+            while (System.currentTimeMillis() < deadline) {
+                if (getRemainingBytes() <= 0) break
+                Thread.sleep(30)
+            }
+            return getRemainingBytes() <= 0
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     fun release() {
@@ -278,7 +278,6 @@ class NativeOpusDecoder(
         }
     }
 
-    // ===== JNI 原生 Opus 接口 =====
     private external fun nativeCreateDecoder(sampleRate: Int, channels: Int): Long
     private external fun nativeDecode(decoderPtr: Long, input: ByteArray, output: ShortArray, maxFrameSize: Int): Int
     private external fun nativeDestroyDecoder(decoderPtr: Long)
