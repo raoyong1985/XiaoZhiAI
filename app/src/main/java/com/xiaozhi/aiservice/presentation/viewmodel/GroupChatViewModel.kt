@@ -492,9 +492,13 @@ class GroupChatViewModel : ViewModel() {
                     forwardRound++
                     spokenInThisRound.add(targetIndex)
                     if (previousReply.isNotBlank()) originalUserQuery = previousReply.take(20)
+                    // 音频转发成功后，才能安全清理 buffer（服务器已收到并开始处理）
+                    audioForwardBuffer.remove(sequentialBotIds.getOrNull(prevIndex))
                     android.util.Log.i("GroupChatVM", "音频转发成功 → $speakerId fwd=$forwardRound")
                     return
                 }
+                // 音频转发成功但 bot 10s 未确认 speaking：不清 buffer，不耗轮次
+                // buffer 保留供下一候选使用（可能是服务器处理慢）
                 android.util.Log.w("GroupChatVM", "音频转发超时($speakerId 10s未响应)，尝试下一候选")
                 waitingSpeakerIndex = -1
             }
@@ -623,6 +627,7 @@ class GroupChatViewModel : ViewModel() {
     // 等待上一个 bot 的音频流自然排空（网络静默 + AudioTrack缓冲排空）
     private suspend fun drainPreviousBotAudio(prevBotId: String?) {
         if (prevBotId == null) return
+        // 1. 等待网络层面静默（确保服务器已停止发送）
         withTimeoutOrNull(AUDIO_DRAIN_TIMEOUT_MS) {
             while (true) {
                 val lastTs = botLastAudioTime[prevBotId] ?: 0L
@@ -631,7 +636,9 @@ class GroupChatViewModel : ViewModel() {
                 delay(100)
             }
         }
-        // AudioTrack缓冲排空
+        // 2. 额外等待一段时间，让网络缓冲区中的 in-flight 包全部到达
+        delay(500)
+        // 3. 解码器内部缓冲排空（decoder 仍然在处理 late packets）
         val decoder = botAudioDecoders[prevBotId]
         if (decoder != null && !decoder.isReleased) {
             withTimeoutOrNull(2000L) {
@@ -640,6 +647,8 @@ class GroupChatViewModel : ViewModel() {
                 }
             }
         }
+        // 4. AudioTrack 缓冲排空（等待旧 bot 的声音完全播放完再切换）
+        //    releaseOldDecoders 由调用方在 speakerMutex 内执行
     }
 
     // 切换到新bot前，排空旧解码器的AudioTrack缓冲（只排空，不释放，不阻塞音频收集）
@@ -687,8 +696,7 @@ class GroupChatViewModel : ViewModel() {
             // 等待最后一帧协程处理完成
             delay(500)
             service.sendListenStopOnly()
-            // 转发成功后清理缓存，防止重复转发
-            audioForwardBuffer.remove(prevBotId)
+            //  buffer 由调用方在确认 bot speaking 后才清理（避免服务器还在处理时被清掉）
             return true
         } catch (e: Exception) {
             android.util.Log.w("GroupChatVM", "音频转发失败: ${e.message}")
