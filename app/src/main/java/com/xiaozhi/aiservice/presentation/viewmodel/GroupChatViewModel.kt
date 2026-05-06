@@ -34,7 +34,6 @@ class GroupChatViewModel : ViewModel() {
     private var sequentialBotIds = listOf<String>()
     private var currentSpeakerIndex = 0
     private var forwardRound = 0
-    private val MAX_FORWARD_ROUNDS = 100
     private var originalUserQuery = ""
     private var spokenInThisRound = mutableSetOf<Int>()
     private val AUDIO_DRAIN_TIMEOUT_MS = 3000L
@@ -345,9 +344,7 @@ class GroupChatViewModel : ViewModel() {
                                 drainPreviousBotAudio(prevBotId)
                                 viewModelScope.launch {
                                     speakerMutex.withLock {
-                                        if (forwardRound < MAX_FORWARD_ROUNDS) {
-                                            triggerNextSpeakerUnsafe(replyContent.getAndSet(""))
-                                        }
+                                        triggerNextSpeakerUnsafe(replyContent.getAndSet(""))
                                     }
                                 }
                             }
@@ -388,7 +385,7 @@ class GroupChatViewModel : ViewModel() {
                         val botIndex = currentBots.indexOf(botId)
                         if (botIndex < 0) return@withLock
                         val isExpected = botIndex == waitingSpeakerIndex
-                        if (isExpected && forwardRound < MAX_FORWARD_ROUNDS && currentBots.size > 1) {
+                        if (isExpected && currentBots.size > 1) {
                             val reply = replyContent.getAndSet("")
                             // forwardRound 在 triggerNextSpeakerUnsafe 内部转发成功时递增，避免文字兜底浪费轮次
                             android.util.Log.i("GroupChatVM", "[$botName] triggering next, fwd=$forwardRound reply='${reply.take(60)}'")
@@ -486,7 +483,6 @@ class GroupChatViewModel : ViewModel() {
                     if (checkDeadloop(hint, speakerId)) {
                         android.util.Log.i("GroupChatVM", "死循环终止，跳过转发")
                         waitingSpeakerIndex = -1
-                        forwardRound = MAX_FORWARD_ROUNDS
                         return
                     }
                     forwardRound++
@@ -746,7 +742,6 @@ class GroupChatViewModel : ViewModel() {
                 recentHints.clear()
                 recentCandidates.clear()
                 waitingSpeakerIndex = -1
-                forwardRound = MAX_FORWARD_ROUNDS
                 return true
             }
         } else {
