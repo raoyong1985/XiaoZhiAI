@@ -676,10 +676,16 @@ class GroupChatViewModel : ViewModel() {
         android.util.Log.i("GroupChatVM", "音频转发 ${cachedOpus.size}包/${totalBytes}B prev=$prevBotId")
         try {
             service.sendListenStart("auto")
-            cachedOpus.forEach { packet ->
+            // 前10帧慢速让ASR初始化，之后偶尔让出CPU
+            cachedOpus.forEachIndexed { i, packet ->
                 service.sendAudio(packet)
-                delay(50)
+                when {
+                    i < 10 -> delay(60)
+                    i % 20 == 0 -> delay(10)
+                }
             }
+            // 等待最后一帧协程处理完成
+            delay(500)
             service.sendListenStopOnly()
             // 转发成功后清理缓存，防止重复转发
             audioForwardBuffer.remove(prevBotId)
