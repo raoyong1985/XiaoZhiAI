@@ -65,6 +65,7 @@ class GroupChatViewModel : ViewModel() {
 
     // 防死循环：追踪最近转发 hint 的重复情况
     private val recentHints = mutableListOf<String>()
+    private val recentCandidates = mutableListOf<String>()  // 最近选中的候选botId，防止同一bot被重复选中
     private var deadloopCount = 0
     private val MAX_DEADLOOP = 3
     private var hostBotId: String? = null
@@ -157,6 +158,7 @@ class GroupChatViewModel : ViewModel() {
         botLastAudioTime.clear()
         deadloopCount = 0
         recentHints.clear()
+        recentCandidates.clear()
         hostBotId = null
         textFallbackBots.clear()
 
@@ -388,7 +390,7 @@ class GroupChatViewModel : ViewModel() {
                         val isExpected = botIndex == waitingSpeakerIndex
                         if (isExpected && forwardRound < MAX_FORWARD_ROUNDS && currentBots.size > 1) {
                             val reply = replyContent.getAndSet("")
-                            forwardRound++
+                            // forwardRound 在 triggerNextSpeakerUnsafe 内部转发成功时递增，避免文字兜底浪费轮次
                             android.util.Log.i("GroupChatVM", "[$botName] triggering next, fwd=$forwardRound reply='${reply.take(60)}'")
                             triggerNextSpeakerUnsafe(reply)
                         }
@@ -437,7 +439,10 @@ class GroupChatViewModel : ViewModel() {
 
     private suspend fun triggerNextSpeakerUnsafe(previousReply: String = "") {
         val currentBots = sequentialBotIds
-        if (currentBots.size <= 1) return
+        if (currentBots.size <= 1) {
+            waitingSpeakerIndex = -1
+            return
+        }
         if (_isRecording.value) {
             android.util.Log.w("GroupChatVM", "用户正在录音，跳过转发")
             waitingSpeakerIndex = -1
@@ -476,9 +481,18 @@ class GroupChatViewModel : ViewModel() {
                     service.aiState.first { it == "speaking" }
                 }
                 if (startConfirmed != null) {
+                    val hint = if (previousReply.isNotBlank()) originalUserQuery.take(8) else ""
+                    // 音频转发成功，检查死循环（hint重复 或 候选重复）
+                    if (checkDeadloop(hint, speakerId)) {
+                        android.util.Log.i("GroupChatVM", "死循环终止，跳过转发")
+                        waitingSpeakerIndex = -1
+                        forwardRound = MAX_FORWARD_ROUNDS
+                        return
+                    }
+                    forwardRound++
                     spokenInThisRound.add(targetIndex)
                     if (previousReply.isNotBlank()) originalUserQuery = previousReply.take(20)
-                    android.util.Log.i("GroupChatVM", "音频转发成功 → $speakerId")
+                    android.util.Log.i("GroupChatVM", "音频转发成功 → $speakerId fwd=$forwardRound")
                     return
                 }
                 android.util.Log.w("GroupChatVM", "音频转发超时($speakerId 10s未响应)，尝试下一候选")
@@ -487,8 +501,8 @@ class GroupChatViewModel : ViewModel() {
 
             // 音频无缓存或失败时，文字兜底
             val textToSend = buildForwardMessage(previousReply)
-            // 防死循环检测
-            if (textToSend.isNotBlank() && checkDeadloop(textToSend)) {
+            // 防死循环检测（只检查hint重复，不检查候选，因为这是失败候选）
+            if (checkDeadloop(textToSend)) {
                 android.util.Log.i("GroupChatVM", "死循环终止，跳过本轮转发")
                 waitingSpeakerIndex = -1
                 return
@@ -689,18 +703,34 @@ class GroupChatViewModel : ViewModel() {
         return hint
     }
 
-    // 检测并处理死循环：连续 MAX_DEADLOOP 轮 hint 高度重复
-    private fun checkDeadloop(hint: String): Boolean {
-        if (hint.isBlank()) return false
-        recentHints.add(hint)
-        if (recentHints.size > MAX_DEADLOOP) recentHints.removeAt(0)
-        if (recentHints.size >= MAX_DEADLOOP && recentHints.distinct().size <= 2) {
+    // 检测并处理死循环：连续 MAX_DEADLOOP 轮 hint 高度重复 或 同一候选重复
+    private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
+        var isDeadloop = false
+        // 检测 hint 重复（空白 hint 不参与检测）
+        if (hint.isNotBlank()) {
+            recentHints.add(hint)
+            if (recentHints.size > MAX_DEADLOOP) recentHints.removeAt(0)
+            if (recentHints.size >= MAX_DEADLOOP && recentHints.distinct().size <= 2) {
+                android.util.Log.w("GroupChatVM", "死循环(hint重复) hint=$hint")
+                isDeadloop = true
+            }
+        }
+        // 检测候选重复：同一 bot 被连续选中
+        if (speakerId != null) {
+            recentCandidates.add(speakerId)
+            if (recentCandidates.size > MAX_DEADLOOP) recentCandidates.removeAt(0)
+            if (recentCandidates.size >= MAX_DEADLOOP && recentCandidates.distinct().size == 1) {
+                android.util.Log.w("GroupChatVM", "死循环(候选重复) speakerId=$speakerId")
+                isDeadloop = true
+            }
+        }
+        if (isDeadloop) {
             deadloopCount++
-            android.util.Log.w("GroupChatVM", "死循环 hint=$hint count=$deadloopCount")
             if (deadloopCount >= MAX_DEADLOOP) {
                 android.util.Log.i("GroupChatVM", "死循环 $MAX_DEADLOOP 次，强制终止转发")
                 deadloopCount = 0
                 recentHints.clear()
+                recentCandidates.clear()
                 waitingSpeakerIndex = -1
                 forwardRound = MAX_FORWARD_ROUNDS
                 return true
@@ -765,6 +795,8 @@ class GroupChatViewModel : ViewModel() {
         waitingSpeakerIndex = 0
         audioForwardBuffer.clear()
         recentBotReplies.clear()
+        recentHints.clear()
+        recentCandidates.clear()
         spokenInThisRound.clear()
         textFallbackBots.clear()
         originalUserQuery = content

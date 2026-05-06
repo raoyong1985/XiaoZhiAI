@@ -338,8 +338,8 @@ if (newState == IDLE && oldState == SPEAKING && isAutoMode) {
 ## 7. 构建配置
 
 ### 7.1 版本信息
-- 当前版本: 1.0.55
-- versionCode: 22
+- 当前版本: 1.0.72
+- versionCode: 31
 - 最低 SDK: 26 (Android 8.0)
 - 目标 SDK: 34 (Android 14)
 - 编译 SDK: 34
