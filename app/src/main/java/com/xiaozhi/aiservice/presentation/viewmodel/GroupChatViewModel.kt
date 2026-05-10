@@ -354,7 +354,7 @@ class GroupChatViewModel : ViewModel() {
                     val currentBots = sequentialBotIds
                     val botIndex = currentBots.indexOf(botId)
                     // 非预期发言：只过滤音频，不 abort 打断
-                    if (botIndex != waitingSpeakerIndex && botIndex >= 0) {
+                    if (waitingSpeakerIndex >= 0 && botIndex != waitingSpeakerIndex && botIndex >= 0) {
                         android.util.Log.w("GroupChatVM", "[$botName] 非预期发言(idx=$botIndex, expected=$waitingSpeakerIndex)，丢弃音频")
                         return@collect
                     }
@@ -408,9 +408,10 @@ class GroupChatViewModel : ViewModel() {
                 if (audioData.isNotEmpty()) {
                     botLastAudioTime[botId] = System.currentTimeMillis()
                     // 非当前轮到的 bot，丢弃其音频（只允许当前预期的 bot 说话）
+                    // waitingSpeakerIndex == -1 时放行第一轮（第一个 bot 的音频不应被丢弃）
                     val currentBots = sequentialBotIds
                     val idx = currentBots.indexOf(botId)
-                    if (idx >= 0 && idx != waitingSpeakerIndex) return@collect
+                    if (idx >= 0 && waitingSpeakerIndex >= 0 && idx != waitingSpeakerIndex) return@collect
                     val existingDecoder = botAudioDecoders[botId]
                     val finalDecoder = if (existingDecoder == null) {
                         // 先排空前一个 bot 音讯（不在 mutex 内，避免阻塞音频处理）
