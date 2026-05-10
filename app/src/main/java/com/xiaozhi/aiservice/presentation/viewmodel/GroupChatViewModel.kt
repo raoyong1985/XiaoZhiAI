@@ -291,15 +291,20 @@ class GroupChatViewModel : ViewModel() {
 
     private fun isDuplicateReply(botId: String, content: String): Boolean {
         // 使用 compute() 保证 check-then-act 原子化，避免并发丢消息
-        return recentBotReplies.compute(botId) { _, recent ->
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        recentBotReplies.compute(botId) { _, recent ->
             if (recent == null) {
-                listOf(content) // 第一个消息，不重复
+                result.set(false)  // 第一个消息，不重复
+                listOf(content)
             } else if (recent.contains(content)) {
-                recent // 已存在，保留原列表（标识"重复"）
+                result.set(true)   // 已存在，是重复
+                recent
             } else {
-                (recent + content).takeLast(MAX_RECENT_REPLIES) // 新消息，加入后截断
+                result.set(false)  // 新消息，不重复
+                (recent + content).takeLast(MAX_RECENT_REPLIES)
             }
-        }?.contains(content) == true
+        }
+        return result.get()
     }
 
     private fun observeBotReplies(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
