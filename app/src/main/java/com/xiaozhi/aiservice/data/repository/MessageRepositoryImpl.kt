@@ -105,7 +105,10 @@ class MessageRepositoryImpl(
     }
 
     private fun updateMessages(contactId: String, transform: (List<ChatMessage>) -> List<ChatMessage>) {
-        getOrCreateFlow(contactId).value = transform(getOrCreateFlow(contactId).value)
+        val flow = getOrCreateFlow(contactId)
+        synchronized(flow) {
+            flow.value = transform(flow.value)
+        }
     }
 
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {

@@ -161,26 +161,37 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
     }
 
     private fun markDirty(groupId: String) {
+        val needFlush: Boolean
         synchronized(dirtyGroups) {
+            needFlush = dirtyGroups.isEmpty()
             dirtyGroups.add(groupId)
-            if (flushJob == null) {
-                flushJob = scope.launch {
-                    delay(500)
-                    flushDirty()
-                }
+        }
+        if (needFlush) {
+            flushJob = scope.launch {
+                delay(500)
+                flushDirtyInternal()
             }
         }
     }
 
-    private suspend fun flushDirty() {
+    private suspend fun flushDirtyInternal() {
         val ids: List<String>
         synchronized(dirtyGroups) {
             ids = dirtyGroups.toList()
             dirtyGroups.clear()
-            flushJob = null
         }
         for (groupId in ids) {
             writeToDisk(groupId, getOrCreateFlow(groupId).value)
+        }
+        synchronized(dirtyGroups) {
+            flushJob = null
+            // 500ms内又有新消息，再次调度flush
+            if (dirtyGroups.isNotEmpty()) {
+                flushJob = scope.launch {
+                    delay(500)
+                    flushDirtyInternal()
+                }
+            }
         }
     }
 
@@ -199,12 +210,15 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
 
     override fun getGroupMessages(groupId: String): Flow<List<GroupMessage>> {
         val flow = getOrCreateFlow(groupId)
+        android.util.Log.i("GroupChatRepo", "getGroupMessages groupId=$groupId currentSize=${flow.value.size}")
         if (loadedFromDisk.putIfAbsent(groupId, true) == null) {
             scope.launch {
                 val stored = loadMessagesFromDisk(groupId)
+                android.util.Log.i("GroupChatRepo", "disk load groupId=$groupId loaded=${stored.size} currentMem=${flow.value.size}")
                 // 仅在内存仍为空时才写入，防止覆盖加载期间到达的新消息
                 if (stored.isNotEmpty() && flow.value.isEmpty()) {
                     flow.value = stored
+                    android.util.Log.i("GroupChatRepo", "disk merge groupId=$groupId finalSize=${flow.value.size}")
                 }
             }
         }
@@ -223,11 +237,21 @@ class GroupChatRepositoryImpl(private val context: Context, private val gson: Gs
     }
 
     override suspend fun sendMessage(groupId: String, message: GroupMessage) {
-        getOrCreateFlow(groupId).value = getOrCreateFlow(groupId).value + message
+        val flow = getOrCreateFlow(groupId)
+        flow.value = flow.value + message
+        android.util.Log.i("GroupChatRepo", "sendMessage groupId=$groupId msgId=${message.id} content='${message.content.take(20)}' dir=${message.direction} total=${flow.value.size}")
         markDirty(groupId)
     }
 
     override suspend fun addMessage(groupId: String, message: GroupMessage) {
         sendMessage(groupId, message)
+    }
+
+    override suspend fun updateMessageText(groupId: String, messageId: String, newText: String) {
+        val flow = getOrCreateFlow(groupId)
+        flow.value = flow.value.map { msg ->
+            if (msg.id == messageId) msg.copy(content = newText) else msg
+        }
+        markDirty(groupId)
     }
 }

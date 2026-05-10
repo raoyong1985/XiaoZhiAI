@@ -11,6 +11,8 @@ import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.abs
 
@@ -32,13 +34,12 @@ class NativeOpusDecoder(
     private val audioQueue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE_SIZE)
     private var playThread: Thread? = null
 
-    @Volatile
-    private var totalBytesWritten: Long = 0L
+    private val totalBytesWritten = AtomicLong(0L)
 
     private val serverFrameSamples = serverSampleRate * 60 / 1000
     private val silenceFrame = ByteArray(12800)
 
-    private var pendingDecodePackets = 0
+    private val pendingDecodePackets = AtomicInteger(0)
 
     init {
         System.loadLibrary("native_opus_decoder")
@@ -74,6 +75,7 @@ class NativeOpusDecoder(
                 Logger.e(TAG, "AudioTrack init failed")
                 audioTrack?.release()
                 audioTrack = null
+                isPlaying.set(false)
                 return
             }
 
@@ -95,10 +97,10 @@ class NativeOpusDecoder(
                     try {
                         val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            pendingDecodePackets = maxOf(pendingDecodePackets - 1, 0)
+                            pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
-                                totalBytesWritten += written
+                                totalBytesWritten.updateAndGet { it + written }
                             } else if (written < 0) {
                                 Logger.e(TAG, "AudioTrack write error: $written")
                             }
@@ -107,7 +109,7 @@ class NativeOpusDecoder(
                                 for (i in 0 until 3) {
                                     val ret = audioTrack?.write(silenceFrame, 0, silenceFrame.size)
                                     if (ret != null && ret > 0) {
-                                        totalBytesWritten += ret
+                                        totalBytesWritten.updateAndGet { it + ret }
                                     } else break
                                 }
                             } catch (_: Exception) {}
@@ -153,7 +155,7 @@ class NativeOpusDecoder(
 
                 if (audioQueue.remainingCapacity() > 0) {
                     audioQueue.offer(pcmBytes)
-                    pendingDecodePackets++
+                    pendingDecodePackets.incrementAndGet()
                 } else {
                     Logger.w(TAG, "queue full")
                 }
@@ -229,24 +231,26 @@ class NativeOpusDecoder(
         return try {
             val playedFrames = track.playbackHeadPosition.toLong()
             val playedBytes = playedFrames * 2L * channels
-            (totalBytesWritten - playedBytes).coerceAtLeast(0L)
+            (totalBytesWritten.get() - playedBytes).coerceAtLeast(0L)
         } catch (e: Exception) {
             0L
         }
     }
-
     /**
      * 等待音频缓冲排空（队列写入 + AudioTrack播放）
      */
     fun drainAudio(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         try {
+            // 等待队列排空
             while (System.currentTimeMillis() < deadline) {
                 if (audioQueue.isEmpty()) break
                 Thread.sleep(30)
             }
+            // 等待 AudioTrack 播放完剩余数据
             while (System.currentTimeMillis() < deadline) {
-                if (getRemainingBytes() <= 0) break
+                val remaining = getRemainingBytes()
+                if (remaining <= 0) break
                 Thread.sleep(30)
             }
             return getRemainingBytes() <= 0

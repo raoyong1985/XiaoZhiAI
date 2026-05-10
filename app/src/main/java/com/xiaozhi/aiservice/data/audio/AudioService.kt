@@ -13,6 +13,7 @@ import android.os.Build
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicBoolean
 
 class AudioService {
 
@@ -50,7 +51,7 @@ class AudioService {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var isRecording = false
+    private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
     private var onSilenceDetected: (() -> Unit)? = null
@@ -131,7 +132,7 @@ class AudioService {
      * @param enableVAD 是否启用静音检测（自动停止）
      */
     fun startRecording(onAudioData: (ByteArray) -> Unit, enableVAD: Boolean = true): Boolean {
-        if (isRecording) return false
+        if (isRecording.get()) return false
 
         // 使用设置的采样率（与 ESP32 AFE 音频处理器一致，语音识别最优化）
         val recordSampleRate = sampleRate
@@ -167,7 +168,7 @@ class AudioService {
                 }
             }
 
-            isRecording = true
+            isRecording.set(true)
             audioRecord?.startRecording()
 
             val buffer = ByteArray(bufferSize)
@@ -180,13 +181,17 @@ class AudioService {
             var firstSpeechTime = 0L
 
             recordingThread = Thread {
-                while (isRecording) {
+                while (isRecording.get()) {
                     val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
                     if (readSize <= 0) continue
 
                     val pcmData = acquireBuffer(readSize)
                     System.arraycopy(buffer, 0, pcmData, 0, readSize)
-                    onAudioData(pcmData)
+                    try {
+                        onAudioData(pcmData)
+                    } finally {
+                        recycleBuffer(pcmData)
+                    }
 
                     // VAD 检测（参考 ESP32 afe_audio_processor VAD_MODE_0）
                     if (enableVAD) {
@@ -221,7 +226,6 @@ class AudioService {
                             }
                         }
                     }
-                    recycleBuffer(pcmData)
                 }
             }
             recordingThread?.start()
@@ -254,14 +258,18 @@ class AudioService {
     }
 
     fun stopRecording() {
-        // 先stop AudioRecord 让阻塞的 read() 返回，再设标记
+        // 1. 设标记让录音循环自然退出（不等 interrupt，AudioRecord.read() 不响应 interrupt）
+        isRecording.set(false)
+        // 2. stop 让阻塞的 read() 抛异常退出（部分设备需要）
         try {
             audioRecord?.stop()
         } catch (_: Exception) {}
-        isRecording = false
-        recordingThread?.interrupt()
+        // 3. 等待线程结束（最多 500ms），避免 release 时 thread 还在跑
+        recordingThread?.let { thread ->
+            thread.join(500)
+        }
         recordingThread = null
-
+        // 4. 最后释放 AudioRecord
         try {
             audioRecord?.release()
         } catch (_: Exception) {}
@@ -274,5 +282,5 @@ class AudioService {
         stopRecording()
     }
 
-    fun isRecording(): Boolean = isRecording
+    fun isRecording(): Boolean = isRecording.get()
 }

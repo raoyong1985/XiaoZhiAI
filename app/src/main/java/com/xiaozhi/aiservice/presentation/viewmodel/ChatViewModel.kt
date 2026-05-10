@@ -31,6 +31,7 @@ class ChatViewModel(
 
     private var currentContactId: String = ""
     private var pendingConfig: ConnectionConfig? = null
+    private var messageCollectJob: kotlinx.coroutines.Job? = null
 
     init {
         observeConnection()
@@ -79,7 +80,8 @@ class ChatViewModel(
     }
 
     private fun observeMessages(contactId: String) {
-        viewModelScope.launch {
+        messageCollectJob?.cancel()
+        messageCollectJob = viewModelScope.launch {
             messageRepository.getMessages(contactId).collect { messages ->
                 _uiState.update { it.copy(messages = messages) }
             }

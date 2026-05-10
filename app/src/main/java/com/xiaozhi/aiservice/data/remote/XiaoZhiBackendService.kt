@@ -41,7 +41,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         private const val TAG = "XiaoZhiWS"
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val supervisorJob = SupervisorJob()
+    private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
 
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient.Builder()
@@ -106,7 +107,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var pendingActivationChallenge = "" // 待发送的激活challenge
     private var reconnectAttempt = 0       // 重连次数
     private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
-    private var isReconnecting = false     // 是否正在重连
+    private var isDisconnecting = false  // 用户主动断开，不再自动重连
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
     private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
     private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
@@ -125,6 +126,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         this.clientId = clientId
         this.accessToken = accessToken
         this.reconnectAttempt = 0
+        this.isDisconnecting = false
         _connectionState.value = ConnectionState.Connecting
         Logger.i(TAG, "连接中: $url")
 
@@ -233,7 +235,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
                 reconnectAttempt = 0
-                isReconnecting = false
                 _connectionState.value = ConnectionState.Connected
                 Logger.i(TAG, "WebSocket已连接! 发送hello...")
                 sendHello()
@@ -254,7 +255,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 _connectionState.value = ConnectionState.Disconnected
                 if (code == 1005) {
                     Logger.w(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
-                    isReconnecting = false
+                    isDisconnecting = true
                     reconnectAttempt = 0
                     _connectionState.value = ConnectionState.Error
                 } else {
@@ -268,7 +269,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 _connectionState.value = ConnectionState.Disconnected
                 if (code == 1005) {
                     Logger.w(TAG, "服务器要求激活设备，停止重连")
-                    isReconnecting = false
+                    isDisconnecting = true
                     reconnectAttempt = 0
                     _connectionState.value = ConnectionState.Error
                 } else if (code != 1000 && code != 1001) {
@@ -286,6 +287,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     }
 
     fun disconnect() {
+        isDisconnecting = true
         reconnectJob?.cancel()
         reconnectJob = null
         idleDebounceJob?.cancel()
@@ -293,22 +295,22 @@ class XiaoZhiBackendService(private val gson: Gson) {
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         isConnected = false
-        isReconnecting = false
         reconnectAttempt = 0  // 重置重连计数
         wsToken = ""
         pendingActivationChallenge = ""
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiStateStr.IDLE
+        // 注意：不 cancel supervisorJob，scope 保持活跃以支持重连
+        // 各协程通过 isDisconnecting 标志 + cancel() 协作取消
     }
 
     /**
      * 计划重连 - 无限重试，直到连接成功
      */
     private fun scheduleReconnect() {
-        if (isReconnecting) return
+        if (isDisconnecting) return
         if (serverUrl.isEmpty()) return
 
-        isReconnecting = true
         reconnectAttempt++
 
         // 指数退避: 1s, 2s, 4s, 8s, 16s, 32s, 最多2分钟
@@ -319,7 +321,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(delay)
-            isReconnecting = false
             Logger.i(TAG, "执行重连... (第 $reconnectAttempt 次)")
             _connectionState.value = ConnectionState.Connecting
             doConnect(serverUrl, deviceId, clientId, accessToken)

@@ -273,7 +273,7 @@ private fun GroupChatInputArea(
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                 keyboardActions = KeyboardActions(onSend = { onSendText() })
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             FilledIconButton(
                                 onClick = onSendText,
                                 enabled = inputText.isNotBlank()

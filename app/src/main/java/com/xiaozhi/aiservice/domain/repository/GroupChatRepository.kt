@@ -18,4 +18,5 @@ interface GroupChatRepository {
     fun getGroupMessages(groupId: String): Flow<List<GroupMessage>>
     suspend fun sendMessage(groupId: String, message: GroupMessage)
     suspend fun addMessage(groupId: String, message: GroupMessage)
+    suspend fun updateMessageText(groupId: String, messageId: String, newText: String)
 }

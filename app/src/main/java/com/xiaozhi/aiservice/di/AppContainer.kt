@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
+import java.util.concurrent.ConcurrentHashMap
 
 object AppContainer {
     lateinit var context: Context
@@ -27,7 +28,7 @@ object AppContainer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     // 支持多个WebSocket连接（群聊功能）
-    private val backendServices = mutableMapOf<String, XiaoZhiBackendService>()
+    private val backendServices = ConcurrentHashMap<String, XiaoZhiBackendService>()
     fun getBackendService(contactId: String): XiaoZhiBackendService {
         return backendServices.getOrPut(contactId) { XiaoZhiBackendService(gson) }
     }
@@ -39,7 +40,7 @@ object AppContainer {
     val deviceRepository: DeviceRepository by lazy { DeviceRepositoryImpl() }
     
     // 群聊连接Repository（每个群聊一个）
-    private val groupConnections = mutableMapOf<String, ConnectionRepository>()
+    private val groupConnections = ConcurrentHashMap<String, ConnectionRepository>()
     fun getGroupConnectionRepository(groupId: String): ConnectionRepository {
         return groupConnections.getOrCreate(groupId) {
             val service = XiaoZhiBackendService(gson)
@@ -74,10 +75,10 @@ object AppContainer {
         GroupChatRepositoryImpl(context, gson)
     }
 
-    // 设备标识 - 延迟初始化
-    private var _deviceId: String? = null
-    private var _deviceMac: String? = null
-    private var _clientId: String? = null
+    // 设备标识 - volatile 保证可见性
+    @Volatile private var _deviceId: String? = null
+    @Volatile private var _deviceMac: String? = null
+    @Volatile private var _clientId: String? = null
 
     fun initDeviceIds(context: Context) {
         if (_deviceId == null) {

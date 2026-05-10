@@ -105,24 +105,16 @@ class OpusEncoder(
 
     fun stop() {
         isEncoding = false
-        // 发送 EOS 让编码器 flush 最后几帧
-        encoder?.let { codec ->
-            try {
-                val inputIndex = codec.dequeueInputBuffer(5000)
-                if (inputIndex >= 0) {
-                    codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                }
-            } catch (_: Exception) {}
-        }
-        encodingThread?.interrupt()
+        val thread = encodingThread
         encodingThread = null
-
+        thread?.interrupt()
         try {
             encoder?.stop()
+        } catch (_: Exception) {}
+        try {
             encoder?.release()
         } catch (_: Exception) {}
         encoder = null
-
         pcmQueue.clear()
         onOpusData = null
         Logger.i(TAG, "Opus 编码器已停止")
