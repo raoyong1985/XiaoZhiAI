@@ -33,6 +33,10 @@
 -keep class com.xiaozhi.aiservice.domain.model.MessageType { *; }
 -keep class com.xiaozhi.aiservice.domain.model.MessageDirection { *; }
 -keep class com.xiaozhi.aiservice.domain.model.MessageStatus { *; }
+-keep class com.xiaozhi.aiservice.domain.model.BotContact { *; }
+-keep class com.xiaozhi.aiservice.domain.model.ChatMessage { *; }
+-keep class com.xiaozhi.aiservice.domain.model.Device { *; }
+-keep class com.xiaozhi.aiservice.domain.model.ConnectionConfig { *; }
 
 # Keep JNI native methods
 -keep class com.xiaozhi.aiservice.data.audio.NativeOpusDecoder { *; }
@@ -50,3 +54,8 @@
 # Keep all kotlinx.coroutines for Flow/StateFlow
 -keep class kotlinx.coroutines.** { *; }
 -dontwarn kotlinx.coroutines.**
+
+# Keep repository interfaces and states
+-keep class com.xiaozhi.aiservice.domain.repository.ConnectionState { *; }
+-keep class com.xiaozhi.aiservice.domain.repository.DeviceState { *; }
+-keep class com.xiaozhi.aiservice.domain.model.AiState { *; }

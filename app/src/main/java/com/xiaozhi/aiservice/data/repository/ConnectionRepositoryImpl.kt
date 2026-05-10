@@ -21,6 +21,7 @@ import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -136,19 +137,14 @@ class ConnectionRepositoryImpl(
                     // 更新状态
                     _aiState.value = newAiState
 
-                    // AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
+                    // AUTO 模式：AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
                         Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
                         // 更新设备状态
                         _deviceState.value = DeviceState.IDLE
-                        // 等待 AudioTrack 缓冲排空，防止 AI 尾音被麦克风采集导致重叠
-                        opusDecoder?.let { decoder ->
-                            withTimeoutOrNull(1000L) {
-                                while (decoder.getRemainingBytes() > 0) {
-                                    kotlinx.coroutines.delay(50)
-                                }
-                            } ?: Logger.w(TAG, "播放排空未完成（超时），继续重启监听")
-                        }
+                        // 排空播放缓冲 + 强制 flush + 硬件延迟补偿
+                        // 参考 ESP32: WaitForPlaybackQueueEmpty() + ResetDecoder()
+                        drainAndFlushPlayback()
                         // 复用之前的 encoder（避免重新初始化延迟），或立即创建新的
                         var encoder = opusEncoder
                         if (encoder == null) {
@@ -160,7 +156,10 @@ class ConnectionRepositoryImpl(
                             audioService.setOnSilenceDetected {
                                 scope.launch { stopListening(userExplicitStop = false) }
                             }
-                            // AUTO 模式使用 VAD 自动停止
+                            // AUTO 模式使用 VAD 自动停止 + AEC 回声消除
+                            if (audioService.isAecSupported()) {
+                                audioService.setAecEnabled(true)
+                            }
                             val encoderRef = encoder
                             audioService.startRecording({ pcmData ->
                                 encoderRef?.encode(pcmData)
@@ -193,13 +192,8 @@ class ConnectionRepositoryImpl(
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
                         Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听")
                         _deviceState.value = DeviceState.IDLE
-                        opusDecoder?.let { decoder ->
-                            withTimeoutOrNull(1000L) {
-                                while (decoder.getRemainingBytes() > 0) {
-                                    kotlinx.coroutines.delay(50)
-                                }
-                            } ?: Logger.w(TAG, "播放排空未完成（超时），继续重启监听")
-                        }
+                        // 排空播放缓冲 + 强制 flush + 硬件延迟补偿
+                        drainAndFlushPlayback()
                         var encoder = opusEncoder
                         if (encoder == null) {
                             val sampleRate = audioService.getSampleRate()
@@ -210,7 +204,10 @@ class ConnectionRepositoryImpl(
                             audioService.setOnSilenceDetected {
                                 scope.launch { stopListening(userExplicitStop = false) }
                             }
-                            // Realtime 模式：禁用 VAD 自动停止（持续录音）
+                            // Realtime 模式：禁用 VAD 自动停止（持续录音）+ AEC 回声消除
+                            if (audioService.isAecSupported()) {
+                                audioService.setAecEnabled(true)
+                            }
                             audioService.startRecording({ pcmData ->
                                 encoder.encode(pcmData)
                             }, enableVAD = false)
@@ -452,5 +449,26 @@ class ConnectionRepositoryImpl(
             }
             Logger.i(TAG, "stopListening: userExplicitStop=$userExplicitStop, isAutoMode=$isAutoMode, isAutoStop=$isAutoStop")
         }
+    }
+
+    /**
+     * 立即停止播放 + 硬件延迟补偿
+     * 参考 ESP32 HandleStateChangedEvent:
+     *   WaitForPlaybackQueueEmpty() + EnableVoiceProcessing(true) → ResetDecoder()
+     *
+     * 注意：不调用 drainAudio()。因为 NativeOpusDecoder 播放线程在队列空时会
+     * 持续写入 silence 帧（3帧×12800B/200ms），导致 getRemainingBytes() 永不归零，
+     * drainAudio() 必然超时。直接 flushAudio 立即停止播放。
+     */
+    private suspend fun drainAndFlushPlayback() {
+        opusDecoder?.let { decoder ->
+            // 直接 flush AudioTrack，不等 drain（drain 因 silence 帧永不完成）
+            // 等效 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
+            decoder.flushAudio()
+
+            // 硬件输出延迟补偿：flush 后扬声器 DAC 缓冲 + 振膜物理震荡仍有 ~200ms 残留
+            delay(200)
+            Logger.i(TAG, "drainAndFlushPlayback 完成")
+        } ?: Logger.w(TAG, "opusDecoder 为 null，跳过排空")
     }
 }
