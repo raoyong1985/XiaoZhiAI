@@ -4,11 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.os.Build
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
@@ -51,16 +51,44 @@ class AudioService {
     }
 
     private var audioRecord: AudioRecord? = null
+    private var acousticEchoCanceler: AcousticEchoCanceler? = null
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
     private var onSilenceDetected: (() -> Unit)? = null
     private var audioManager: AudioManager? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioFocusRequest: android.media.AudioFocusRequest? = null
+    private var aecEnabled = false
 
     fun init(context: Context) {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
+
+    /**
+     * 设置 AEC（声学回声消除）启用状态
+     * 参考 ESP32 AudioService::EnableDeviceAec()
+     * 注意：AEC 需要 AudioRecord 初始化后才能应用，会在下次 startRecording() 时生效
+     */
+    fun setAecEnabled(enabled: Boolean) {
+        aecEnabled = enabled
+        // 如果已经初始化了 AEC，启用/停用它
+        acousticEchoCanceler?.let {
+            try {
+                it.enabled = enabled
+                Logger.i(TAG, "AEC ${if (enabled) "启用" else "停用"}")
+            } catch (e: Exception) {
+                Logger.e(TAG, "AEC enabled 失败: ${e.message}")
+            }
+        }
+        Logger.i(TAG, "AEC 状态设置为 ${if (enabled) "启用" else "禁用"}（将在下次录音时应用）")
+    }
+
+    fun isAecEnabled(): Boolean = aecEnabled
+
+    /**
+     * 检查设备是否支持 AEC
+     */
+    fun isAecSupported(): Boolean = AcousticEchoCanceler.isAvailable()
 
     /**
      * 请求音频焦点（播放时使用）
@@ -70,7 +98,7 @@ class AudioService {
         if (audioFocusRequest != null) return true
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
         return try {
-            val builder = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val builder = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -143,9 +171,15 @@ class AudioService {
 
         try {
             // VOICE_RECOGNITION 保留原始音频不做 AEC/NS 处理，STT 准确率最高
-            // 参考 ESP32 AFE VAD_MODE_0 配置
+            // 但如果启用了 AEC，我们用 VOICE_COMMUNICATION 让系统做 AEC
+            val audioSource = if (aecEnabled) {
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            } else {
+                MediaRecorder.AudioSource.VOICE_RECOGNITION
+            }
+
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                audioSource,
                 recordSampleRate,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
@@ -166,6 +200,12 @@ class AudioService {
                     Logger.e(TAG, "AudioRecord降级初始化也失败")
                     return false
                 }
+            }
+
+            // 初始化并启用 AEC（声学回声消除）
+            // 参考 ESP32 audio_service.cc EnableDeviceAec()
+            if (aecEnabled) {
+                initAec()
             }
 
             isRecording.set(true)
@@ -230,7 +270,7 @@ class AudioService {
             }
             recordingThread?.start()
 
-            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 降级阈值: $SILENCE_RMS_THRESHOLD")
+            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, AEC: $aecEnabled, 音频源: ${if (aecEnabled) "VOICE_COMMUNICATION" else "VOICE_RECOGNITION"}")
             return true
         } catch (e: SecurityException) {
             Logger.e(TAG, "录音权限被拒绝: ${e.message}")
@@ -238,6 +278,42 @@ class AudioService {
         } catch (e: Exception) {
             Logger.e(TAG, "录音启动失败: ${e.message}")
             return false
+        }
+    }
+
+    /**
+     * 初始化 AEC（声学回声消除）
+     * 参考 ESP32 audio_service.cc EnableDeviceAec()
+     * 使用 Android AcousticEchoCanceler API 对麦克风采集的音频进行回声消除
+     */
+    private fun initAec() {
+        if (!isAecSupported()) {
+            Logger.w(TAG, "设备不支持 AEC（AcousticEchoCanceler）")
+            return
+        }
+
+        try {
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId == 0) {
+                Logger.w(TAG, "AudioRecord session ID 为 0，无法创建 AEC")
+                return
+            }
+
+            // 释放旧的 AEC
+            acousticEchoCanceler?.release()
+            acousticEchoCanceler = null
+
+            acousticEchoCanceler = AcousticEchoCanceler.create(sessionId)
+            if (acousticEchoCanceler != null) {
+                acousticEchoCanceler?.enabled = aecEnabled
+                Logger.i(TAG, "AcousticEchoCanceler 初始化成功, sessionId=$sessionId, enabled=$aecEnabled")
+            } else {
+                Logger.w(TAG, "AcousticEchoCanceler.create() 返回 null")
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "AEC 初始化失败: ${e.message}")
+            acousticEchoCanceler?.release()
+            acousticEchoCanceler = null
         }
     }
 
@@ -269,11 +345,16 @@ class AudioService {
             thread.join(500)
         }
         recordingThread = null
-        // 4. 最后释放 AudioRecord
+        // 4. 释放 AudioRecord
         try {
             audioRecord?.release()
         } catch (_: Exception) {}
         audioRecord = null
+        // 5. 释放 AEC
+        try {
+            acousticEchoCanceler?.release()
+        } catch (_: Exception) {}
+        acousticEchoCanceler = null
 
         Logger.i(TAG, "录音停止")
     }

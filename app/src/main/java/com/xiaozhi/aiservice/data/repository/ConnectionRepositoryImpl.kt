@@ -1,5 +1,7 @@
 package com.xiaozhi.aiservice.data.repository
 
+import com.xiaozhi.aiservice.data.settings.AudioSettings
+import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
@@ -11,8 +13,10 @@ import com.xiaozhi.aiservice.domain.model.ConnectionConfig
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.model.VoiceMode  // 复用 Models.kt，与 ESP32 ListeningMode 对应
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
+import com.xiaozhi.aiservice.domain.repository.DeviceState  // 设备状态机（定义在 Repositories.kt）
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +61,13 @@ class ConnectionRepositoryImpl(
     private var weStartedRecording = false
     // 跟踪是否处于 AUTO 模式（AI 说完话后自动切回倾听）
     private var isAutoMode = false
+    // 当前监听模式：auto / manual / realtime（参考 ESP32 ListeningMode）
+    private var listeningMode: VoiceMode = VoiceMode.REALTIME
+
+    // 设备状态（参考 ESP32 device_state_machine.cc）
+    // 使用 internal 可见性让 MCP 工具能访问，同时对接口暴露为 StateFlow
+    private val _deviceState = MutableStateFlow(DeviceState.UNKNOWN)
+    override val deviceState: StateFlow<DeviceState> = _deviceState.asStateFlow()
 
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private var opusDecoder: NativeOpusDecoder? = null
@@ -99,6 +110,7 @@ class ConnectionRepositoryImpl(
                     // AUTO 模式：TTS 开始时如果还在 LISTENING 状态（VAD auto-stop 后等待 TTS）
                     if (newAiState == AiState.SPEAKING && oldAiState == AiState.LISTENING && isAutoMode) {
                         Logger.i(TAG, "AUTO 模式：TTS 开始（从 LISTENING → SPEAKING），停止 encoder 防止回声")
+                        _deviceState.value = DeviceState.SPEAKING
                         audioService.stopRecording()
                         opusEncoder?.stop()
                         opusEncoder = null
@@ -111,6 +123,7 @@ class ConnectionRepositoryImpl(
                     // AI 开始说话时，自动停止我们启动的录音（防止麦克风采集到 AI 自己的声音发往 STT）
                     if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
                         Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声")
+                        _deviceState.value = DeviceState.SPEAKING
                         backendService.sendAbort("playback_start")
                         audioService.stopRecording()
                         audioService.abandonAudioFocus()
@@ -125,7 +138,9 @@ class ConnectionRepositoryImpl(
 
                     // AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
-                        Logger.i(TAG, "AI 说完话，AUTO 模式等待播放排空后重启监听")
+                        Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
+                        // 更新设备状态
+                        _deviceState.value = DeviceState.IDLE
                         // 等待 AudioTrack 缓冲排空，防止 AI 尾音被麦克风采集导致重叠
                         opusDecoder?.let { decoder ->
                             withTimeoutOrNull(1000L) {
@@ -145,17 +160,68 @@ class ConnectionRepositoryImpl(
                             audioService.setOnSilenceDetected {
                                 scope.launch { stopListening(userExplicitStop = false) }
                             }
+                            // AUTO 模式使用 VAD 自动停止
+                            val encoderRef = encoder
                             audioService.startRecording({ pcmData ->
-                                encoder.encode(pcmData)
+                                encoderRef?.encode(pcmData)
                             }, enableVAD = true)
                             backendService.sendListenStart("auto")
                             _aiState.value = AiState.LISTENING
+                            _deviceState.value = DeviceState.LISTENING
                             weStartedRecording = true
                             Logger.i(TAG, "AUTO 模式监听已重启")
                         } else {
                             Logger.e(TAG, "AUTO 模式重启监听失败：Opus 编码器初始化失败")
                             opusEncoder = null
                             isAutoMode = false
+                            _aiState.value = AiState.IDLE
+                        }
+                    }
+
+                    // Manual Stop 模式：TTS 结束后回到 IDLE，不自动重启监听，等待用户手动触发
+                    // 参考 ESP32 kListeningModeManualStop 行为
+                    if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.MANUAL) {
+                        Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，等待用户手动启动监听")
+                        _deviceState.value = DeviceState.IDLE
+                        audioService.abandonAudioFocus()
+                        isAutoMode = false
+                        weStartedRecording = false
+                    }
+
+                    // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
+                    // 参考 ESP32 kListeningModeRealtime 行为
+                    if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
+                        Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听")
+                        _deviceState.value = DeviceState.IDLE
+                        opusDecoder?.let { decoder ->
+                            withTimeoutOrNull(1000L) {
+                                while (decoder.getRemainingBytes() > 0) {
+                                    kotlinx.coroutines.delay(50)
+                                }
+                            } ?: Logger.w(TAG, "播放排空未完成（超时），继续重启监听")
+                        }
+                        var encoder = opusEncoder
+                        if (encoder == null) {
+                            val sampleRate = audioService.getSampleRate()
+                            opusEncoder = OpusEncoder(sampleRate = sampleRate)
+                            encoder = opusEncoder
+                        }
+                        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
+                            audioService.setOnSilenceDetected {
+                                scope.launch { stopListening(userExplicitStop = false) }
+                            }
+                            // Realtime 模式：禁用 VAD 自动停止（持续录音）
+                            audioService.startRecording({ pcmData ->
+                                encoder.encode(pcmData)
+                            }, enableVAD = false)
+                            backendService.sendListenStart("realtime")
+                            _aiState.value = AiState.LISTENING
+                            _deviceState.value = DeviceState.LISTENING
+                            weStartedRecording = true
+                            Logger.i(TAG, "Realtime 模式监听已重启（无 VAD 自动停止）")
+                        } else {
+                            Logger.e(TAG, "Realtime 模式重启监听失败")
+                            opusEncoder = null
                             _aiState.value = AiState.IDLE
                         }
                     }
@@ -216,10 +282,16 @@ class ConnectionRepositoryImpl(
                     if (decoder == null) {
                         val serverRate = backendService.getServerSampleRate()
                         val serverCh = backendService.getServerChannels()
-                        decoder = NativeOpusDecoder(serverRate, 16000, serverCh)
+                        // 从持久化存储读取音量设置（参考 ESP32 audio_codec.cc SetOutputVolume）
+                        val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                        decoder = NativeOpusDecoder(serverRate, 16000, serverCh, volume)
+                        // 如果保存的音量不是 100%，立即应用
+                        if (volume < 100) {
+                            decoder.setVolume(volume)
+                        }
                         decoder.init()
                         opusDecoder = decoder
-                        Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch)")
+                        Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch, 音量=$volume%)")
                     }
                     decoder.decodePacket(audioData)
                     val dt = (System.nanoTime() - t0) / 1000
@@ -233,9 +305,9 @@ class ConnectionRepositoryImpl(
 
     override suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit> {
         Logger.i(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
-        
+
         // 互斥：连接新联系人前先断开旧连接
-        if (_connectionState.value is ConnectionState.Connected || 
+        if (_connectionState.value is ConnectionState.Connected ||
             _connectionState.value is ConnectionState.Connecting) {
             Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
@@ -246,8 +318,14 @@ class ConnectionRepositoryImpl(
             _connectionState.value = ConnectionState.Disconnected
             _aiState.value = AiState.IDLE
         }
-        
+
         currentContactId = contactId
+        // 设置设备状态为 CONNECTING（参考 ESP32 kDeviceStateConnecting）
+        _deviceState.value = DeviceState.CONNECTING
+
+        // 初始化设备标识（从持久化存储读取，参考 ESP32 settings.cc）
+        AppContainer.initDeviceIds(AppContainer.context)
+
         return try {
             _connectionState.value = ConnectionState.Connecting
             Logger.i(TAG, "ConnectionRepositoryImpl: calling backendService.connect()...")
@@ -310,10 +388,20 @@ class ConnectionRepositoryImpl(
     
     override suspend fun startListening(mode: String) {
         stateMutex.withLock {
+            // 解析并保存监听模式（参考 ESP32 ListeningMode）
+            listeningMode = VoiceMode.fromServerValue(mode)
+            isAutoMode = (mode == "auto")
+
             backendService.sendListenStart(mode)
             _aiState.value = AiState.LISTENING
             weStartedRecording = true
-            isAutoMode = (mode == "auto")
+
+            // 更新设备状态（参考 ESP32 kDeviceStateListening）
+            _deviceState.value = DeviceState.LISTENING
+
+            // Realtime 模式：禁用 VAD 自动停止（持续录音流）
+            // 注意：Realtime 模式需要 AEC 支持才能在说话时继续录音
+            val enableVAD = listeningMode != VoiceMode.REALTIME
 
             audioService.setOnSilenceDetected {
                 scope.launch { stopListening(userExplicitStop = false) }
@@ -325,7 +413,7 @@ class ConnectionRepositoryImpl(
             if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
                 audioService.startRecording({ pcmData ->
                     encoder.encode(pcmData)
-                }, enableVAD = true)
+                }, enableVAD = enableVAD)
             } else {
                 Logger.e(TAG, "Opus 编码器初始化失败")
                 opusEncoder = null

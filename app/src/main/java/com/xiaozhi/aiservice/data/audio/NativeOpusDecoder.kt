@@ -19,7 +19,8 @@ import kotlin.math.abs
 class NativeOpusDecoder(
     private val serverSampleRate: Int = 24000,
     private val clientSampleRate: Int = 16000,
-    private val channels: Int = 1
+    private val channels: Int = 1,
+    initialVolume: Int = 100  // 0-100, default 100
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
@@ -41,9 +42,25 @@ class NativeOpusDecoder(
 
     private val pendingDecodePackets = AtomicInteger(0)
 
+    // 音量缩放因子：volumeScale / 100，范围 0-100
+    // 参考 ESP32 audio_codec.cc SetOutputVolume()
+    private var volumeScale: Int = initialVolume.coerceIn(0, 100)
+
     init {
         System.loadLibrary("native_opus_decoder")
     }
+
+    /**
+     * 设置输出音量
+     * 参考 ESP32 audio_codec.cc SetOutputVolume()
+     * @param level 音量 0-100
+     */
+    fun setVolume(level: Int) {
+        volumeScale = level.coerceIn(0, 100)
+        Logger.i(TAG, "音量设置为 $volumeScale%")
+    }
+
+    fun getVolume(): Int = volumeScale
 
     fun init() {
         try {
@@ -146,9 +163,16 @@ class NativeOpusDecoder(
 
                 val pcmLimiter = applyLimiter(pcmResampled)
 
-                val byteBuffer = ByteBuffer.allocate(pcmLimiter.size * 2)
+                // 应用音量缩放（参考 ESP32 audio_codec.cc SetOutputVolume）
+                val pcmWithVolume = if (volumeScale < 100) {
+                    applyVolume(pcmLimiter, volumeScale)
+                } else {
+                    pcmLimiter
+                }
+
+                val byteBuffer = ByteBuffer.allocate(pcmWithVolume.size * 2)
                     .order(ByteOrder.LITTLE_ENDIAN)
-                byteBuffer.asShortBuffer().put(pcmLimiter)
+                byteBuffer.asShortBuffer().put(pcmWithVolume)
                 val pcmBytes = byteBuffer.array()
 
                 onPcm?.invoke(pcmBytes)
@@ -218,6 +242,23 @@ class NativeOpusDecoder(
                 -((abs(s) * ratio) + (abs(s) - abs(s) * ratio) * kotlin.math.sqrt(abs(s).toDouble() / peak)).toInt()
             }
             result[i] = compressed.coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
+        }
+        return result
+    }
+
+    /**
+     * 应用音量缩放
+     * 参考 ESP32 audio_codec.cc 音量处理
+     * @param pcm PCM样本数组（16-bit）
+     * @param volume 音量 0-100
+     */
+    private fun applyVolume(pcm: ShortArray, volume: Int): ShortArray {
+        if (volume <= 0) return ShortArray(pcm.size)  // 静音
+        if (volume >= 100) return pcm
+        val scale = volume.toFloat() / 100f
+        val result = ShortArray(pcm.size)
+        for (i in pcm.indices) {
+            result[i] = (pcm[i].toInt() * scale).toInt().coerceIn(-32768, 32767).toShort()
         }
         return result
     }

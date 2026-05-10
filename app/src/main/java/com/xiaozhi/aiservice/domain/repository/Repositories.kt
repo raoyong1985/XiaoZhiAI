@@ -20,6 +20,23 @@ sealed class ConnectionState {
 }
 
 /**
+ * 设备状态（参考 ESP32 device_state_machine.cc）
+ * 状态转换: DISCONNECTED → CONNECTING → CONNECTED → (IDLE/LISTENING/SPEAKING/PROCESSING)
+ */
+enum class DeviceState(val displayName: String) {
+    UNKNOWN("未知"),
+    DISCONNECTED("未连接"),
+    CONNECTING("连接中"),
+    CONNECTED("已连接"),
+    ACTIVATING("激活中"),      // 设备激活流程（ESP32 kDeviceStateActivating）
+    UPGRADING("升级中"),       // 固件升级中（ESP32 kDeviceStateUpgrading）
+    IDLE("空闲"),
+    LISTENING("倾听中"),       // ESP32 kDeviceStateListening
+    SPEAKING("说话中"),        // ESP32 kDeviceStateSpeaking
+    PROCESSING("处理中");      // ESP32 kDeviceStateProcessing
+}
+
+/**
  * 消息仓库接口
  */
 interface MessageRepository {
@@ -50,6 +67,7 @@ interface DeviceRepository {
 interface ConnectionRepository {
     val connectionState: StateFlow<ConnectionState>
     val aiState: StateFlow<AiState>
+    val deviceState: StateFlow<DeviceState>  // 设备状态机（参考 ESP32 device_state_machine.cc）
     val emotion: StateFlow<String>  // AI情感状态
     val alert: SharedFlow<String>    // 服务器Alert弹窗
     val streamingEnd: SharedFlow<String>  // 流式消息结束信号（消息ID）
