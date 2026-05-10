@@ -5,27 +5,34 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
-# Keep Gson
+# Keep Gson TypeToken - R8 会吃掉匿名内部类的泛型签名
 -keepattributes Signature
--keepattributes *Annotation*
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken { *; }
+
+# Keep generic signatures for Gson
 -keep class com.google.gson.** { *; }
 -keep class * implements com.google.gson.TypeAdapterFactory
 -keep class * implements com.google.gson.JsonSerializer
 -keep class * implements com.google.gson.JsonDeserializer
 
-# Keep data classes
--keep class com.xiaozhi.aiservice.domain.model.** { *; }
-
-# Keep Gson-serialized group chat model classes
--keep class com.xiaozhi.aiservice.domain.model.GroupMessage { *; }
--keep class com.xiaozhi.aiservice.domain.model.GroupChat { *; }
--keep class com.xiaozhi.aiservice.domain.model.BotContact { *; }
--keep class com.xiaozhi.aiservice.domain.model.ChatMessage { *; }
-
 # Keep all Kotlin data classes (Gson serialization)
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
+
+# Keep all enums
+-keepclassmembers enum * {
+    <fields>;
+    **[] values();
+}
+
+# Keep VoiceMode enum
+-keep class com.xiaozhi.aiservice.domain.model.VoiceMode { *; }
+-keep class com.xiaozhi.aiservice.domain.model.InputMode { *; }
+-keep class com.xiaozhi.aiservice.domain.model.MessageType { *; }
+-keep class com.xiaozhi.aiservice.domain.model.MessageDirection { *; }
+-keep class com.xiaozhi.aiservice.domain.model.MessageStatus { *; }
 
 # Keep JNI native methods
 -keep class com.xiaozhi.aiservice.data.audio.NativeOpusDecoder { *; }

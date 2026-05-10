@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 private const val TAG = "ConnectionRepo"
@@ -122,9 +123,17 @@ class ConnectionRepositoryImpl(
                     // 更新状态
                     _aiState.value = newAiState
 
-                    // AI 说完话回到 IDLE，且是 AUTO 模式 → 立刻重启监听
+                    // AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
-                        Logger.i(TAG, "AI 说完话，AUTO 模式立即重启监听")
+                        Logger.i(TAG, "AI 说完话，AUTO 模式等待播放排空后重启监听")
+                        // 等待 AudioTrack 缓冲排空，防止 AI 尾音被麦克风采集导致重叠
+                        opusDecoder?.let { decoder ->
+                            withTimeoutOrNull(1000L) {
+                                while (decoder.getRemainingBytes() > 0) {
+                                    kotlinx.coroutines.delay(50)
+                                }
+                            } ?: Logger.w(TAG, "播放排空未完成（超时），继续重启监听")
+                        }
                         // 复用之前的 encoder（避免重新初始化延迟），或立即创建新的
                         var encoder = opusEncoder
                         if (encoder == null) {
