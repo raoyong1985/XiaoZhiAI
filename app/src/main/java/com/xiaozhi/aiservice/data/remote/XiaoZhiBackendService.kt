@@ -111,6 +111,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
     private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
     private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
+    private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
 
     /**
      * 连接服务器
@@ -535,19 +536,25 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
                     if (audioBase64 != null && audioBase64.isNotEmpty()) {
                         Logger.i(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
-                        try {
-                            val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
-                            if (audioData.isNotEmpty()) {
-                                scope.launch { _audioData.emit(audioData) }
+                        // 如果本轮已有二进制音频，跳过 base64 音频（避免重复播放）
+                        if (binaryAudioInSession) {
+                            Logger.i(TAG, "跳过 base64 音频（二进制音频已在播放）")
+                        } else {
+                            try {
+                                val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
+                                if (audioData.isNotEmpty()) {
+                                    scope.launch { _audioData.emit(audioData) }
+                                }
+                            } catch (e: Exception) {
+                                Logger.e(TAG, "Base64 解码失败: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Logger.e(TAG, "Base64 解码失败: ${e.message}")
                         }
                     }
                     
                     when (state) {
                         "start" -> {
                             idleDebounceJob?.cancel()
+                            binaryAudioInSession = false  // 新TTS轮次，重置二进制音频标志
                             Logger.e(TAG, "!!!! tts start received, setting aiState=speaking")
                             _aiState.value = AiStateStr.SPEAKING
                             _ttsText.value = ""
@@ -741,6 +748,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         }
         // 有音频数据到达，取消空闲防抖
         idleDebounceJob?.cancel()
+        // 标记本轮TTS已有二进制音频（用于base64去重）
+        binaryAudioInSession = true
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
         scope.launch {

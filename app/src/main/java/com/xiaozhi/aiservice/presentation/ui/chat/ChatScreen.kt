@@ -102,14 +102,14 @@ fun ChatScreen(
     )
 
     val stateText = when (uiState.aiState) {
-        AiState.LISTENING -> "正在倾听..."
+        AiState.LISTENING -> if (inputMode == 0) "正在倾听..." else ""  // 文本模式不显示
         AiState.SPEAKING -> "正在回答..."
         AiState.PROCESSING -> "思考中..."
         else -> ""
     }
 
     val stateIcon = when (uiState.aiState) {
-        AiState.LISTENING -> Icons.Default.Mic
+        AiState.LISTENING -> if (inputMode == 0) Icons.Default.Mic else null
         AiState.SPEAKING -> Icons.Default.VolumeUp
         AiState.PROCESSING -> Icons.Default.Psychology
         else -> null
@@ -440,9 +440,9 @@ private fun ChatInputArea(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = when (aiState) {
-                                        AiState.LISTENING -> "正在倾听..."
                                         AiState.PROCESSING -> "思考中..."
-                                        else -> ""
+                                        AiState.SPEAKING -> "正在回答..."
+                                        else -> ""  // LISTENING 在文本模式下无意义，不显示
                                     },
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.primary

@@ -64,6 +64,8 @@ class ConnectionRepositoryImpl(
     private var isAutoMode = false
     // 当前监听模式：auto / manual / realtime（参考 ESP32 ListeningMode）
     private var listeningMode: VoiceMode = VoiceMode.REALTIME
+    // 文本输入激活中：发送文本后不自动重启语音监听
+    private var textInputActive = false
 
     // 设备状态（参考 ESP32 device_state_machine.cc）
     // 使用 internal 可见性让 MCP 工具能访问，同时对接口暴露为 StateFlow
@@ -122,23 +124,35 @@ class ConnectionRepositoryImpl(
                     }
 
                     // AI 开始说话时，自动停止我们启动的录音（防止麦克风采集到 AI 自己的声音发往 STT）
+                    // 注意：不发送 abort/listenStop，服务器已知自己在说话，abort 会打断 AI 回复
                     if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
-                        Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声")
+                        Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声（保留 AI 回复）")
                         _deviceState.value = DeviceState.SPEAKING
-                        backendService.sendAbort("playback_start")
                         audioService.stopRecording()
                         audioService.abandonAudioFocus()
                         opusEncoder?.stop()
                         opusEncoder = null
-                        backendService.sendListenStop()
                         weStartedRecording = false
                     }
 
                     // 更新状态
                     _aiState.value = newAiState
 
+                    // ESP32 HandleStateChangedEvent(Speaking): ResetDecoder() 清空残留音频队列
+                    if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
+                        opusDecoder?.flushAudio()
+                    }
+
                     // AUTO 模式：AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
+                    // 文本模式下(textInputActive=true)不自动重启（参考 ESP32: 非 REALTIME 走 IDLE）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
+                        if (textInputActive) {
+                            Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听")
+                            _deviceState.value = DeviceState.IDLE
+                            audioService.abandonAudioFocus()
+                            weStartedRecording = false
+                            return@withLock
+                        }
                         Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
                         // 更新设备状态
                         _deviceState.value = DeviceState.IDLE
@@ -190,6 +204,14 @@ class ConnectionRepositoryImpl(
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
                     // 参考 ESP32 kListeningModeRealtime 行为
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
+                        // 文本模式下不自动重启语音监听
+                        if (textInputActive) {
+                            Logger.i(TAG, "Realtime 模式：文本输入中，不重启监听")
+                            _deviceState.value = DeviceState.IDLE
+                            audioService.abandonAudioFocus()
+                            weStartedRecording = false
+                            return@withLock
+                        }
                         Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听")
                         _deviceState.value = DeviceState.IDLE
                         // 排空播放缓冲 + 强制 flush + 硬件延迟补偿
@@ -272,29 +294,29 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.audioData.collect { audioData ->
-                if (audioData.isNotEmpty()) {
-                    val t0 = System.nanoTime()
-                    // 延迟初始化解码器：hello 肯定已在此时处理完
-                    var decoder = opusDecoder
-                    if (decoder == null) {
-                        val serverRate = backendService.getServerSampleRate()
-                        val serverCh = backendService.getServerChannels()
-                        // 从持久化存储读取音量设置（参考 ESP32 audio_codec.cc SetOutputVolume）
-                        val volume = AudioSettings.getOutputVolume(AppContainer.context)
-                        decoder = NativeOpusDecoder(serverRate, 16000, serverCh, volume)
-                        // 如果保存的音量不是 100%，立即应用
-                        if (volume < 100) {
-                            decoder.setVolume(volume)
-                        }
-                        decoder.init()
-                        opusDecoder = decoder
-                        Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch, 音量=$volume%)")
+                // 参考 ESP32 OnIncomingAudio: 非 SPEAKING 状态不解码音频
+                if (audioData.isEmpty() || _aiState.value != AiState.SPEAKING) return@collect
+                val t0 = System.nanoTime()
+                // 延迟初始化解码器：hello 肯定已在此时处理完
+                var decoder = opusDecoder
+                if (decoder == null) {
+                    val serverRate = backendService.getServerSampleRate()
+                    val serverCh = backendService.getServerChannels()
+                    // 从持久化存储读取音量设置（参考 ESP32 audio_codec.cc SetOutputVolume）
+                    val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                    decoder = NativeOpusDecoder(serverRate, 16000, serverCh, volume)
+                    // 如果保存的音量不是 100%，立即应用
+                    if (volume < 100) {
+                        decoder.setVolume(volume)
                     }
-                    decoder.decodePacket(audioData)
-                    val dt = (System.nanoTime() - t0) / 1000
-                    if (dt > 5000) {
-                        Logger.w(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
-                    }
+                    decoder.init()
+                    opusDecoder = decoder
+                    Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch, 音量=$volume%)")
+                }
+                decoder.decodePacket(audioData)
+                val dt = (System.nanoTime() - t0) / 1000
+                if (dt > 5000) {
+                    Logger.w(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
                 }
             }
         }
@@ -371,6 +393,8 @@ class ConnectionRepositoryImpl(
 
         // 发送文本消息到服务器
         backendService.sendTextContent(text)
+        // 文本模式下禁止自动重启语音监听（参考 ESP32: listening_mode != REALTIME 时 speaking 后走 IDLE）
+        textInputActive = true
         return Result.success(Unit)
     }
     
@@ -385,6 +409,8 @@ class ConnectionRepositoryImpl(
     
     override suspend fun startListening(mode: String) {
         stateMutex.withLock {
+            // 用户开始语音输入，关闭文本模式标记
+            textInputActive = false
             // 解析并保存监听模式（参考 ESP32 ListeningMode）
             listeningMode = VoiceMode.fromServerValue(mode)
             isAutoMode = (mode == "auto")
