@@ -642,26 +642,26 @@ class GroupChatViewModel : ViewModel() {
         }
         // 2. 额外等待一段时间，让网络缓冲区中的 in-flight 包全部到达
         delay(500)
-        // 3. 解码器内部缓冲排空（decoder 仍然在处理 late packets）
+        // 3. 解码器内部缓冲自然排空（等待 audioQueue 清空，不等 AudioTrack）
+        //    用 waitForQueueEmpty 替代 getRemainingBytes 循环——后者因 silence 帧永不归零
         val decoder = botAudioDecoders[prevBotId]
         if (decoder != null && !decoder.isReleased) {
-            withTimeoutOrNull(2000L) {
-                while (decoder.getRemainingBytes() > 0) {
-                    delay(50)
-                }
+            if (!decoder.waitForQueueEmpty(2000L)) {
+                android.util.Log.w("GroupChatVM", "drainPreviousBotAudio 等待队列排空超时")
             }
         }
-        // 4. AudioTrack 缓冲排空（等待旧 bot 的声音完全播放完再切换）
-        //    releaseOldDecoders 由调用方在 speakerMutex 内执行
+        // 4. AudioTrack 硬件缓冲补偿（DAC + 振膜约 200ms）
+        //    调用方 speakerMutex 内会 releaseOldDecoders，补偿后残留音频极少
+        delay(200)
     }
 
-    // 切换到新bot前，排空旧解码器的AudioTrack缓冲（只排空，不释放，不阻塞音频收集）
+    // 切换到新bot前，排空旧解码器的解码队列（自然排空，不强制 flush）
     private suspend fun drainPreviousDecodersBeforeSwitch() {
         val currentId = sequentialBotIds.getOrNull(currentSpeakerIndex)
         for ((_, decoder) in botAudioDecoders.filterKeys { it != currentId }) {
             if (decoder.isReleased) continue
-            withTimeoutOrNull(2000L) {
-                decoder.drainAudio(2000L)
+            if (!decoder.waitForQueueEmpty(2000L)) {
+                android.util.Log.w("GroupChatVM", "drainPreviousDecoders 等待队列排空超时")
             }
         }
     }
