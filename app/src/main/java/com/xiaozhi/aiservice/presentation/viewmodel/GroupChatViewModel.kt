@@ -162,8 +162,8 @@ class GroupChatViewModel : ViewModel() {
         }
         botAudioDecoders.values.forEach { it.release() }
         botAudioDecoders.clear()
-        botObserverJobs.values.forEach { it.cancel() }
-        botObserverJobs.clear()
+        // 不取消 botObserverJobs！监听器跨录音会话存活，
+        // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
         deadloopCount = 0
@@ -296,9 +296,36 @@ class GroupChatViewModel : ViewModel() {
                 eventChannel.send(BotEvent.AiState(state))
             }
         }
+        // 音频数据不走事件通道：decodePacket 是 CPU 密集操作，
+        // 走通道会阻塞 aiState/ttsText 处理，导致音频堆积、无声音
+        // 直接用独立协程解码播放（参考旧版 4 协程模式）
         viewModelScope.launch(parentJob) {
             service.audioData.collect { audioData ->
-                if (audioData.isNotEmpty()) eventChannel.send(BotEvent.AudioData(audioData))
+                if (audioData.isEmpty()) return@collect
+                botLastAudioTime[botId] = System.currentTimeMillis()
+                val rs = relayState
+                val idx = rs.botIds.indexOf(botId)
+                if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) return@collect
+
+                val existingDecoder = botAudioDecoders[botId]
+                val finalDecoder = if (existingDecoder == null) {
+                    drainPreviousDecodersBeforeSwitch()
+                    speakerMutex.withLock {
+                        var d = botAudioDecoders[botId]
+                        if (d == null) {
+                            releaseOldDecoders()
+                            val serverRate = service.getServerSampleRate()
+                            val serverCh = service.getServerChannels()
+                            d = NativeOpusDecoder(serverRate, 16000, serverCh).also {
+                                it.init()
+                                botAudioDecoders[botId] = it
+                            }
+                        }
+                        d!!
+                    }
+                } else existingDecoder
+                finalDecoder.decodePacket(audioData)
+                audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
             }
         }
 
@@ -382,34 +409,6 @@ class GroupChatViewModel : ViewModel() {
                                 triggerNextSpeaker(replyToForward)
                             }
                         }
-                    }
-                    is BotEvent.AudioData -> {
-                        val audioData = event.data
-                        val rs = relayState
-                        botLastAudioTime[botId] = System.currentTimeMillis()
-                        val idx = rs.botIds.indexOf(botId)
-                        if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) continue
-
-                        val existingDecoder = botAudioDecoders[botId]
-                        val finalDecoder = if (existingDecoder == null) {
-                            drainPreviousDecodersBeforeSwitch()
-                            speakerMutex.withLock {
-                                var d = botAudioDecoders[botId]
-                                if (d == null) {
-                                    releaseOldDecoders()
-                                    val serverRate = service.getServerSampleRate()
-                                    val serverCh = service.getServerChannels()
-                                    d = NativeOpusDecoder(serverRate, 16000, serverCh).also {
-                                        it.init()
-                                        botAudioDecoders[botId] = it
-                                    }
-                                }
-                                d
-                            }
-                        } else existingDecoder
-
-                        finalDecoder.decodePacket(audioData)
-                        audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
                     }
                 }
             }
