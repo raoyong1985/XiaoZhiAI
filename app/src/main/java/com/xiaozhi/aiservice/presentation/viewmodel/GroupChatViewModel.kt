@@ -16,7 +16,6 @@ import com.xiaozhi.aiservice.domain.model.MessageType
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -278,8 +277,9 @@ class GroupChatViewModel : ViewModel() {
         val parentJob = Job(viewModelScope.coroutineContext[Job])
         botObserverJobs[botId] = parentJob
 
-        // 将 4 个独立流合并为单个事件通道
-        val eventChannel = Channel<BotEvent>(CONFLATED)
+        // BUFFERED channel：缓冲 64 个事件，不阻塞发送方，不丢事件
+        // CONFLATED 会丢弃中间事件（ttsText 在多句子时只剩最后一个）
+        val eventChannel = Channel<BotEvent>(Channel.BUFFERED)
 
         viewModelScope.launch(parentJob) {
             service.ttsText.collect { text ->
