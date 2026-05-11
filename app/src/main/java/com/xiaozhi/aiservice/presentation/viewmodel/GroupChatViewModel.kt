@@ -15,6 +15,8 @@ import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -22,7 +24,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicReference
 
 class GroupChatViewModel : ViewModel() {
     private val groupChatRepository = AppContainer.groupChatRepository
@@ -30,17 +31,15 @@ class GroupChatViewModel : ViewModel() {
 
     private val botConnections = ConcurrentHashMap<String, XiaoZhiBackendService>()
     private val botAudioDecoders = ConcurrentHashMap<String, NativeOpusDecoder>()
-    private val botObserverJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()  // 每个bot的观察协程
+    private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
-    private var sequentialBotIds = listOf<String>()
-    private var currentSpeakerIndex = 0
-    private var forwardRound = 0
-    private var originalUserQuery = ""
-    private var spokenInThisRound = mutableSetOf<Int>()
-    private var spokenRoundCounter = 0  // spokenInThisRound 重置计数器
-    private val AUDIO_DRAIN_TIMEOUT_MS = 3000L
-    private val AUDIO_DRAIN_SILENCE_MS = 300L
+    // ── 接龙状态（不可变 RelayState，每次变更用 copy） ──
+    private var relayState: RelayState = RelayState()
 
+    private val audioForwardBuffer = ConcurrentHashMap<String, MutableList<ByteArray>>()
+    private val botLastAudioTime = ConcurrentHashMap<String, Long>()
+
+    // ── 群聊 UI 状态 ──
     private val _groups = MutableStateFlow<List<GroupChat>>(emptyList())
     val groups: StateFlow<List<GroupChat>> = _groups.asStateFlow()
 
@@ -50,68 +49,69 @@ class GroupChatViewModel : ViewModel() {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    // ── 录音状态 ──
     private var opusEncoder: OpusEncoder? = null
     private val audioService = AppContainer.audioService
     private var currentGroupId = ""
-    private var waitingSpeakerIndex = -1
-    private var sttCollectorJob: kotlinx.coroutines.Job? = null
+    private var sttCollectorJob: Job? = null
     private var recordingGeneration = 0
-    private var timeoutJob: kotlinx.coroutines.Job? = null
+    private var timeoutJob: Job? = null
+    private var observeJob: Job? = null
+
     private val speakerMutex = Mutex()
-    private var relaySessionId = 0L  // 递增，用于判断aiState回调是否属于当前轮次
 
-    private val audioForwardBuffer = ConcurrentHashMap<String, MutableList<ByteArray>>()
-    private val botLastAudioTime = ConcurrentHashMap<String, Long>()  // botId → last audio arrival timestamp
-    private var observeJob: kotlinx.coroutines.Job? = null
-
-    // 防死循环：追踪最近转发 hint 的重复情况
+    // 防死循环
     private val recentHints = mutableListOf<String>()
-    private val recentCandidates = mutableListOf<String>()  // 最近选中的候选botId，防止同一bot被重复选中
+    private val recentCandidates = mutableListOf<String>()
     private var deadloopCount = 0
     private val MAX_DEADLOOP = 3
-    private var hostBotId: String? = null
+
+    // 去重
+    private val recentReplyKeys = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    private val MAX_RECENT_REPLIES = 40
+
+    companion object {
+        private const val TAG = "GroupChatVM"
+        private val GOODBYE_KEYWORDS = listOf("再见", "拜拜", "下次聊", "不打扰", "回头聊", "bye", "goodbye")
+        private const val AUDIO_DRAIN_TIMEOUT_MS = 3000L
+        private const val AUDIO_DRAIN_SILENCE_MS = 300L
+    }
 
     init {
         loadGroups()
         loadContacts()
     }
 
+    // ═══════════════════════════════════════════
+    // lifecycle / 连接管理
+    // ═══════════════════════════════════════════
+
     private fun loadGroups() {
-        viewModelScope.launch {
-            _groups.value = groupChatRepository.getGroups()
-        }
+        viewModelScope.launch { _groups.value = groupChatRepository.getGroups() }
     }
 
     private fun loadContacts() {
         viewModelScope.launch {
-            contactsRepository.getContacts().collect { contacts ->
-                _contacts.value = contacts
-            }
+            contactsRepository.getContacts().collect { _contacts.value = it }
         }
     }
 
     fun connectGroup(groupId: String) {
-        // 取消旧群聊的观察协程
         observeJob?.cancel()
         observeJob = null
-        // 断开旧群聊的所有连接
         botConnections.forEach { (_, service) -> service.disconnect() }
         botConnections.clear()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
         botAudioDecoders.values.forEach { it.release() }
         botAudioDecoders.clear()
-        forwardRound = 0
-        currentSpeakerIndex = 0
-        waitingSpeakerIndex = -1
+        relayState = RelayState()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
         recentReplyKeys.clear()
-        spokenInThisRound.clear()
         currentGroupId = groupId
 
         observeJob = viewModelScope.launch {
-            // 先刷新 groups 数据（确保 inputMode 等最新）
             loadGroups()
             val group = groupChatRepository.getGroup(groupId)
             group?.let { g ->
@@ -123,25 +123,23 @@ class GroupChatViewModel : ViewModel() {
                                 if (!botConnections.containsKey(botId)) {
                                     val service = XiaoZhiBackendService(AppContainer.gson)
                                     botConnections[botId] = service
-                                    observeBotReplies(botId, groupId, c.name, service)
+                                    observeBotEvents(botId, groupId, c.name, service)
                                     service.connect(c.serverUrl, c.otaUrl, c.deviceId, c.clientId)
                                 }
                             }
                         } catch (e: Exception) {
-                            android.util.Log.w("GroupChatVM", "连接bot[$botId]失败: ${e.message}")
+                            android.util.Log.w(TAG, "连接bot[$botId]失败: ${e.message}")
                         }
                     }
                 }.forEach { it.await() }
-                sequentialBotIds = g.botIds
+                relayState = relayState.copy(botIds = g.botIds)
             }
         }
     }
 
     fun setGroupInputMode(groupId: String, mode: Int) {
         viewModelScope.launch {
-            // 先更新数据库
             groupChatRepository.updateGroupInputMode(groupId, mode)
-            // 立即更新本地状态，不依赖异步的 loadGroups()
             val currentGroups = _groups.value.toMutableList()
             val index = currentGroups.indexOfFirst { it.id == groupId }
             if (index >= 0) {
@@ -151,12 +149,15 @@ class GroupChatViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════════
+    // 录音
+    // ═══════════════════════════════════════════
+
     fun startVoiceInput(groupId: String) {
         if (_isRecording.value) return
-        if (sequentialBotIds.isEmpty()) return
+        if (relayState.botIds.isEmpty()) return
 
         currentGroupId = groupId
-        // 用户干预：终止所有正在说话的 bot
         botConnections.forEach { (_, svc) ->
             try { svc.sendAbort("user_interrupt") } catch (_: Exception) {}
         }
@@ -169,20 +170,15 @@ class GroupChatViewModel : ViewModel() {
         deadloopCount = 0
         recentHints.clear()
         recentCandidates.clear()
-        hostBotId = null
 
-        val firstBotId = sequentialBotIds[0]
+        val firstBotId = relayState.botIds[0]
         val service = botConnections[firstBotId] ?: return
 
-        // 递增轮次ID，让旧轮次的 aiState 回调不再触发下一人
-        relaySessionId++
-
-        forwardRound = 0
-        currentSpeakerIndex = 0
-        waitingSpeakerIndex = 0
-        originalUserQuery = ""
+        relayState = relayState.nextSession().copy(
+            forwardRound = 0, currentSpeakerIndex = 0,
+            waitingSpeakerIndex = 0, originalUserQuery = ""
+        )
         recentReplyKeys.clear()
-        spokenInThisRound.clear()
 
         recordingGeneration++
         val currentGen = recordingGeneration
@@ -197,16 +193,16 @@ class GroupChatViewModel : ViewModel() {
         service.sendListenStart("auto")
 
         audioService.setOnSilenceDetected {
-            android.util.Log.i("GroupChatVM", "VAD触发")
+            android.util.Log.i(TAG, "VAD触发")
             if (recordingGeneration == currentGen) {
                 viewModelScope.launch { stopVoiceInput(userExplicitStop = false) }
             }
         }
 
         timeoutJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(8_000)
+            delay(8_000)
             if (_isRecording.value && recordingGeneration == currentGen) {
-                android.util.Log.w("GroupChatVM", "8秒超时触发")
+                android.util.Log.w(TAG, "8秒超时触发")
                 stopVoiceInput(userExplicitStop = false)
             }
         }
@@ -215,22 +211,16 @@ class GroupChatViewModel : ViewModel() {
         val encoder = OpusEncoder(sampleRate = sampleRate)
         opusEncoder = encoder
 
-        if (!encoder.init { opusPacket ->
-                service.sendAudio(opusPacket)
-            }
-        ) {
-            android.util.Log.w("GroupChatVM", "编码器初始化失败")
+        if (!encoder.init { opusPacket -> service.sendAudio(opusPacket) }) {
+            android.util.Log.w(TAG, "编码器初始化失败")
             service.sendListenStop()
             opusEncoder = null
             _isRecording.value = false
             return
         }
 
-        if (!audioService.startRecording({ pcmData ->
-                encoder.encode(pcmData)
-            }, enableVAD = true)
-        ) {
-            android.util.Log.w("GroupChatVM", "录音启动失败")
+        if (!audioService.startRecording({ pcmData -> encoder.encode(pcmData) }, enableVAD = true)) {
+            android.util.Log.w(TAG, "录音启动失败")
             service.sendListenStop()
             opusEncoder?.stop()
             opusEncoder = null
@@ -241,21 +231,16 @@ class GroupChatViewModel : ViewModel() {
         sttCollectorJob?.cancel()
         sttCollectorJob = viewModelScope.launch {
             service.textMessage.drop(1).collect { text ->
-                android.util.Log.i("GroupChatVM", "sttCollector text='$text'")
                 if (text.isNotBlank()) {
-                    if (originalUserQuery.isEmpty()) originalUserQuery = text
+                    if (relayState.originalUserQuery.isEmpty()) {
+                        relayState = relayState.copy(originalUserQuery = text)
+                    }
                     val userMessage = GroupMessage(
-                        id = java.util.UUID.randomUUID().toString(),
-                        groupId = currentGroupId,
-                        botId = "",
-                        botName = "我",
-                        content = text,
-                        type = MessageType.TEXT,
-                        direction = MessageDirection.SENT
+                        id = java.util.UUID.randomUUID().toString(), groupId = currentGroupId,
+                        botId = "", botName = "我", content = text,
+                        type = MessageType.TEXT, direction = MessageDirection.SENT
                     )
-                    android.util.Log.i("GroupChatVM", "sttCollector addMessage content='${text.take(30)}'")
                     groupChatRepository.addMessage(currentGroupId, userMessage)
-                    // 加入去重缓存，防止后续 chatMessages 又收集到相同内容
                     isDuplicateReply("", text)
                 }
             }
@@ -265,13 +250,12 @@ class GroupChatViewModel : ViewModel() {
     fun stopVoiceInput(userExplicitStop: Boolean = true) {
         if (!_isRecording.value) return
         _isRecording.value = false
-        android.util.Log.i("GroupChatVM", "停止录音 userExplicitStop=$userExplicitStop")
+        android.util.Log.i(TAG, "停止录音 userExplicitStop=$userExplicitStop")
 
         timeoutJob?.cancel()
         timeoutJob = null
 
         if (userExplicitStop) {
-            // 中断所有 bot 的当前语音（仅手动停止时，VAD 自动停止不发 abort）
             botConnections.forEach { (_, svc) ->
                 try { svc.sendAbort("user_stop") } catch (_: Exception) {}
             }
@@ -280,206 +264,182 @@ class GroupChatViewModel : ViewModel() {
         audioService.stopRecording()
         opusEncoder?.stop()
         opusEncoder = null
-
         audioService.abandonAudioFocus()
 
-        // 不取消 STT 收集器！STT 结果在停录后才会到达，等下一次 startVoiceInput 自然替换
-        // sttCollectorJob?.cancel()  // 错误：会导致 STT 文字不显示
-
-        // 只发 listen stop，不发 abort（avoid 中断服务器端 ASR 结果处理）
-        try { botConnections[sequentialBotIds.firstOrNull()]?.sendListenStopOnly() } catch (_: Exception) { }
+        try { botConnections[relayState.botIds.firstOrNull()]?.sendListenStopOnly() } catch (_: Exception) {}
     }
 
-    // 最近消息去重缓存：botId+content 组合 key（不同 bot 说相同内容不算重复）
-    private val recentReplyKeys = java.util.concurrent.ConcurrentLinkedDeque<String>()
-    private val MAX_RECENT_REPLIES = 40
+    // ═══════════════════════════════════════════
+    // Bot 事件驱动（B1：合并 4 个流为一个事件通道）
+    // ═══════════════════════════════════════════
 
-    private fun isDuplicateReply(botId: String, content: String): Boolean {
-        val key = "$botId|$content"
-        synchronized(recentReplyKeys) {
-            if (recentReplyKeys.contains(key)) {
-                return true
-            }
-            recentReplyKeys.addFirst(key)
-            if (recentReplyKeys.size > MAX_RECENT_REPLIES) {
-                recentReplyKeys.removeLast()
-            }
-        }
-        return false
-    }
-
-    private fun observeBotReplies(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
-        // 取消旧观察协程（如果有）
+    private fun observeBotEvents(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
         botObserverJobs[botId]?.cancel()
-        // 用 Job 管理该 bot 的所有流收集协程，作为 viewModelScope 的子协程
-        val parentJob = kotlinx.coroutines.Job(viewModelScope.coroutineContext[kotlinx.coroutines.Job])
+        val parentJob = Job(viewModelScope.coroutineContext[Job])
         botObserverJobs[botId] = parentJob
 
-        val replyContent = AtomicReference("")
+        // 将 4 个独立流合并为单个事件通道
+        val eventChannel = Channel<BotEvent>(CONFLATED)
 
         viewModelScope.launch(parentJob) {
             service.ttsText.collect { text ->
-                if (text.isNotBlank()) {
-                    replyContent.getAndUpdate { old ->
-                        if (old.isBlank()) text else "$old $text"
-                    }
-                }
+                if (text.isNotBlank()) eventChannel.send(BotEvent.TtsText(text))
+            }
+        }
+        viewModelScope.launch(parentJob) {
+            service.chatMessages.collect { msg ->
+                eventChannel.send(BotEvent.Message(msg))
+            }
+        }
+        viewModelScope.launch(parentJob) {
+            service.aiState.collect { state ->
+                eventChannel.send(BotEvent.AiState(state))
+            }
+        }
+        viewModelScope.launch(parentJob) {
+            service.audioData.collect { audioData ->
+                if (audioData.isNotEmpty()) eventChannel.send(BotEvent.AudioData(audioData))
             }
         }
 
-        viewModelScope.launch {
-            service.chatMessages.collect { chatMsg ->
-                android.util.Log.i("GroupChatVM", "chatMessages received botId=$botId dir=${chatMsg.direction} content='${chatMsg.content.take(30)}'")
-                if (chatMsg.direction == MessageDirection.RECEIVED && chatMsg.content.isNotBlank()) {
-                    if (isDuplicateReply(botId, chatMsg.content)) {
-                        android.util.Log.w("GroupChatVM", "[$botName] 跳过重复消息: ${chatMsg.content.take(30)}")
-                        return@collect
-                    }
-                    val replyMessage = GroupMessage(
-                        id = java.util.UUID.randomUUID().toString(),
-                        groupId = groupId,
-                        botId = botId,
-                        botName = botName,
-                        content = chatMsg.content,
-                        type = MessageType.TEXT,
-                        direction = MessageDirection.RECEIVED
-                    )
-                    android.util.Log.i("GroupChatVM", "[$botName] addMessage msgId=${replyMessage.id} content='${chatMsg.content.take(30)}'")
-                    groupChatRepository.addMessage(groupId, replyMessage)
-                }
-            }
-        }
-
+        // 单协程消费：保证事件顺序处理
+        var replyText = ""
         var hasSpoken = false
         var speakerSession = 0L
 
-        viewModelScope.launch {
-            service.aiState.collect { state ->
-                val curReply = replyContent.get()
-                android.util.Log.i("GroupChatVM", "[$botName] aiState=$state reply='${curReply.take(60)}' fwd=$forwardRound ws=$waitingSpeakerIndex")
-                if (state == "speaking") {
-                    val currentBots = sequentialBotIds
-                    val botIndex = currentBots.indexOf(botId)
-                    // 非预期发言：只过滤音频，不 abort 打断
-                    if (waitingSpeakerIndex >= 0 && botIndex != waitingSpeakerIndex && botIndex >= 0) {
-                        android.util.Log.w("GroupChatVM", "[$botName] 非预期发言(idx=$botIndex, expected=$waitingSpeakerIndex)，丢弃音频")
-                        return@collect
+        viewModelScope.launch(parentJob) {
+            for (event in eventChannel) {
+                when (event) {
+                    is BotEvent.TtsText -> {
+                        replyText = if (replyText.isBlank()) event.text else "$replyText ${event.text}"
                     }
-                    hasSpoken = true
-                    speakerSession = relaySessionId
-                    if (botId == sequentialBotIds.firstOrNull()) {
-                        if (_isRecording.value) {
-                            android.util.Log.i("GroupChatVM", "AI开始说话，自动停止录音")
-                            stopVoiceInput(userExplicitStop = false)
-                        }
-                        sttCollectorJob?.cancel()
-                    }
-                    // 预创建解码器，不等音频包到了才创建（避免第一包延迟播放）
-                    // 不放 speakerMutex 内，避免被上一轮 idle handler 阻塞
-                    if (botAudioDecoders[botId] == null) {
-                        val serverRate = service.getServerSampleRate()
-                        val serverCh = service.getServerChannels()
-                        val newDecoder = NativeOpusDecoder(serverRate, 16000, serverCh)
-                        newDecoder.init()
-                        botAudioDecoders[botId] = newDecoder
-                        android.util.Log.i("GroupChatVM", "[$botName] 预创建解码器 (${serverRate}Hz)")
-                    }
-                }
-                if (state == "idle" && hasSpoken) {
-                    hasSpoken = false
-                    // 先排空前一个 bot 的音讯（不在 mutex 内，避免阻塞其他 bot 的音讯处理）
-                    val prevBotId = sequentialBotIds.getOrNull(currentSpeakerIndex)
-                    drainPreviousBotAudio(prevBotId)
-                    // 只检查条件在锁内，triggerNextSpeakerUnsafe 放锁外
-                    // 避免 hold 锁等待 aiState.first (最长 10s) 阻塞其他 bot
-                    var shouldTrigger = false
-                    var replyToForward = ""
-                    speakerMutex.withLock {
-                        if (speakerSession != relaySessionId) {
-                            android.util.Log.i("GroupChatVM", "[$botName] 跳过旧轮次触发 speakerSession=$speakerSession currentSession=$relaySessionId")
-                            return@withLock
-                        }
-                        val currentBots = sequentialBotIds
-                        val botIndex = currentBots.indexOf(botId)
-                        if (botIndex < 0) return@withLock
-                        val isExpected = botIndex == waitingSpeakerIndex
-                        if (isExpected && currentBots.size > 1) {
-                            replyToForward = replyContent.getAndSet("")
-                            shouldTrigger = true
-                            android.util.Log.i("GroupChatVM", "[$botName] triggering next, fwd=$forwardRound reply='${replyToForward.take(60)}'")
+                    is BotEvent.Message -> {
+                        val msg = event.msg
+                        if (msg.direction == MessageDirection.RECEIVED && msg.content.isNotBlank()) {
+                            if (isDuplicateReply(botId, msg.content)) {
+                                android.util.Log.w(TAG, "[$botName] 跳过重复消息: ${msg.content.take(30)}")
+                                continue
+                            }
+                            groupChatRepository.addMessage(groupId, GroupMessage(
+                                id = java.util.UUID.randomUUID().toString(), groupId = groupId,
+                                botId = botId, botName = botName, content = msg.content,
+                                type = MessageType.TEXT, direction = MessageDirection.RECEIVED
+                            ))
                         }
                     }
-                    if (shouldTrigger) {
-                        triggerNextSpeakerUnsafe(replyToForward)
-                    }
-                }
-            }
-        }
+                    is BotEvent.AiState -> {
+                        val state = event.state
+                        val rs = relayState
+                        android.util.Log.i(TAG, "[$botName] aiState=$state reply='${replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
 
-        viewModelScope.launch {
-            service.audioData.collect { audioData ->
-                if (audioData.isNotEmpty()) {
-                    botLastAudioTime[botId] = System.currentTimeMillis()
-                    // 非当前轮到的 bot，丢弃其音频（只允许当前预期的 bot 说话）
-                    // waitingSpeakerIndex == -1 时放行第一轮（第一个 bot 的音频不应被丢弃）
-                    val currentBots = sequentialBotIds
-                    val idx = currentBots.indexOf(botId)
-                    if (idx >= 0 && waitingSpeakerIndex >= 0 && idx != waitingSpeakerIndex) return@collect
-                    val existingDecoder = botAudioDecoders[botId]
-                    val finalDecoder = if (existingDecoder == null) {
-                        // 先排空前一个 bot 音讯（不在 mutex 内，避免阻塞音频处理）
-                        drainPreviousDecodersBeforeSwitch()
-                        speakerMutex.withLock {
-                            var d = botAudioDecoders[botId]
-                            if (d == null) {
-                                releaseOldDecoders()
-                                android.util.Log.i("GroupChatVM", "[$botName] 创建新解码器")
+                        if (state == "speaking") {
+                            val botIndex = rs.botIds.indexOf(botId)
+                            if (rs.waitingSpeakerIndex >= 0 && botIndex != rs.waitingSpeakerIndex && botIndex >= 0) {
+                                android.util.Log.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，丢弃音频")
+                                continue
+                            }
+                            hasSpoken = true
+                            speakerSession = rs.sessionId
+                            if (botId == rs.botIds.firstOrNull()) {
+                                if (_isRecording.value) {
+                                    android.util.Log.i(TAG, "AI开始说话，自动停止录音")
+                                    stopVoiceInput(userExplicitStop = false)
+                                }
+                                sttCollectorJob?.cancel()
+                            }
+                            if (botAudioDecoders[botId] == null) {
                                 val serverRate = service.getServerSampleRate()
                                 val serverCh = service.getServerChannels()
-                                d = NativeOpusDecoder(serverRate, 16000, serverCh)
-                                d.init()
-                                botAudioDecoders[botId] = d
+                                NativeOpusDecoder(serverRate, 16000, serverCh).also {
+                                    it.init()
+                                    botAudioDecoders[botId] = it
+                                }
+                                android.util.Log.i(TAG, "[$botName] 预创建解码器 (${serverRate}Hz)")
                             }
-                            d
                         }
-                    } else {
-                        existingDecoder
+
+                        if (state == "idle" && hasSpoken) {
+                            hasSpoken = false
+                            val prevBotId = rs.botIds.getOrNull(rs.currentSpeakerIndex)
+                            drainPreviousBotAudio(prevBotId)
+
+                            var shouldTrigger = false
+                            var replyToForward = ""
+                            speakerMutex.withLock {
+                                if (speakerSession != rs.sessionId) {
+                                    android.util.Log.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${rs.sessionId}")
+                                    return@withLock
+                                }
+                                val botIndex = rs.botIds.indexOf(botId)
+                                if (botIndex < 0) return@withLock
+                                if (botIndex == rs.waitingSpeakerIndex && rs.botIds.size > 1) {
+                                    replyToForward = replyText.also { replyText = "" }
+                                    shouldTrigger = true
+                                    android.util.Log.i(TAG, "[$botName] triggering next, fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
+                                }
+                            }
+                            if (shouldTrigger) {
+                                triggerNextSpeaker(replyToForward)
+                            }
+                        }
                     }
-                    finalDecoder.decodePacket(audioData)
-                    val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
-                    buf.add(audioData)
+                    is BotEvent.AudioData -> {
+                        val audioData = event.data
+                        val rs = relayState
+                        botLastAudioTime[botId] = System.currentTimeMillis()
+                        val idx = rs.botIds.indexOf(botId)
+                        if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) continue
+
+                        val existingDecoder = botAudioDecoders[botId]
+                        val finalDecoder = if (existingDecoder == null) {
+                            drainPreviousDecodersBeforeSwitch()
+                            speakerMutex.withLock {
+                                var d = botAudioDecoders[botId]
+                                if (d == null) {
+                                    releaseOldDecoders()
+                                    val serverRate = service.getServerSampleRate()
+                                    val serverCh = service.getServerChannels()
+                                    d = NativeOpusDecoder(serverRate, 16000, serverCh).also {
+                                        it.init()
+                                        botAudioDecoders[botId] = it
+                                    }
+                                }
+                                d
+                            }
+                        } else existingDecoder
+
+                        finalDecoder.decodePacket(audioData)
+                        audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
+                    }
                 }
             }
         }
     }
 
-    private val GOODBYE_KEYWORDS = listOf("再见", "拜拜", "下次聊", "不打扰", "回头聊", "bye", "goodbye")
+    // ═══════════════════════════════════════════
+    // 接龙引擎
+    // ═══════════════════════════════════════════
 
-    private suspend fun triggerNextSpeakerUnsafe(previousReply: String = "") {
-        val currentBots = sequentialBotIds
-        if (currentBots.size <= 1) {
-            waitingSpeakerIndex = -1
+    private suspend fun triggerNextSpeaker(previousReply: String = "") {
+        val rs = relayState
+        if (rs.botIds.size <= 1) {
+            relayState = rs.clearWaiting()
             return
         }
         if (_isRecording.value) {
-            android.util.Log.w("GroupChatVM", "用户正在录音，跳过转发")
-            waitingSpeakerIndex = -1
+            android.util.Log.w(TAG, "用户正在录音，跳过转发")
+            relayState = rs.clearWaiting()
             return
         }
-
-        // 检测结束语：bot互相说再见时提前终止接龙
         if (previousReply.isNotBlank() && GOODBYE_KEYWORDS.any { previousReply.contains(it) }) {
-            android.util.Log.i("GroupChatVM", "检测到结束语，停止接龙: '${previousReply.take(20)}'")
-            waitingSpeakerIndex = -1
+            android.util.Log.i(TAG, "检测到结束语，停止接龙: '${previousReply.take(20)}'")
+            relayState = rs.clearWaiting()
             return
         }
 
-        val prevIndex = currentSpeakerIndex
+        val prevIndex = rs.currentSpeakerIndex
+        val candidates = resolveSpeakerCandidates(prevIndex, previousReply, rs.botIds)
 
-        // Fix 2+8: 智能候选列表 + 故障转移
-        val candidates = resolveSpeakerCandidates(prevIndex, previousReply, currentBots)
-
-        // 预检查所有候选连接，失败的重连一次，断开的跳过（不在循环内逐次重连）
         val connected = candidates.filter { (_, id) ->
             val svc = botConnections[id]
             svc != null && (svc.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
@@ -488,102 +448,89 @@ class GroupChatViewModel : ViewModel() {
 
         for ((targetIndex, speakerId) in connected) {
             val service = botConnections[speakerId] ?: continue
+            relayState = relayState.moveToSpeaker(targetIndex)
 
-            // 尽早声明预期speaker，减少非预期发言窗口
-            waitingSpeakerIndex = targetIndex
-            currentSpeakerIndex = targetIndex
-
-            // 音频优先转发（保留完整声学特征，STT识别更准）
             val audioOk = forwardAudioToBot(prevIndex, service)
             if (audioOk) {
-                android.util.Log.i("GroupChatVM", "等待 $speakerId 开始说话 (10s超时)")
+                android.util.Log.i(TAG, "等待 $speakerId 开始说话 (10s超时)")
                 val startConfirmed = withTimeoutOrNull(10_000) {
                     service.aiState.first { it == "speaking" }
                 }
                 if (startConfirmed != null) {
-                    val hint = if (previousReply.isNotBlank()) originalUserQuery.take(8) else ""
-                    // 音频转发成功，检查死循环（hint重复 或 候选重复）
+                    val hint = if (previousReply.isNotBlank()) relayState.originalUserQuery.take(8) else ""
                     if (checkDeadloop(hint, speakerId)) {
-                        android.util.Log.i("GroupChatVM", "死循环终止，跳过转发")
-                        waitingSpeakerIndex = -1
+                        android.util.Log.i(TAG, "死循环终止，跳过转发")
+                        relayState = relayState.clearWaiting()
                         return
                     }
-                    forwardRound++
-                    spokenInThisRound.add(targetIndex)
-                    spokenRoundCounter++
-                    if (previousReply.isNotBlank()) originalUserQuery = previousReply.take(20)
-                    // 音频转发成功后，才能安全清理 buffer（服务器已收到并开始处理）
-                    audioForwardBuffer.remove(sequentialBotIds.getOrNull(prevIndex))
-                    android.util.Log.i("GroupChatVM", "音频转发成功 → $speakerId fwd=$forwardRound")
+                    relayState = relayState.copy(
+                        forwardRound = relayState.forwardRound + 1
+                    ).markSpoken(targetIndex)
+                    if (previousReply.isNotBlank()) {
+                        relayState = relayState.copy(originalUserQuery = previousReply.take(20))
+                    }
+                    audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
+                    android.util.Log.i(TAG, "音频转发成功 → $speakerId fwd=${relayState.forwardRound}")
                     return
                 }
-                // 音频转发成功但 bot 10s 未确认 speaking：不清 buffer，不耗轮次
-                // buffer 保留供下一候选使用（可能是服务器处理慢）
-                android.util.Log.w("GroupChatVM", "音频转发超时($speakerId 10s未响应)，尝试下一候选")
-                waitingSpeakerIndex = -1
+                android.util.Log.w(TAG, "音频转发超时($speakerId 10s未响应)，尝试下一候选")
+                relayState = relayState.clearWaiting()
             }
 
-            // 音频无缓存或失败时，文字兜底
             val textToSend = buildForwardMessage(previousReply)
-            // 防死循环检测（只检查hint重复，不检查候选，因为这是失败候选）
             if (checkDeadloop(textToSend)) {
-                android.util.Log.i("GroupChatVM", "死循环终止，跳过本轮转发")
-                waitingSpeakerIndex = -1
+                android.util.Log.i(TAG, "死循环终止，跳过本轮转发")
+                relayState = relayState.clearWaiting()
                 return
             }
             if (textToSend.isNotBlank()) {
-                // 发送前确认WebSocket已连接
                 if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-                    android.util.Log.w("GroupChatVM", "文字兜底失败: $speakerId WebSocket未连接，尝试下一候选")
-                    waitingSpeakerIndex = -1
+                    android.util.Log.w(TAG, "文字兜底失败: $speakerId WebSocket未连接")
+                    relayState = relayState.clearWaiting()
                     continue
                 }
-                android.util.Log.i("GroupChatVM", "文字兜底 ${textToSend.length}字 → $speakerId: '$textToSend'")
+                android.util.Log.i(TAG, "文字兜底 ${textToSend.length}字 → $speakerId: '$textToSend'")
                 try {
                     service.sendTextContent(textToSend)
-                    if (previousReply.isNotBlank()) originalUserQuery = previousReply.take(20)
-                    android.util.Log.i("GroupChatVM", "等待 $speakerId 开始说话 (10s超时)")
+                    if (previousReply.isNotBlank()) {
+                        relayState = relayState.copy(originalUserQuery = previousReply.take(20))
+                    }
                     val startConfirmed = withTimeoutOrNull(10_000) {
                         service.aiState.first { it == "speaking" }
                     }
                     if (startConfirmed != null) {
-                        spokenInThisRound.add(targetIndex)
-                        spokenRoundCounter++
-                        android.util.Log.i("GroupChatVM", "文字兜底转发成功")
+                        relayState = relayState.markSpoken(targetIndex)
+                        android.util.Log.i(TAG, "文字兜底转发成功")
                         return
                     }
-                    android.util.Log.w("GroupChatVM", "文字兜底超时($speakerId 10s未响应)，尝试下一候选")
-                    waitingSpeakerIndex = -1
+                    android.util.Log.w(TAG, "文字兜底超时($speakerId 10s未响应)")
+                    relayState = relayState.clearWaiting()
                 } catch (e: Exception) {
-                    android.util.Log.w("GroupChatVM", "文字兜底异常: ${e.message}")
-                    waitingSpeakerIndex = -1
+                    android.util.Log.w(TAG, "文字兜底异常: ${e.message}")
+                    relayState = relayState.clearWaiting()
                 }
             }
         }
 
-        // 所有候选均失败，清理旧 buffer 防泄漏
-        audioForwardBuffer.remove(sequentialBotIds.getOrNull(prevIndex))
-        android.util.Log.w("GroupChatVM", "无可用bot转发，跳过本轮")
-        waitingSpeakerIndex = -1
-        currentSpeakerIndex = currentBots.indexOf(sequentialBotIds.firstOrNull())
-        if (currentSpeakerIndex < 0) currentSpeakerIndex = 0
+        audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
+        android.util.Log.w(TAG, "无可用bot转发，跳过本轮")
+        relayState = rs.clearWaiting().copy(
+            currentSpeakerIndex = rs.botIds.indexOf(rs.botIds.firstOrNull()).coerceAtLeast(0)
+        )
     }
 
-    // 智能 speaker 选择：评分制 + 语义权重 + 随机性
-    private fun resolveSpeakerCandidates(
-        prevIndex: Int,
-        previousReply: String,
-        currentBots: List<String>
-    ): List<Pair<Int, String>> {
-        if (currentBots.isEmpty()) return emptyList()
+    // ── 智能 speaker 选择 ──
+    private fun resolveSpeakerCandidates(prevIndex: Int, previousReply: String, botIds: List<String>): List<Pair<Int, String>> {
+        if (botIds.isEmpty()) return emptyList()
         data class Candidate(val index: Int, val id: String, var score: Float)
-        val candidates = currentBots.indices
+        val candidates = botIds.indices
             .filter { it != prevIndex }
-            .map { Candidate(it, currentBots[it], 0f) }
+            .map { Candidate(it, botIds[it], 0f) }
         if (candidates.isEmpty()) return emptyList()
 
+        val rs = relayState
+
         if (previousReply.isNotBlank()) {
-            // 1. @mention: 最高优先级
             val mentionMatch = Regex("@([\\w\\u4e00-\\u9fff]+)").find(previousReply)
             if (mentionMatch != null) {
                 val mentionedName = mentionMatch.groupValues[1]
@@ -591,58 +538,39 @@ class GroupChatViewModel : ViewModel() {
                     val contact = _contacts.value.find { it.id == c.id }
                     if (contact != null && (contact.name == mentionedName || contact.id.startsWith(mentionedName))) {
                         c.score += 100f
-                        android.util.Log.i("GroupChatVM", "@提及 ${contact.name} → score=100")
                     }
                 }
             }
-
-            // 2. 名字提及（不含 @）：部分匹配也行
             candidates.forEach { c ->
                 val contact = _contacts.value.find { it.id == c.id }
                 if (contact != null && contact.name.isNotBlank() && previousReply.contains(contact.name)) {
                     c.score += 30f
-                    android.util.Log.i("GroupChatVM", "名字提及 ${contact.name} → score+=30")
                 }
             }
         }
 
-        // 3. 本轮未发言的 bot：加分优先拉入
         candidates.forEach { c ->
-            if (c.index !in spokenInThisRound) {
-                c.score += 20f
-            }
+            if (c.index !in rs.spokenInThisRound) c.score += 20f
         }
+        candidates.forEach { c -> c.score += (Math.random().toFloat() * 15f) }
 
-        // 4. 基础随机权重：让对话流动更自然（0~15 分随机）
-        candidates.forEach { c ->
-            c.score += (Math.random().toFloat() * 15f)
-        }
-
-        // 按评分降序排列，同分时打乱
         val sorted = candidates.sortedWith(compareByDescending<Candidate> { it.score }
             .thenBy { Math.random() })
 
-        // 如果所有候选都已发言 或 轮次超过 bot 数×2，重置本轮发言记录
-        // 避免低评分 bot 永远没机会被选中
-        val allSpoken = sorted.all { it.index in spokenInThisRound }
-        val forceReset = spokenRoundCounter >= maxOf(sequentialBotIds.size * 2, 4)
+        // spokenInThisRound 重置
+        val allSpoken = sorted.all { it.index in rs.spokenInThisRound }
+        val forceReset = rs.spokenRoundCounter >= maxOf(botIds.size * 2, 4)
         if (allSpoken || forceReset) {
-            spokenInThisRound.clear()
-            spokenRoundCounter = 0
+            relayState = relayState.resetSpokenRound()
         }
 
-        val result = sorted.map { it.index to it.id }
-        android.util.Log.i("GroupChatVM", "候选排序: ${result.joinToString { i -> "${_contacts.value.find { c -> c.id == i.second }?.name ?: i.second}[${String.format("%.0f", candidates.find { it.index == i.first }?.score ?: 0f)}]" }}")
-        return result
+        return sorted.map { it.index to it.id }
     }
 
-    // Fix 8: 连接保活 + 超时跳过
-    private suspend fun ensureBotConnected(
-        service: XiaoZhiBackendService,
-        botId: String
-    ): Boolean {
+    // ── 连接保活 ──
+    private suspend fun ensureBotConnected(service: XiaoZhiBackendService, botId: String): Boolean {
         if (service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) return true
-        android.util.Log.w("GroupChatVM", "重新连接: $botId")
+        android.util.Log.w(TAG, "重新连接: $botId")
         val contact = _contacts.value.find { it.id == botId } ?: return false
         service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
         return withTimeoutOrNull(5000) {
@@ -650,10 +578,9 @@ class GroupChatViewModel : ViewModel() {
         } != null
     }
 
-    // 等待上一个 bot 的音频流自然排空（网络静默 + AudioTrack缓冲排空）
+    // ── 音频排空 ──
     private suspend fun drainPreviousBotAudio(prevBotId: String?) {
         if (prevBotId == null) return
-        // 1. 等待网络层面静默（确保服务器已停止发送）
         withTimeoutOrNull(AUDIO_DRAIN_TIMEOUT_MS) {
             while (true) {
                 val lastTs = botLastAudioTime[prevBotId] ?: 0L
@@ -662,56 +589,42 @@ class GroupChatViewModel : ViewModel() {
                 delay(100)
             }
         }
-        // 2. 额外等待一段时间，让网络缓冲区中的 in-flight 包全部到达
-        delay(500)
-        // 3. 解码器内部缓冲自然排空（等待 audioQueue 清空，不等 AudioTrack）
-        //    用 waitForQueueEmpty 替代 getRemainingBytes 循环——后者因 silence 帧永不归零
+        delay(500) // in-flight 包
         val decoder = botAudioDecoders[prevBotId]
         if (decoder != null && !decoder.isReleased) {
             if (!decoder.waitForQueueEmpty(2000L)) {
-                android.util.Log.w("GroupChatVM", "drainPreviousBotAudio 等待队列排空超时")
+                android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
             }
         }
-        // 4. AudioTrack 硬件缓冲补偿（DAC + 振膜约 200ms）
-        //    调用方 speakerMutex 内会 releaseOldDecoders，补偿后残留音频极少
-        delay(200)
+        delay(200) // AudioTrack 硬件缓冲补偿
     }
 
-    // 切换到新bot前，排空旧解码器的解码队列（自然排空，不强制 flush）
     private suspend fun drainPreviousDecodersBeforeSwitch() {
-        val currentId = sequentialBotIds.getOrNull(currentSpeakerIndex)
+        val currentId = relayState.currentBotId
         for ((_, decoder) in botAudioDecoders.filterKeys { it != currentId }) {
             if (decoder.isReleased) continue
             if (!decoder.waitForQueueEmpty(2000L)) {
-                android.util.Log.w("GroupChatVM", "drainPreviousDecoders 等待队列排空超时")
+                android.util.Log.w(TAG, "drainPreviousDecoders 超时")
             }
         }
     }
 
-    // 释放旧解码器（快速操作，只做 release + remove，在 speakerMutex 内调用）
     private fun releaseOldDecoders() {
-        val currentId = sequentialBotIds.getOrNull(currentSpeakerIndex)
+        val currentId = relayState.currentBotId
         val toRelease = botAudioDecoders.filterKeys { it != currentId }
         toRelease.values.forEach { if (!it.isReleased) it.release() }
         botAudioDecoders.keys.removeAll(toRelease.keys)
-        toRelease.keys.forEach { android.util.Log.i("GroupChatVM", "释放解码器: $it") }
     }
 
-    // Fix 3: 转发音频包，失败返回false以便fallback
-    private suspend fun forwardAudioToBot(
-        prevIndex: Int,
-        service: XiaoZhiBackendService
-    ): Boolean {
-        val prevBotId = sequentialBotIds.getOrNull(prevIndex) ?: return false
-        // 快照复制，不破坏缓存（失败后下一候选还能用）
+    // ── 音频转发 ──
+    private suspend fun forwardAudioToBot(prevIndex: Int, service: XiaoZhiBackendService): Boolean {
+        val prevBotId = relayState.botIds.getOrNull(prevIndex) ?: return false
         val cachedList = audioForwardBuffer[prevBotId] ?: return false
         if (cachedList.isEmpty()) return false
         val cachedOpus = cachedList.toList()
-        val totalBytes = cachedOpus.sumOf { it.size }
-        android.util.Log.i("GroupChatVM", "音频转发 ${cachedOpus.size}包/${totalBytes}B prev=$prevBotId")
+        android.util.Log.i(TAG, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
         try {
             service.sendListenStart("auto")
-            // 前10帧慢速让ASR初始化，之后偶尔让出CPU
             cachedOpus.forEachIndexed { i, packet ->
                 service.sendAudio(packet)
                 when {
@@ -719,81 +632,73 @@ class GroupChatViewModel : ViewModel() {
                     i % 20 == 0 -> delay(10)
                 }
             }
-            // 等待最后一帧协程处理完成
             delay(500)
             service.sendListenStopOnly()
-            //  buffer 由调用方在确认 bot speaking 后才清理（避免服务器还在处理时被清掉）
             return true
         } catch (e: Exception) {
-            android.util.Log.w("GroupChatVM", "音频转发失败: ${e.message}")
+            android.util.Log.w(TAG, "音频转发失败: ${e.message}")
             return false
         }
     }
 
-    // 服务器协议限制 text ≤ 8 字符（仅支持 state="detect" 唤醒词模式）
-    // 文本作为"关键字提示"，音频承载完整上下文
+    // ── 文字兜底 ──
     private fun buildForwardMessage(previousReply: String): String {
         if (previousReply.isBlank()) return ""
-        val hint = if (originalUserQuery.isNotBlank()) {
-            originalUserQuery.take(8)
-        } else {
-            truncateReply(previousReply, 8)
-        }
-        android.util.Log.i("GroupChatVM", "文本关键字(≤8字): '$hint'")
+        val hint = if (relayState.originalUserQuery.isNotBlank()) relayState.originalUserQuery.take(8)
+        else truncateReply(previousReply, 8)
         return hint
     }
 
-    // 检测并处理死循环：连续 MAX_DEADLOOP 轮 hint 高度重复 或 同一候选重复
+    // ── 死循环检测 ──
     private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
-        var isDeadloop = false
-        // 检测 hint 重复（空白 hint 不参与检测）
+        var isDead = false
         if (hint.isNotBlank()) {
             recentHints.add(hint)
             if (recentHints.size > MAX_DEADLOOP) recentHints.removeAt(0)
-            if (recentHints.size >= MAX_DEADLOOP && recentHints.distinct().size <= 2) {
-                android.util.Log.w("GroupChatVM", "死循环(hint重复) hint=$hint")
-                isDeadloop = true
-            }
+            if (recentHints.size >= MAX_DEADLOOP && recentHints.distinct().size <= 2) isDead = true
         }
-        // 检测候选重复：同一 bot 被连续选中
         if (speakerId != null) {
             recentCandidates.add(speakerId)
             if (recentCandidates.size > MAX_DEADLOOP) recentCandidates.removeAt(0)
-            if (recentCandidates.size >= MAX_DEADLOOP && recentCandidates.distinct().size == 1) {
-                android.util.Log.w("GroupChatVM", "死循环(候选重复) speakerId=$speakerId")
-                isDeadloop = true
-            }
+            if (recentCandidates.size >= MAX_DEADLOOP && recentCandidates.distinct().size == 1) isDead = true
         }
-        if (isDeadloop) {
+        if (isDead) {
             deadloopCount++
             if (deadloopCount >= MAX_DEADLOOP) {
-                android.util.Log.i("GroupChatVM", "死循环 $MAX_DEADLOOP 次，强制终止转发")
-                deadloopCount = 0
-                recentHints.clear()
-                recentCandidates.clear()
-                waitingSpeakerIndex = -1
+                deadloopCount = 0; recentHints.clear(); recentCandidates.clear()
+                relayState = relayState.clearWaiting()
                 return true
             }
-        } else {
-            deadloopCount = 0
-        }
+        } else deadloopCount = 0
         return false
     }
 
-    // Fix 5: 按句末标点 + 上下文边界的智能截断
+    // ── 消息截断 ──
     private fun truncateReply(text: String, maxLen: Int = 24): String {
         if (text.isBlank()) return ""
         val clean = text.trim()
         if (clean.length <= maxLen) return clean
         val sentenceEnd = clean.indexOfAny(charArrayOf('。', '！', '？', '\n'))
         if (sentenceEnd in 1..maxLen) return clean.substring(0, sentenceEnd)
-        val boundary = clean.lastIndexOfAny(
-            charArrayOf('，', '、', '；', '：', ' ', ','),
-            maxLen
-        )
+        val boundary = clean.lastIndexOfAny(charArrayOf('，', '、', '；', '：', ' ', ','), maxLen)
         if (boundary > 3) return clean.substring(0, boundary)
         return clean.substring(0, maxLen)
     }
+
+    // ── 去重 ──
+    private fun isDuplicateReply(botId: String, content: String): Boolean {
+        val key = "$botId|$content"
+        synchronized(recentReplyKeys) {
+            if (recentReplyKeys.contains(key)) return true
+            recentReplyKeys.addFirst(key)
+            if (recentReplyKeys.size > MAX_RECENT_REPLIES) recentReplyKeys.removeLast()
+        }
+        return false
+    }
+
+    // ═══════════════════════════════════════════
+    // CRUD
+    // ═══════════════════════════════════════════
 
     suspend fun createGroup(name: String, selectedBotIds: List<String>): GroupChat {
         val group = groupChatRepository.createGroup(name, selectedBotIds)
@@ -817,73 +722,53 @@ class GroupChatViewModel : ViewModel() {
     }
 
     suspend fun sendMessageToGroup(groupId: String, content: String) {
-        val userMessageId = java.util.UUID.randomUUID().toString()
         val userMessage = GroupMessage(
-            id = userMessageId,
-            groupId = groupId,
-            botId = "",
-            botName = "我",
-            content = content,
-            type = MessageType.TEXT,
-            direction = MessageDirection.SENT
+            id = java.util.UUID.randomUUID().toString(), groupId = groupId,
+            botId = "", botName = "我", content = content,
+            type = MessageType.TEXT, direction = MessageDirection.SENT
         )
-        android.util.Log.i("GroupChatVM", "sendMessageToGroup groupId=$groupId content='${content.take(30)}'")
         groupChatRepository.addMessage(groupId, userMessage)
 
-        relaySessionId++
-
-        forwardRound = 0
-        currentSpeakerIndex = 0
-        waitingSpeakerIndex = 0
+        relayState = relayState.nextSession().copy(
+            forwardRound = 0, currentSpeakerIndex = 0, waitingSpeakerIndex = 0,
+            originalUserQuery = content
+        )
         audioForwardBuffer.clear()
         recentReplyKeys.clear()
         recentHints.clear()
         recentCandidates.clear()
-        spokenInThisRound.clear()
-        originalUserQuery = content
 
-        if (sequentialBotIds.isNotEmpty()) {
-            val firstBotId = sequentialBotIds[0]
+        if (relayState.botIds.isNotEmpty()) {
+            val firstBotId = relayState.botIds[0]
             val svc = botConnections[firstBotId]
             if (svc != null) {
                 val connected = withTimeoutOrNull(5_000) {
                     if (svc.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) return@withTimeoutOrNull true
                     val contact = _contacts.value.find { it.id == firstBotId }
-                    if (contact != null) {
-                        svc.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
-                    }
-                    svc.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }
-                    true
+                    if (contact != null) svc.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
+                    svc.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }; true
                 }
-                if (connected == true) {
-                    svc.sendTextContent(content)
-                } else {
-                    android.util.Log.w("GroupChatVM", "sendMessage: 首bot连接失败")
-                }
+                if (connected == true) svc.sendTextContent(content)
+                else android.util.Log.w(TAG, "sendMessage: 首bot连接失败")
             }
         }
     }
 
-    suspend fun sendMessage(groupId: String, content: String) {
-        sendMessageToGroup(groupId, content)
-    }
+    suspend fun sendMessage(groupId: String, content: String) = sendMessageToGroup(groupId, content)
 
     suspend fun updateGroupName(groupId: String, newName: String) {
-        groupChatRepository.updateGroupName(groupId, newName)
-        loadGroups()
+        groupChatRepository.updateGroupName(groupId, newName); loadGroups()
     }
 
     suspend fun addBotToGroup(groupId: String, botId: String) {
         groupChatRepository.addBotToGroup(groupId, botId)
-        sequentialBotIds = sequentialBotIds + botId
-        spokenInThisRound.clear()
+        relayState = relayState.copy(botIds = relayState.botIds + botId)
         loadGroups()
     }
 
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
         groupChatRepository.removeBotFromGroup(groupId, botId)
-        sequentialBotIds = sequentialBotIds - botId
-        spokenInThisRound.clear()
+        relayState = relayState.copy(botIds = relayState.botIds - botId)
         loadGroups()
     }
 
@@ -896,15 +781,13 @@ class GroupChatViewModel : ViewModel() {
             val messages = groupChatRepository.getGroupMessages(groupId).first()
             if (messages.isEmpty()) return@launch
             val text = messages.joinToString("\n") { msg ->
-                val sender = if (msg.direction == MessageDirection.SENT) "我" else msg.botName
-                "[${sender}]: ${msg.content}"
+                "[${if (msg.direction == MessageDirection.SENT) "我" else msg.botName}]: ${msg.content}"
             }
-            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(android.content.Intent.EXTRA_TEXT, text)
                 putExtra(android.content.Intent.EXTRA_SUBJECT, "群聊记录")
-            }
-            context.startActivity(android.content.Intent.createChooser(intent, "导出群聊记录"))
+            })
         }
     }
 
