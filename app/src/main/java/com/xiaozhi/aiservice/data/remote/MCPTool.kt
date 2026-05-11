@@ -1238,6 +1238,24 @@ object MCPToolRegistry {
             }
         }
 
+        registerTool(
+            name = "toggle_xiaozhi_mute",
+            description = "切换小智 AI 麦克风的静音状态。静音后 AI 不会听到你的声音，但对话仍然可以继续",
+            inputSchema = jsonSchema(
+                "muted" to jsonBoolProp("true 静音，false 取消静音"),
+                required = listOf("muted")
+            )
+        ) { args ->
+            val muted = (args["muted"] as? Boolean) ?: throw Exception("muted 必须为布尔值")
+            val backend = AppContainer.xiaozhiBackend
+            backend.sendMute(muted)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("muted", muted)
+                addProperty("message", if (muted) "麦克风已静音" else "麦克风已取消静音")
+            }
+        }
+
         // ========== 小智 AI 设备控制工具 ==========
         // 参考 ESP32 设备控制接口和 Android 本地实现
 

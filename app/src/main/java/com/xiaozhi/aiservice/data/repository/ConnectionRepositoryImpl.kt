@@ -18,6 +18,7 @@ import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.domain.repository.DeviceState  // 设备状态机（定义在 Repositories.kt）
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,6 +67,8 @@ class ConnectionRepositoryImpl(
     private var listeningMode: VoiceMode = VoiceMode.REALTIME
     // 文本输入激活中：发送文本后不自动重启语音监听
     private var textInputActive = false
+    // 等待文本消息回复（参考对方 Completer 模式）
+    private var pendingTextResponse: CompletableDeferred<Unit>? = null
 
     // 设备状态（参考 ESP32 device_state_machine.cc）
     // 使用 internal 可见性让 MCP 工具能访问，同时对接口暴露为 StateFlow
@@ -141,6 +144,9 @@ class ConnectionRepositoryImpl(
                     // ESP32 HandleStateChangedEvent(Speaking): ResetDecoder() 清空残留音频队列
                     if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
                         opusDecoder?.flushAudio()
+                        // 参考对方 Completer 模式：AI 开始说话 → 文本消息回复确认
+                        pendingTextResponse?.complete(Unit)
+                        pendingTextResponse = null
                     }
 
                     // AUTO 模式：AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
@@ -395,6 +401,16 @@ class ConnectionRepositoryImpl(
         backendService.sendTextContent(text)
         // 文本模式下禁止自动重启语音监听（参考 ESP32: listening_mode != REALTIME 时 speaking 后走 IDLE）
         textInputActive = true
+        // 参考对方 Completer 模式：等待 AI 开始回复，超时 15 秒不阻塞用户体验
+        val deferred = CompletableDeferred<Unit>()
+        pendingTextResponse = deferred
+        scope.launch {
+            withTimeoutOrNull(15000L) { deferred.await() }
+            if (pendingTextResponse != null) {
+                Logger.w(TAG, "sendTextMessage: 服务器未在15秒内回复（可能静默处理成功）")
+                pendingTextResponse = null
+            }
+        }
         return Result.success(Unit)
     }
     
@@ -478,23 +494,40 @@ class ConnectionRepositoryImpl(
     }
 
     /**
-     * 立即停止播放 + 硬件延迟补偿
+     * 自然排空播放缓冲 + 硬件延迟补偿
      * 参考 ESP32 HandleStateChangedEvent:
      *   WaitForPlaybackQueueEmpty() + EnableVoiceProcessing(true) → ResetDecoder()
      *
-     * 注意：不调用 drainAudio()。因为 NativeOpusDecoder 播放线程在队列空时会
-     * 持续写入 silence 帧（3帧×12800B/200ms），导致 getRemainingBytes() 永不归零，
-     * drainAudio() 必然超时。直接 flushAudio 立即停止播放。
+     * ⚠️ 不强制 flush AudioTrack！只等待解码队列自然排空 + 硬件缓冲补偿。
+     * 以前用 flushAudio() 直接 pause+flush 会截断最后一段音频（话说到一半中断）。
+     * NativeOpusDecoder 播放线程在队列空后持续写入 silence 帧，所以不能等
+     * getRemainingBytes()==0，只需等 audioQueue 清空即可。AEC 会处理残余播放。
+     *
+     * 用户主动打断时才用 forceFlushPlayback() 强行停止。
      */
     private suspend fun drainAndFlushPlayback() {
         opusDecoder?.let { decoder ->
-            // 直接 flush AudioTrack，不等 drain（drain 因 silence 帧永不完成）
-            // 等效 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
-            decoder.flushAudio()
+            // 自然排空：等待解码队列中的 PCM 写完到 AudioTrack
+            // 等效 ESP32 WaitForPlaybackQueueEmpty()
+            if (!decoder.waitForQueueEmpty(1000)) {
+                Logger.w(TAG, "等待队列排空超时（>1s），继续执行")
+            }
 
-            // 硬件输出延迟补偿：flush 后扬声器 DAC 缓冲 + 振膜物理震荡仍有 ~200ms 残留
+            // 硬件输出延迟补偿：AudioTrack 内部缓冲 + DAC 缓冲 + 振膜物理震荡 ~200ms
+            // 残余播放音会被后续启动的录音 AEC 消除
             delay(200)
-            Logger.i(TAG, "drainAndFlushPlayback 完成")
+            Logger.i(TAG, "drainAndFlushPlayback 完成（自然排空）")
         } ?: Logger.w(TAG, "opusDecoder 为 null，跳过排空")
+    }
+
+    /**
+     * 强制停止播放（用户主动打断/切换联系人用）
+     * 参考 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
+     */
+    private fun forceFlushPlayback() {
+        opusDecoder?.let { decoder ->
+            decoder.flushAudio()
+            Logger.i(TAG, "forceFlushPlayback 完成")
+        }
     }
 }

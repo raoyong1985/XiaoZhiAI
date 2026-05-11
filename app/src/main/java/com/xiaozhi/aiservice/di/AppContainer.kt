@@ -66,6 +66,10 @@ object AppContainer {
     val connectionRepository: ConnectionRepository by lazy {
         ConnectionRepositoryImpl(getBackendService("default"), audioService, messageRepository)
     }
+
+    /** 默认后端服务实例 */
+    val xiaozhiBackend: XiaoZhiBackendService
+        get() = getBackendService("default")
     
     val contactsRepository: ContactsRepository by lazy {
         ContactsRepositoryImpl(context, gson)

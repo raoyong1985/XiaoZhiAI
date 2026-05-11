@@ -330,6 +330,20 @@ class NativeOpusDecoder(
         }
     }
 
+    /**
+     * 等待解码队列自然排空（不强制 flush AudioTrack）
+     * 用于 SPEAKING→IDLE 自然切换：让已解码的 PCM 数据继续播放完毕
+     * 参考 ESP32 WaitForPlaybackQueueEmpty()
+     */
+    fun waitForQueueEmpty(timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (audioQueue.isEmpty() && pendingDecodePackets.get() == 0) return true
+            Thread.sleep(20)
+        }
+        return false
+    }
+
     fun release() {
         isPlaying.set(false)
         playThread?.interrupt()

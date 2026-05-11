@@ -450,6 +450,18 @@ class XiaoZhiBackendService(private val gson: Gson) {
         sendTextMessage(message.toString())
     }
 
+    /**
+     * 发送静音状态到服务器
+     */
+    fun sendMute(muted: Boolean) {
+        val message = JsonObject().apply {
+            addProperty("session_id", sessionId)
+            addProperty("type", if (muted) "voice_mute" else "voice_unmute")
+        }
+        sendTextMessage(message.toString())
+        Logger.i(TAG, "发送静音状态: muted=$muted")
+    }
+
     private fun sendTextMessage(text: String) {
         if (!isConnected) {
             Logger.w(TAG, "WebSocket未连接，消息未发送: ${text.take(50)}")
