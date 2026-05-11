@@ -787,6 +787,370 @@ object MCPToolRegistry {
             }
         }
 
+        // ========== 手机功能工具 ==========
+
+        registerTool(
+            name = "navigate",
+            description = "打开地图导航到指定目的地，支持高德/百度地图或系统地图",
+            inputSchema = jsonSchema(
+                "destination" to jsonStringProp("目的地名称或地址"),
+                "latitude" to jsonNumberProp("目的地纬度（可选，传经纬度可精确定位）"),
+                "longitude" to jsonNumberProp("目的地经度（可选，传经纬度可精确定位）"),
+                "mode" to jsonStringProp("导航模式：driving/walking/transit/cycling，默认 driving"),
+                "app" to jsonStringProp("地图应用：auto/amap/baidu/google，默认 auto"),
+                required = listOf("destination")
+            )
+        ) { args ->
+            val destination = (args["destination"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("destination 不能为空")
+            val lat = (args["latitude"] as? Number)?.toDouble()
+            val lon = (args["longitude"] as? Number)?.toDouble()
+            val mode = (args["mode"] as? String)?.lowercase() ?: "driving"
+            val app = (args["app"] as? String)?.lowercase() ?: "auto"
+            val ctx = AppContainer.context
+
+            val dlat = args["dlat"] as? Double
+            val dlon = args["dlon"] as? Double
+
+            val intent = when (app) {
+                "amap" -> {
+                    val uri = if (lat != null && lon != null)
+                        "androidamap://navi?sourceApplication=xiaozhi&lat=$lat&lon=$lon&poiname=${URLEncoder.encode(destination, "UTF-8")}&style=${when(mode){"driving"->2;"walking"->4;"transit"->1;else->2}}"
+                    else
+                        "androidamap://keywordNavi?sourceApplication=xiaozhi&keyword=${URLEncoder.encode(destination, "UTF-8")}&style=${when(mode){"driving"->2;"walking"->4;"transit"->1;else->2}}"
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri))
+                }
+                "baidu" -> {
+                    val coord = if (lat != null && lon != null) "|ll=${lat},${lon}" else ""
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "baidumap://map/direction?destination=${URLEncoder.encode(destination, "UTF-8")}$coord&coord_type=gcj02&mode=${when(mode){"driving"->"driving";"walking"->"walking";"transit"->"transit";"cycling"->"riding";else->"driving"}}"
+                    ))
+                }
+                "google" -> {
+                    val coord = if (lat != null && lon != null) "${lat},${lon}" else URLEncoder.encode(destination, "UTF-8")
+                    val travelMode = when (mode) { "driving" -> "driving"; "walking" -> "walking"; "transit" -> "transit"; "cycling" -> "bicycling"; else -> "driving" }
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "https://www.google.com/maps/dir/?api=1&destination=$coord&travelmode=$travelMode"
+                    ))
+                }
+                else -> { // auto - try system geo intent
+                    val coord = if (lat != null && lon != null) "geo:${lat},${lon}?q=${lat},${lon}(${URLEncoder.encode(destination, "UTF-8")})"
+                    else "geo:0,0?q=${URLEncoder.encode(destination, "UTF-8")}"
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(coord)).apply {
+                        // Also try amap/baidu if installed
+                        val pm = ctx.packageManager
+                        if (resolveActivity(pm) == null) {
+                            // Fallback to Google Maps web
+                            setData(android.net.Uri.parse("https://www.google.com/maps/search/?api=1&query=${URLEncoder.encode(destination, "UTF-8")}"))
+                        }
+                    }
+                }
+            }.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+
+            try {
+                ctx.startActivity(intent)
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("destination", destination)
+                    addProperty("app", app)
+                    addProperty("mode", mode)
+                    addProperty("message", "已打开${destination}的导航")
+                }
+            } catch (e: Exception) {
+                // Fallback: try Google Maps web
+                try {
+                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "https://www.google.com/maps/search/?api=1&query=${URLEncoder.encode(destination, "UTF-8")}"
+                    )).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }.let { ctx.startActivity(it) }
+                    JsonObject().apply {
+                        addProperty("success", true)
+                        addProperty("destination", destination)
+                        addProperty("note", "未找到地图应用，已使用浏览器打开")
+                    }
+                } catch (_: Exception) {
+                    throw Exception("无法打开导航，请安装地图应用")
+                }
+            }
+        }
+
+        registerTool(
+            name = "play_music",
+            description = "播放音乐或音频，支持指定音乐应用或系统默认播放器",
+            inputSchema = jsonSchema(
+                "name" to jsonStringProp("歌曲名或音频名称（可选）"),
+                "artist" to jsonStringProp("歌手名（可选）"),
+                "app" to jsonStringProp("音乐应用：auto/qqmusic/netease/spotify/system，默认 auto"),
+                "action" to jsonStringProp("操作：play/pause/next/previous/resume，默认 play"),
+            )
+        ) { args ->
+            val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
+            val artist = (args["artist"] as? String)?.takeIf { it.isNotBlank() } ?: ""
+            val app = (args["app"] as? String)?.lowercase() ?: "auto"
+            val action = (args["action"] as? String)?.lowercase() ?: "play"
+            val ctx = AppContainer.context
+
+            when (action) {
+                "pause" -> return@registerTool JsonObject().apply {
+                    addProperty("success", true); addProperty("action", "pause")
+                    val intent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        putExtra(Intent.EXTRA_KEY_EVENT,
+                            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
+                    }
+                    ctx.sendBroadcast(intent)
+                }
+                "resume" -> return@registerTool JsonObject().apply {
+                    addProperty("success", true); addProperty("action", "resume")
+                    val intent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        putExtra(Intent.EXTRA_KEY_EVENT,
+                            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+                    }
+                    ctx.sendBroadcast(intent)
+                }
+                "next" -> return@registerTool JsonObject().apply {
+                    addProperty("success", true); addProperty("action", "next")
+                    Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        putExtra(Intent.EXTRA_KEY_EVENT,
+                            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
+                    }.let { ctx.sendBroadcast(it) }
+                }
+                "previous" -> return@registerTool JsonObject().apply {
+                    addProperty("success", true); addProperty("action", "previous")
+                    Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                        putExtra(Intent.EXTRA_KEY_EVENT,
+                            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+                    }.let { ctx.sendBroadcast(it) }
+                }
+                else -> {
+                    val searchQuery = if (name.isNotEmpty() && artist.isNotEmpty()) "$name $artist"
+                        else if (name.isNotEmpty()) name
+                        else ""
+
+                    val pkgOverride = when (app) {
+                        "qqmusic" -> "com.tencent.qqmusic"
+                        "netease" -> "com.netease.cloudmusic"
+                        "spotify" -> "com.spotify.music"
+                        else -> null
+                    }
+
+                    // Try specified app first, then fallback
+                    val candidates = listOfNotNull(pkgOverride) + listOf(
+                        "com.tencent.qqmusic", "com.netease.cloudmusic", "com.spotify.music",
+                        "com.google.android.apps.youtube.music", "com.android.music", "com.miui.player"
+                    )
+
+                    val found = candidates.firstOrNull { pkg ->
+                        try { ctx.packageManager.getLaunchIntentForPackage(pkg) != null }
+                        catch (_: Exception) { false }
+                    }
+
+                    if (found != null) {
+                        val intent = ctx.packageManager.getLaunchIntentForPackage(found)!!
+                        if (searchQuery.isNotEmpty()) {
+                            try {
+                                Intent(Intent.ACTION_SEARCH).apply {
+                                    setPackage(found); putExtra("query", searchQuery)
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }.let { ctx.startActivity(it) }
+                                return@registerTool JsonObject().apply {
+                                    addProperty("success", true); addProperty("action", "play")
+                                    addProperty("app", found); addProperty("search", searchQuery)
+                                }
+                            } catch (_: Exception) { }
+                        }
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        ctx.startActivity(intent)
+                        return@registerTool JsonObject().apply {
+                            addProperty("success", true); addProperty("action", "play")
+                            addProperty("app", found)
+                            if (searchQuery.isNotEmpty()) addProperty("search", searchQuery)
+                        }
+                    }
+                    return@registerTool JsonObject().apply {
+                        addProperty("success", false)
+                        addProperty("message", "未找到音乐应用，请先安装 QQ音乐、网易云音乐或 Spotify")
+                    }
+                }
+            }
+        }
+
+        registerTool(
+            name = "make_call",
+            description = "拨打电话，将打开系统拨号界面并填入号码",
+            inputSchema = jsonSchema(
+                "phone_number" to jsonStringProp("电话号码"),
+                "name" to jsonStringProp("联系人姓名（可选，用于显示）"),
+                required = listOf("phone_number")
+            )
+        ) { args ->
+            val number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("phone_number 不能为空")
+            val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
+            val ctx = AppContainer.context
+
+            val displayName = if (name.isNotEmpty()) name else number
+            val uri = android.net.Uri.fromParts("tel", number, null)
+            val intent = Intent(Intent.ACTION_DIAL, uri).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            try {
+                ctx.startActivity(intent)
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("phone_number", number)
+                    if (name.isNotEmpty()) addProperty("name", name)
+                    addProperty("message", "已打开拨号界面，号码: $displayName")
+                }
+            } catch (e: Exception) {
+                throw Exception("无法拨打电话: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "send_sms",
+            description = "发送短信到指定号码",
+            inputSchema = jsonSchema(
+                "phone_number" to jsonStringProp("接收短信的电话号码"),
+                "message" to jsonStringProp("短信内容"),
+                required = listOf("phone_number", "message")
+            )
+        ) { args ->
+            val number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("phone_number 不能为空")
+            val message = (args["message"] as? String)?.takeIf { it.isNotBlank() }
+                ?: throw Exception("message 不能为空")
+            val ctx = AppContainer.context
+
+            val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
+                putExtra("sms_body", message)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            try {
+                ctx.startActivity(intent)
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("phone_number", number)
+                    addProperty("message_length", message.length)
+                    addProperty("message", "已打开短信编辑界面，收件人: $number")
+                }
+            } catch (e: Exception) {
+                throw Exception("无法发送短信: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "toggle_flashlight",
+            description = "打开或关闭手机手电筒/闪光灯",
+            inputSchema = jsonSchema(
+                "enable" to jsonBoolProp("true 打开，false 关闭"),
+                required = listOf("enable")
+            )
+        ) { args ->
+            val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
+            val ctx = AppContainer.context
+            val cameraManager = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
+                ?: throw Exception("此设备不支持相机/闪光灯")
+
+            try {
+                val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                    val characteristics = cameraManager.getCameraCharacteristics(id)
+                    characteristics.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                } ?: throw Exception("未找到闪光灯")
+
+                if (enable) {
+                    cameraManager.setTorchMode(cameraId, true)
+                } else {
+                    cameraManager.setTorchMode(cameraId, false)
+                }
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("enabled", enable)
+                    addProperty("message", if (enable) "手电筒已打开" else "手电筒已关闭")
+                }
+            } catch (e: Exception) {
+                throw Exception("控制手电筒失败: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "toggle_wifi",
+            description = "打开或关闭手机 WiFi",
+            inputSchema = jsonSchema(
+                "enable" to jsonBoolProp("true 打开，false 关闭"),
+                required = listOf("enable")
+            )
+        ) { args ->
+            val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
+            val ctx = AppContainer.context
+            val wifiManager = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                ?: throw Exception("此设备不支持 WiFi")
+
+            try {
+                wifiManager.isWifiEnabled = enable
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("enabled", enable)
+                    addProperty("message", if (enable) "WiFi 已打开" else "WiFi 已关闭")
+                }
+            } catch (e: Exception) {
+                throw Exception("控制 WiFi 失败: ${e.message}")
+            }
+        }
+
+        registerTool(
+            name = "take_screenshot",
+            description = "对手机当前屏幕进行截图（需要 Android 11+ 或辅助功能权限）",
+            inputSchema = jsonSchema()
+        ) { _ ->
+            val ctx = AppContainer.context
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                try {
+                    // Use MediaProjection for screenshot on Android 11+
+                    val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? android.media.projection.MediaProjectionManager
+                    if (mgr != null) {
+                        JsonObject().apply {
+                            addProperty("success", false)
+                            addProperty("message", "截图需要系统授权，请使用系统截图快捷键（音量减+电源键）")
+                            addProperty("note", "可通过 MCP 调用开放系统截图界面")
+                        }
+                    } else {
+                        JsonObject().apply {
+                            addProperty("success", false)
+                            addProperty("message", "此设备不支持截图 API")
+                        }
+                    }
+                } catch (e: Exception) {
+                    JsonObject().apply {
+                        addProperty("success", false)
+                        addProperty("message", "截图失败: ${e.message}")
+                    }
+                }
+            } else {
+                // Try using /system/bin/screenshot on older Android or root
+                try {
+                    val process = Runtime.getRuntime().exec(arrayOf("sh", "-c",
+                        "screencap -p /sdcard/DCIM/Screenshots/xiaozhi_${System.currentTimeMillis()}.png"
+                    ))
+                    process.waitFor()
+                    if (process.exitValue() == 0) {
+                        JsonObject().apply {
+                            addProperty("success", true)
+                            addProperty("message", "截图已保存到 DCIM/Screenshots 目录")
+                        }
+                    } else {
+                        JsonObject().apply {
+                            addProperty("success", false)
+                            addProperty("message", "截图失败，请使用系统截图快捷键（音量减+电源键）")
+                        }
+                    }
+                } catch (_: Exception) {
+                    JsonObject().apply {
+                        addProperty("success", false)
+                        addProperty("message", "截图需要系统授权，请使用系统截图快捷键（音量减+电源键）")
+                    }
+                }
+            }
+        }
+
         // ========== 小智 AI 设备控制工具 ==========
         // 参考 ESP32 设备控制接口和 Android 本地实现
 
