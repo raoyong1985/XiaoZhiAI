@@ -73,6 +73,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.XiaoZhiAI"
         android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">

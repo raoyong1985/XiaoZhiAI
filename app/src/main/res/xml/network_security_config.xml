@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 视觉AI API 使用 HTTP，允许明文通信 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">api.xiaozhi.me</domain>
+        <domain includeSubdomains="true">tenclass.net</domain>
+    </domain-config>
+</network-security-config>

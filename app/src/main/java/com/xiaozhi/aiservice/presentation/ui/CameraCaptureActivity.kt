@@ -90,16 +90,21 @@ class CameraCaptureActivity : ComponentActivity() {
                     override fun onCaptureSuccess(imageProxy: ImageProxy) {
                         processImage(imageProxy)
                         imageProxy.close()
-                        cameraProvider.unbindAll()
-                        finish()
+                        // unbindAll/finish 必须在主线程调用
+                        ContextCompat.getMainExecutor(this@CameraCaptureActivity).execute {
+                            cameraProvider.unbindAll()
+                            finish()
+                        }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
                         Logger.e(TAG, "拍照失败: ${exception.message}")
                         pendingResult?.completeExceptionally(Exception("拍照失败: ${exception.message}"))
                         pendingResult = null
-                        cameraProvider.unbindAll()
-                        finish()
+                        ContextCompat.getMainExecutor(this@CameraCaptureActivity).execute {
+                            cameraProvider.unbindAll()
+                            finish()
+                        }
                     }
                 })
             } catch (e: Exception) {
