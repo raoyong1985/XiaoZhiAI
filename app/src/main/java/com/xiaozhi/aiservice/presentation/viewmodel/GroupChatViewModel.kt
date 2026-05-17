@@ -108,6 +108,7 @@ class GroupChatViewModel : ViewModel() {
         botObserverJobs.clear()
         botAudioDecoders.values.forEach { it.release() }
         botAudioDecoders.clear()
+        deadBotIds.clear()
         relayState = RelayState()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
@@ -580,7 +581,7 @@ class GroupChatViewModel : ViewModel() {
         if (botIds.isEmpty()) return emptyList()
         data class Candidate(val index: Int, val id: String, var score: Float)
         val candidates = botIds.indices
-            .filter { it != prevIndex }
+            .filter { it != prevIndex && !deadBotIds.contains(botIds[it]) }
             .map { Candidate(it, botIds[it], 0f) }
         if (candidates.isEmpty()) return emptyList()
 
@@ -624,8 +625,17 @@ class GroupChatViewModel : ViewModel() {
     }
 
     // ── 连接保活 ──
+    private val deadBotIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private suspend fun ensureBotConnected(service: XiaoZhiBackendService, botId: String): Boolean {
+        if (deadBotIds.contains(botId)) return false  // 已确认死亡，跳过
         if (service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) return true
+        // connectionState=Error 表示服务器要求激活(code 1005)或DNS解析失败
+        if (service.connectionState.value is XiaoZhiBackendService.ConnectionState.Error) {
+            android.util.Log.w(TAG, "bot[$botId] 连接失败(Error状态)，标记为死亡")
+            deadBotIds.add(botId)
+            return false
+        }
         android.util.Log.w(TAG, "重新连接: $botId")
         val contact = _contacts.value.find { it.id == botId } ?: return false
         service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
@@ -679,6 +689,11 @@ class GroupChatViewModel : ViewModel() {
             android.util.Log.w(TAG, "用户正在录音，跳过音频转发")
             return false
         }
+        // 检查WebSocket连接状态，断线时直接返回false
+        if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
+            android.util.Log.w(TAG, "音频转发失败：WebSocket未连接")
+            return false
+        }
         val prevBotId = relayState.botIds.getOrNull(prevIndex) ?: return false
         val cachedList = audioForwardBuffer[prevBotId] ?: return false
         if (cachedList.isEmpty()) return false
@@ -695,7 +710,8 @@ class GroupChatViewModel : ViewModel() {
             }
             delay(500)
             service.sendListenStopOnly()
-            return true
+            // 转发完成后再次检查连接，防止转发过程中断线
+            return service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
         } catch (e: Exception) {
             android.util.Log.w(TAG, "音频转发失败: ${e.message}")
             return false
