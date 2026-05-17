@@ -2,9 +2,10 @@ package com.xiaozhi.aiservice.presentation.ui
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.util.Base64
-import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.camera.core.ImageCapture
@@ -14,6 +15,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import com.xiaozhi.aiservice.utils.Logger
 import kotlinx.coroutines.CompletableDeferred
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /**
@@ -28,6 +30,10 @@ class CameraCaptureActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "CameraCapture"
+        // ESP32 用 QVGA(320x240) + jpeg_quality=12，我们用 VGA(640x480) 质量更好
+        private const val MAX_WIDTH = 640
+        private const val MAX_HEIGHT = 480
+        private const val JPEG_QUALITY = 50
 
         /** 拍照结果的延续——MCP 工具通过它等待拍照完成 */
         @JvmStatic
@@ -121,12 +127,36 @@ class CameraCaptureActivity : ComponentActivity() {
      */
     private fun processImage(imageProxy: ImageProxy) {
         try {
-            // ImageProxy 的第一个 plane 就是 JPEG 数据，无需解码再编码
-            val buffer = imageProxy.planes[0].buffer
-            val bytes = ByteArray(buffer.remaining()).also { buffer.get(it) }
-            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            // 解码 JPEG → 缩放 → 重编码 JPEG（控制大小）
+            val jpegBytes = imageProxy.planes[0].buffer.run {
+                ByteArray(remaining()).also { get(it) }
+            }
+            val srcBitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+                ?: throw Exception("无法解码照片")
 
-            Logger.i(TAG, "拍照成功: ${base64.length} chars base64")
+            // 保持宽高比缩放到 MAX_WIDTH x MAX_HEIGHT
+            val scale = minOf(
+                MAX_WIDTH.toFloat() / srcBitmap.width,
+                MAX_HEIGHT.toFloat() / srcBitmap.height,
+                1.0f
+            )
+            val dstBitmap = if (scale < 1.0f) {
+                Bitmap.createScaledBitmap(
+                    srcBitmap,
+                    (srcBitmap.width * scale).toInt(),
+                    (srcBitmap.height * scale).toInt(),
+                    true
+                )
+            } else srcBitmap
+
+            val bos = ByteArrayOutputStream()
+            dstBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
+            val base64 = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+
+            if (dstBitmap !== srcBitmap) dstBitmap.recycle()
+            srcBitmap.recycle()
+
+            Logger.i(TAG, "拍照成功: ${base64.length} chars base64 (${bos.size()} bytes JPEG)")
             pendingResult?.complete(base64)
             pendingResult = null
         } catch (e: Exception) {
