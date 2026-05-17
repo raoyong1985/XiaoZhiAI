@@ -36,9 +36,14 @@ import java.util.concurrent.TimeUnit
  */
 class XiaoZhiBackendService(private val gson: Gson) {
 
+    private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
+
     companion object {
         private const val PROTOCOL_VERSION = "1"
         private const val TAG = "XiaoZhiWS"
+        /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
+        @JvmStatic
+        var visionUrl: String? = null
     }
 
     private val supervisorJob = SupervisorJob()
@@ -111,7 +116,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
     private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
     private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
-    private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
 
     /**
      * 连接服务器
@@ -630,6 +634,15 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
                     when (method) {
                         "initialize" -> {
+                            // 解析服务器下发的视觉AI能力URL
+                            val params = payload?.get("params")?.asJsonObject
+                            val capabilities = params?.getAsJsonObject("capabilities")
+                            val vision = capabilities?.getAsJsonObject("vision")
+                            val visionUrlStr = vision?.get("url")?.asString
+                            if (visionUrlStr != null) {
+                                visionUrl = visionUrlStr
+                                Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
+                            }
                             val response = JsonObject().apply {
                                 addProperty("type", "mcp")
                                 addProperty("session_id", sessionId)

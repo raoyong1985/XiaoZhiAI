@@ -89,6 +89,15 @@
             </intent-filter>
         </activity>
 
+        <!-- 透明相机拍照 Activity (无界面自动拍照) -->
+        <activity
+            android:name=".presentation.ui.CameraCaptureActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
         <!-- FileProvider for camera capture (image URI) -->
         <provider
             android:name="androidx.core.content.FileProvider"

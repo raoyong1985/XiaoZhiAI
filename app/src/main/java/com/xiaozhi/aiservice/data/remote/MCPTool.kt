@@ -23,6 +23,8 @@ import com.xiaozhi.aiservice.di.AppContainer
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -44,6 +46,7 @@ object MCPToolRegistry {
 
     init {
         registerBuiltInTools()
+        registerCameraTool()
     }
 
     private fun registerBuiltInTools() {
@@ -1798,5 +1801,89 @@ object MCPToolRegistry {
         }
 
         return ""
+    }
+
+    // ========== 拍照 MCP 工具 ==========
+
+    /**
+     * 拍照 MCP 工具
+     * 启动 CameraCaptureActivity 自动拍照，发送到服务器视觉 API 分析
+     * 用户只需说"拍张照"或"看看这是什么"，AI 就会自动调用此工具
+     */
+    private fun registerCameraTool() {
+        if (tools.any { it.name == "take_photo" }) return
+
+        registerTool(
+            name = "take_photo",
+            description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等。调用后手机将自动打开相机并拍照，用户无需按任何按钮",
+            inputSchema = jsonSchema(),
+            readOnly = true
+        ) { _ ->
+            val context = AppContainer.context
+
+            // 检查相机权限
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.CAMERA
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                throw Exception("未授予相机权限，请在系统设置中开启相机权限")
+            }
+
+            // 启动拍照 Activity 并等待结果
+            val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+            com.xiaozhi.aiservice.presentation.ui.CameraCaptureActivity.pendingResult = deferred
+            com.xiaozhi.aiservice.presentation.ui.CameraCaptureActivity.launch(context)
+
+            val base64Result = kotlinx.coroutines.withTimeoutOrNull(30_000L) { deferred.await() }
+                ?: throw Exception("拍照超时（30秒），请重试")
+
+            // 发送到视觉 API 分析
+            val description = analyzeWithVision(base64Result)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("description", description)
+            }
+        }
+    }
+
+    /**
+     * 发送图片到视觉 API 分析
+     */
+    private suspend fun analyzeWithVision(base64Image: String): String {
+        val visionUrl = com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService.visionUrl
+        if (visionUrl.isNullOrBlank()) return "已拍照成功，但未配置视觉AI分析服务"
+
+        try {
+            val jsonBody = com.google.gson.JsonObject().apply {
+                addProperty("image", base64Image)
+                addProperty("prompt", "请详细描述这张图片中的内容，包括物体、场景、文字、颜色等")
+            }
+
+            val client = OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
+
+            val request = okhttp3.Request.Builder()
+                .url(visionUrl)
+                .post(jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+
+            val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                client.newCall(request).execute()
+            }
+
+            val body = response.body?.string() ?: "空响应"
+            if (!response.isSuccessful) return "视觉分析失败: HTTP ${response.code}"
+
+            val json = com.google.gson.JsonParser.parseString(body).asJsonObject
+            return json.get("description")?.asString
+                ?: json.get("result")?.asString
+                ?: json.get("text")?.asString
+                ?: json.get("message")?.asString
+                ?: "视觉分析完成（无法解析返回格式）"
+        } catch (e: Exception) {
+            return "视觉分析失败: ${e.message}"
+        }
     }
 }
