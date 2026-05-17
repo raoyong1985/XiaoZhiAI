@@ -300,8 +300,9 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.audioData.collect { audioData ->
-                // 参考 ESP32 OnIncomingAudio: 非 SPEAKING 状态不解码音频
-                if (audioData.isEmpty() || _aiState.value != AiState.SPEAKING) return@collect
+                // 去除 aiState 竞态检查：音频数据只会在服务器发送时到达
+                // 移除 _aiState != SPEAKING 检查解决竞态条件（音频包与状态切换同时到达时被丢弃）
+                if (audioData.isEmpty()) return@collect
                 val t0 = System.nanoTime()
                 // 延迟初始化解码器：hello 肯定已在此时处理完
                 var decoder = opusDecoder

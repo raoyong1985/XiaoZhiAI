@@ -33,7 +33,7 @@ class GroupChatViewModel : ViewModel() {
     private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
     // ── 接龙状态（不可变 RelayState，每次变更用 copy） ──
-    private var relayState: RelayState = RelayState()
+    @Volatile private var relayState: RelayState = RelayState()
 
     private val audioForwardBuffer = ConcurrentHashMap<String, MutableList<ByteArray>>()
     private val botLastAudioTime = ConcurrentHashMap<String, Long>()
@@ -49,6 +49,9 @@ class GroupChatViewModel : ViewModel() {
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
     // ── 录音状态 ──
+    private val _isConnecting = MutableStateFlow(false)
+    val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
+
     private var opusEncoder: OpusEncoder? = null
     private val audioService = AppContainer.audioService
     private var currentGroupId = ""
@@ -109,29 +112,34 @@ class GroupChatViewModel : ViewModel() {
         botLastAudioTime.clear()
         recentReplyKeys.clear()
         currentGroupId = groupId
+        _isConnecting.value = true
 
         observeJob = viewModelScope.launch {
-            loadGroups()
-            val group = groupChatRepository.getGroup(groupId)
-            group?.let { g ->
-                g.botIds.map { botId ->
-                    async {
-                        try {
-                            val contact = _contacts.value.find { it.id == botId }
-                            contact?.let { c ->
-                                if (!botConnections.containsKey(botId)) {
-                                    val service = XiaoZhiBackendService(AppContainer.gson)
-                                    botConnections[botId] = service
-                                    observeBotEvents(botId, groupId, c.name, service)
-                                    service.connect(c.serverUrl, c.otaUrl, c.deviceId, c.clientId)
+            try {
+                loadGroups()
+                val group = groupChatRepository.getGroup(groupId)
+                group?.let { g ->
+                    g.botIds.map { botId ->
+                        async {
+                            try {
+                                val contact = _contacts.value.find { it.id == botId }
+                                contact?.let { c ->
+                                    if (!botConnections.containsKey(botId)) {
+                                        val service = XiaoZhiBackendService(AppContainer.gson)
+                                        botConnections[botId] = service
+                                        observeBotEvents(botId, groupId, c.name, service)
+                                        service.connect(c.serverUrl, c.otaUrl, c.deviceId, c.clientId)
+                                    }
                                 }
+                            } catch (e: Exception) {
+                                android.util.Log.w(TAG, "连接bot[$botId]失败: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            android.util.Log.w(TAG, "连接bot[$botId]失败: ${e.message}")
                         }
-                    }
-                }.forEach { it.await() }
-                relayState = relayState.copy(botIds = g.botIds)
+                    }.forEach { it.await() }
+                    relayState = relayState.copy(botIds = g.botIds)
+                }
+            } finally {
+                _isConnecting.value = false
             }
         }
     }
@@ -617,6 +625,11 @@ class GroupChatViewModel : ViewModel() {
 
     // ── 音频转发 ──
     private suspend fun forwardAudioToBot(prevIndex: Int, service: XiaoZhiBackendService): Boolean {
+        // 用户正在录音时禁止转发音频，避免录音与音频发送冲突
+        if (_isRecording.value) {
+            android.util.Log.w(TAG, "用户正在录音，跳过音频转发")
+            return false
+        }
         val prevBotId = relayState.botIds.getOrNull(prevIndex) ?: return false
         val cachedList = audioForwardBuffer[prevBotId] ?: return false
         if (cachedList.isEmpty()) return false

@@ -78,6 +78,11 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
     }
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.disconnect()
+        }
+    }
 
     // 顶部栏状态
     val connectionColor by animateColorAsState(

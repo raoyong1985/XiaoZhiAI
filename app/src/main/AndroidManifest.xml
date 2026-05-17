@@ -49,6 +49,21 @@
     <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
+    <!-- Phone calls -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
+    <!-- SMS -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
+    <!-- WiFi control -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- System settings -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <!-- Foreground service microphone -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
     <application
         android:name=".XiaoZhiApplication"
         android:allowBackup="true"

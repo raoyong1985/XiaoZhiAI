@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.BuildConfig
+import kotlinx.coroutines.delay
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
@@ -334,12 +335,15 @@ class NativeOpusDecoder(
      * 等待解码队列自然排空（不强制 flush AudioTrack）
      * 用于 SPEAKING→IDLE 自然切换：让已解码的 PCM 数据继续播放完毕
      * 参考 ESP32 WaitForPlaybackQueueEmpty()
+     *
+     * 注意：此方法为 suspend 函数，应在协程中调用。
+     * 内部使用 delay() 避免阻塞调用线程。
      */
-    fun waitForQueueEmpty(timeoutMs: Long): Boolean {
+    suspend fun waitForQueueEmpty(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (audioQueue.isEmpty() && pendingDecodePackets.get() == 0) return true
-            Thread.sleep(20)
+            delay(20)
         }
         return false
     }
