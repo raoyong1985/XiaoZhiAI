@@ -160,8 +160,9 @@ class GroupChatViewModel : ViewModel() {
                 val silenceDuration = System.currentTimeMillis() - lastAudio
                 
                 if (silenceDuration > 20_000) {
-                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s，清除等待状态")
+                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s，清除等待状态并重启接龙")
                     relayState = rs.clearWaiting()
+                    triggerNextSpeaker("")
                 }
             }
         }
