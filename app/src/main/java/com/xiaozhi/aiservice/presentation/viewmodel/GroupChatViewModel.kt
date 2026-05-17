@@ -59,6 +59,7 @@ class GroupChatViewModel : ViewModel() {
     private var recordingGeneration = 0
     private var timeoutJob: Job? = null
     private var observeJob: Job? = null
+    private var stuckRelayWatcher: Job? = null
 
     private val speakerMutex = Mutex()
 
@@ -140,6 +141,27 @@ class GroupChatViewModel : ViewModel() {
                 }
             } finally {
                 _isConnecting.value = false
+            }
+        }
+
+        // 接龙看门狗：定期检查接龙是否卡死（等待某个bot但20秒无响应），自动恢复
+        stuckRelayWatcher?.cancel()
+        stuckRelayWatcher = viewModelScope.launch {
+            while (true) {
+                delay(15_000)
+                val rs = relayState
+                if (rs.waitingSpeakerIndex < 0) continue  // 没有正在等待的bot，跳过
+                if (_isRecording.value) continue           // 用户正在录音，跳过
+                
+                // 检查等待的bot是否已无响应超时
+                val waitingBotId = rs.botIds.getOrNull(rs.waitingSpeakerIndex) ?: continue
+                val lastAudio = botLastAudioTime[waitingBotId] ?: 0L
+                val silenceDuration = System.currentTimeMillis() - lastAudio
+                
+                if (silenceDuration > 20_000) {
+                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s，清除等待状态")
+                    relayState = rs.clearWaiting()
+                }
             }
         }
     }
@@ -334,6 +356,33 @@ class GroupChatViewModel : ViewModel() {
                 } else existingDecoder
                 finalDecoder.decodePacket(audioData)
                 audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
+            }
+        }
+
+        // WebSocket重连恢复：当bot的ws断线重连后，如果接龙正等待该bot，清除等待状态
+        // 不通过eventChannel，直接修改relayState避免事件队列阻塞
+        viewModelScope.launch(parentJob) {
+            var wasDisconnected = false
+            service.connectionState.collect { state ->
+                when (state) {
+                    is XiaoZhiBackendService.ConnectionState.Error,
+                    is XiaoZhiBackendService.ConnectionState.Disconnected -> {
+                        wasDisconnected = true
+                    }
+                    is XiaoZhiBackendService.ConnectionState.Connected -> {
+                        if (wasDisconnected) {
+                            wasDisconnected = false
+                            android.util.Log.i(TAG, "[$botName] WebSocket重连完成，检查接龙状态")
+                            val rs = relayState
+                            val idx = rs.botIds.indexOf(botId)
+                            if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx == rs.waitingSpeakerIndex) {
+                                android.util.Log.i(TAG, "[$botName] 接龙正等待本bot，清除等待状态")
+                                relayState = rs.clearWaiting()
+                            }
+                        }
+                    }
+                    else -> {}
+                }
             }
         }
 
@@ -807,6 +856,7 @@ class GroupChatViewModel : ViewModel() {
         super.onCleared()
         stopVoiceInput()
         sttCollectorJob?.cancel()
+        stuckRelayWatcher?.cancel()
         botConnections.forEach { (_, service) -> service.disconnect() }
         botConnections.clear()
         botObserverJobs.values.forEach { it.cancel() }

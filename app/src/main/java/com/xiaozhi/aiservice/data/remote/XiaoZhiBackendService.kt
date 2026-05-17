@@ -492,6 +492,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
             when (type) {
                 "hello" -> {
                     Logger.i(TAG, "收到hello响应! 设备已连接")
+                    // WebSocket重连时重置aiState，确保群聊接龙不会卡死
+                    _aiState.value = AiStateStr.IDLE
                     // 解析session_id
                     sessionId = json.get("session_id")?.asString ?: ""
                     // 解析服务器返回的采样率
