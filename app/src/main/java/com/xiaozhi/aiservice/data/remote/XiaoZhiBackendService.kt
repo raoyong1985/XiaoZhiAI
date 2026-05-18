@@ -495,278 +495,257 @@ class XiaoZhiBackendService(private val gson: Gson) {
             val json = gson.fromJson(text, JsonObject::class.java) ?: return
             val type = json.get("type")?.asString ?: return
             Logger.i(TAG, "处理消息类型: $type")
-
             when (type) {
-                "hello" -> {
-                    Logger.i(TAG, "收到hello响应! 设备已连接")
-                    // WebSocket重连时重置aiState，确保群聊接龙不会卡死
-                    _aiState.value = AiStateStr.IDLE
-                    // 解析session_id
-                    sessionId = json.get("session_id")?.asString ?: ""
-                    // 解析服务器返回的采样率
-                    val audioParams = json.getAsJsonObject("audio_params")
-                    if (audioParams != null) {
-                        serverSampleRate = audioParams.get("sample_rate")?.asInt ?: 16000
-                        serverChannels = audioParams.get("channels")?.asInt ?: 1
-                        Logger.i(TAG, "服务器音频参数: ${serverSampleRate}Hz, ${serverChannels}ch")
-                    }
-                    Logger.i(TAG, "Session ID: $sessionId")
-
-                    // 检查hello中是否包含激活challenge（服务器要求激活）
-                    val activation = json.getAsJsonObject("activation")
-                    if (activation != null) {
-                        val challenge = activation.get("challenge")?.asString ?: ""
-                        val challengeCode = activation.get("code")?.asString ?: ""
-                        Logger.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
-                        // 立即发送激活响应
-                        if (challenge.isNotEmpty()) {
-                            sendActivation(challenge, challengeCode)
-                        }
-                    }
-                }
-                "activation" -> {
-                    val code = json.get("code")?.asString
-                    Logger.i(TAG, "收到激活码: $code")
-                    // 通知UI显示激活码
-                    _textMessage.value = "激活码: $code"
-                }
-            "stt" -> {
-                // 用户语音被STT转文字（服务器返回的用户说的话）
-                val textContent = json.get("text")?.asString ?: ""
-                _textMessage.value = textContent
-                if (textContent.isNotEmpty()) {
-                    val message = ChatMessage(
-                        id = java.util.UUID.randomUUID().toString(),
-                        content = textContent,
-                        type = MessageType.TEXT,
-                        direction = MessageDirection.SENT, // 用户说话的内容，显示在用户侧
-                        status = MessageStatus.SENT,
-                        timestamp = System.currentTimeMillis()
-                    )
-                    scope.launch { _chatMessages.emit(message) }
-                }
-            }
-                "tts" -> {
-                    val state = json.get("state")?.asString ?: ""
-                    val ttsTextContent = json.get("text")?.asString ?: ""
-
-                    // 检查是否有 base64 编码的音频数据
-                    val audioBase64 = json.get("audio")?.asString
-                        ?: json.get("data")?.asString
-                        ?: json.get("audio_data")?.asString
-
-                    if (audioBase64 != null && audioBase64.isNotEmpty()) {
-                        Logger.i(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
-                        // 如果本轮已有二进制音频，跳过 base64 音频（避免重复播放）
-                        if (binaryAudioInSession) {
-                            Logger.i(TAG, "跳过 base64 音频（二进制音频已在播放）")
-                        } else {
-                            try {
-                                val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
-                                if (audioData.isNotEmpty()) {
-                                    scope.launch { _audioData.emit(audioData) }
-                                }
-                            } catch (e: Exception) {
-                                Logger.e(TAG, "Base64 解码失败: ${e.message}")
-                            }
-                        }
-                    }
-                    
-                    when (state) {
-                        "start" -> {
-                            idleDebounceJob?.cancel()
-                            binaryAudioInSession = false  // 新TTS轮次，重置二进制音频标志
-                            Logger.e(TAG, "!!!! tts start received, setting aiState=speaking")
-                            _aiState.value = AiStateStr.SPEAKING
-                            _ttsText.value = ""
-                        }
-                        "stop" -> {
-                            idleDebounceJob?.cancel()
-                            Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
-                            _aiState.value = AiStateStr.IDLE
-                        }
-                        "sentence_start" -> {
-                            // 新句子到来，取消空闲防抖
-                            idleDebounceJob?.cancel()
-                            // 流式TTS：立即发出消息，让用户看到AI正在"思考"
-                            if (ttsTextContent.isNotEmpty()) {
-                                val id = java.util.UUID.randomUUID().toString()
-                                streamingMessageId = id
-                                val message = ChatMessage(
-                                    id = id,
-                                    content = ttsTextContent,
-                                    type = MessageType.TEXT,
-                                    direction = MessageDirection.RECEIVED,
-                                    status = MessageStatus.SENT,
-                                    timestamp = System.currentTimeMillis(),
-                                    isStreaming = true
-                                )
-                                scope.launch { _chatMessages.emit(message) }
-                            }
-                            _ttsText.value = ttsTextContent
-                        }
-                        "sentence_end" -> {
-                            // 流式TTS final：通知UI停止动画，不重复发消息
-                            if (streamingMessageId.isNotEmpty()) {
-                                scope.launch { _streamingEnd.emit(streamingMessageId) }
-                                streamingMessageId = ""
-                            }
-                            _ttsText.value = ""
-                            // 防抖：3s后无新sentence_start或音频则切idle
-                            // 部分服务器不发送tts state=stop，导致群聊接龙卡住
-                            idleDebounceJob?.cancel()
-                            idleDebounceJob = scope.launch {
-                                delay(3000)
-                                if (_aiState.value == AiStateStr.SPEAKING) {
-                                    Logger.i(TAG, "tts sentence_end 超时无后续，自动切 idle")
-                                    _aiState.value = AiStateStr.IDLE
-                                }
-                            }
-                        }
-                    }
-                }
-                "llm" -> {
-                    val emotionStr = json.get("emotion")?.asString ?: ""
-                    _emotion.value = emotionStr
-                }
-                "mcp" -> {
-                    // MCP协议消息处理
-                    val payload = json.get("payload")?.asJsonObject
-                    val method = payload?.get("method")?.asString
-                    val msgId = payload?.get("id") ?: com.google.gson.JsonNull.INSTANCE
-
-                    when (method) {
-                        "initialize" -> {
-                            // 解析服务器下发的视觉AI能力URL
-                            val params = payload?.get("params")?.asJsonObject
-                            val capabilities = params?.getAsJsonObject("capabilities")
-                            val vision = capabilities?.getAsJsonObject("vision")
-                            val visionUrlStr = vision?.get("url")?.asString
-                            if (visionUrlStr != null) {
-                                visionUrl = visionUrlStr
-                                Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
-                            }
-                            val visionTokenStr = vision?.get("token")?.asString
-                            if (visionTokenStr != null) {
-                                visionToken = visionTokenStr
-                                Logger.i(TAG, "服务器视觉AI Token: $visionTokenStr")
-                            }
-                            val response = JsonObject().apply {
-                                addProperty("type", "mcp")
-                                addProperty("session_id", sessionId)
-                                val responsePayload = JsonObject().apply {
-                                    addProperty("jsonrpc", "2.0")
-                                    add("id", msgId)
-                                    val result = JsonObject().apply {
-                                        addProperty("protocolVersion", "2024-11-05")
-                                        add("capabilities", JsonObject().apply {
-                                            addProperty("tools", true)
-                                        })
-                                        val serverInfo = JsonObject().apply {
-                                            addProperty("name", "xiaozhi-android")
-                                            addProperty("version", "1.0.0")
-                                        }
-                                        add("serverInfo", serverInfo)
-                                    }
-                                    add("result", result)
-                                }
-                                add("payload", responsePayload)
-                            }
-                            sendTextMessage(response.toString())
-                            Logger.i(TAG, "回复MCP initialized响应")
-                        }
-                        "tools/list" -> {
-                            val toolList = MCPToolRegistry.getToolList()
-                            val response = JsonObject().apply {
-                                addProperty("type", "mcp")
-                                addProperty("session_id", sessionId)
-                                val responsePayload = JsonObject().apply {
-                                    addProperty("jsonrpc", "2.0")
-                                    add("id", msgId)
-                                    add("result", JsonObject().apply {
-                                        add("tools", toolList)
-                                    })
-                                }
-                                add("payload", responsePayload)
-                            }
-                            sendTextMessage(response.toString())
-                            Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
-                        }
-                        "tools/call" -> {
-                            val params = payload?.get("params")?.asJsonObject
-                            val toolName = params?.get("name")?.asString ?: ""
-                            val arguments = params?.get("arguments")?.asJsonObject
-                            val argsMap = mutableMapOf<String, Any>()
-                            arguments?.entrySet()?.forEach { (k, v) ->
-                                argsMap[k] = when {
-                                    v.isJsonPrimitive -> {
-                                        val prim = v.asJsonPrimitive
-                                        if (prim.isString) prim.asString
-                                        else if (prim.isNumber) prim.asNumber
-                                        else if (prim.isBoolean) prim.asBoolean
-                                        else prim.toString()
-                                    }
-                                    else -> v.toString()
-                                }
-                            }
-                            // 工具执行在 IO 线程，避免阻塞 WebSocket 消息循环
-                            scope.launch(Dispatchers.IO) {
-                                val (isSuccess, result) = MCPToolRegistry.callTool(toolName, argsMap)
-                                val response = JsonObject().apply {
-                                    addProperty("type", "mcp")
-                                    addProperty("session_id", sessionId)
-                                    val responsePayload = JsonObject().apply {
-                                        addProperty("jsonrpc", "2.0")
-                                        add("id", msgId)
-                                        if (isSuccess) {
-                                            add("result", JsonObject().apply {
-                                                add("content", JsonArray().apply {
-                                                    add(JsonObject().apply {
-                                                        addProperty("type", "text")
-                                                        addProperty("text", (result as JsonObject).toString())
-                                                    })
-                                                })
-                                            })
-                                        } else {
-                                            add("error", JsonObject().apply {
-                                                addProperty("code", -32603)
-                                                addProperty("message", result as String)
-                                            })
-                                        }
-                                    }
-                                    add("payload", responsePayload)
-                                }
-                                sendTextMessage(response.toString())
-                                Logger.i(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
-                            }
-                        }
-                        "notifications/initialized" -> {
-                            // JSON-RPC 通知，无需回复
-                        }
-                        else -> {
-                            Logger.w(TAG, "未知MCP方法: $method")
-                        }
-                    }
-                }
-                "abort" -> {
-                    // 服务器中止当前操作
-                    _aiState.value = AiStateStr.IDLE
-                    val reason = json.get("reason")?.asString ?: ""
-                    _textMessage.value = "[中断] $reason"
-                }
-                "alert" -> {
-                    // 服务器下发Alert弹窗消息
-                    val alertText = json.get("text")?.asString
-                        ?: json.get("message")?.asString
-                        ?: json.get("content")?.asString
-                        ?: "收到通知"
-                    Logger.i(TAG, "收到Alert: $alertText")
-                    scope.launch { _alert.emit(alertText) }
-                }
+                "hello" -> handleHello(json)
+                "activation" -> handleActivation(json)
+                "stt" -> handleStt(json)
+                "tts" -> handleTts(json)
+                "llm" -> handleLlm(json)
+                "mcp" -> handleMcp(json)
+                "abort" -> handleAbort(json)
+                "alert" -> handleAlert(json)
             }
         } catch (e: Exception) {
             // ignore parse errors
         }
+    }
+
+    private fun handleHello(json: JsonObject) {
+        Logger.i(TAG, "收到hello响应! 设备已连接")
+        _aiState.value = AiStateStr.IDLE
+        sessionId = json.get("session_id")?.asString ?: ""
+        val audioParams = json.getAsJsonObject("audio_params")
+        if (audioParams != null) {
+            serverSampleRate = audioParams.get("sample_rate")?.asInt ?: 16000
+            serverChannels = audioParams.get("channels")?.asInt ?: 1
+            Logger.i(TAG, "服务器音频参数: ${serverSampleRate}Hz, ${serverChannels}ch")
+        }
+        Logger.i(TAG, "Session ID: $sessionId")
+        val activation = json.getAsJsonObject("activation")
+        if (activation != null) {
+            val challenge = activation.get("challenge")?.asString ?: ""
+            val challengeCode = activation.get("code")?.asString ?: ""
+            Logger.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
+            if (challenge.isNotEmpty()) sendActivation(challenge, challengeCode)
+        }
+    }
+
+    private fun handleActivation(json: JsonObject) {
+        val code = json.get("code")?.asString
+        Logger.i(TAG, "收到激活码: $code")
+        _textMessage.value = "激活码: $code"
+    }
+
+    private fun handleStt(json: JsonObject) {
+        val textContent = json.get("text")?.asString ?: ""
+        _textMessage.value = textContent
+        if (textContent.isNotEmpty()) {
+            val message = ChatMessage(
+                id = java.util.UUID.randomUUID().toString(),
+                content = textContent,
+                type = MessageType.TEXT,
+                direction = MessageDirection.SENT,
+                status = MessageStatus.SENT,
+                timestamp = System.currentTimeMillis()
+            )
+            scope.launch { _chatMessages.emit(message) }
+        }
+    }
+
+    private fun handleTts(json: JsonObject) {
+        val state = json.get("state")?.asString ?: ""
+        val ttsTextContent = json.get("text")?.asString ?: ""
+        val audioBase64 = json.get("audio")?.asString
+            ?: json.get("data")?.asString
+            ?: json.get("audio_data")?.asString
+
+        if (audioBase64 != null && audioBase64.isNotEmpty()) {
+            Logger.i(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
+            if (binaryAudioInSession) {
+                Logger.i(TAG, "跳过 base64 音频（二进制音频已在播放）")
+            } else {
+                try {
+                    val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
+                    if (audioData.isNotEmpty()) scope.launch { _audioData.emit(audioData) }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "Base64 解码失败: ${e.message}")
+                }
+            }
+        }
+
+        when (state) {
+            "start" -> {
+                idleDebounceJob?.cancel()
+                binaryAudioInSession = false
+                Logger.e(TAG, "!!!! tts start received, setting aiState=speaking")
+                _aiState.value = AiStateStr.SPEAKING
+                _ttsText.value = ""
+            }
+            "stop" -> {
+                idleDebounceJob?.cancel()
+                Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
+                _aiState.value = AiStateStr.IDLE
+            }
+            "sentence_start" -> {
+                idleDebounceJob?.cancel()
+                if (ttsTextContent.isNotEmpty()) {
+                    val id = java.util.UUID.randomUUID().toString()
+                    streamingMessageId = id
+                    val message = ChatMessage(
+                        id = id, content = ttsTextContent,
+                        type = MessageType.TEXT, direction = MessageDirection.RECEIVED,
+                        status = MessageStatus.SENT, timestamp = System.currentTimeMillis(),
+                        isStreaming = true
+                    )
+                    scope.launch { _chatMessages.emit(message) }
+                }
+                _ttsText.value = ttsTextContent
+            }
+            "sentence_end" -> {
+                if (streamingMessageId.isNotEmpty()) {
+                    scope.launch { _streamingEnd.emit(streamingMessageId) }
+                    streamingMessageId = ""
+                }
+                _ttsText.value = ""
+                idleDebounceJob?.cancel()
+                idleDebounceJob = scope.launch {
+                    delay(3000)
+                    if (_aiState.value == AiStateStr.SPEAKING) {
+                        Logger.i(TAG, "tts sentence_end 超时无后续，自动切 idle")
+                        _aiState.value = AiStateStr.IDLE
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleLlm(json: JsonObject) {
+        val emotionStr = json.get("emotion")?.asString ?: ""
+        _emotion.value = emotionStr
+    }
+
+    private fun handleMcp(json: JsonObject) {
+        val payload = json.get("payload")?.asJsonObject
+        val method = payload?.get("method")?.asString
+        val msgId = payload?.get("id") ?: com.google.gson.JsonNull.INSTANCE
+
+        when (method) {
+            "initialize" -> {
+                val params = payload?.get("params")?.asJsonObject
+                val capabilities = params?.getAsJsonObject("capabilities")
+                val vision = capabilities?.getAsJsonObject("vision")
+                val visionUrlStr = vision?.get("url")?.asString
+                if (visionUrlStr != null) {
+                    visionUrl = visionUrlStr
+                    Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
+                }
+                val visionTokenStr = vision?.get("token")?.asString
+                if (visionTokenStr != null) {
+                    visionToken = visionTokenStr
+                    Logger.i(TAG, "服务器视觉AI Token: $visionTokenStr")
+                }
+                val response = JsonObject().apply {
+                    addProperty("type", "mcp")
+                    addProperty("session_id", sessionId)
+                    val responsePayload = JsonObject().apply {
+                        addProperty("jsonrpc", "2.0")
+                        add("id", msgId)
+                        val result = JsonObject().apply {
+                            addProperty("protocolVersion", "2024-11-05")
+                            add("capabilities", JsonObject().apply { addProperty("tools", true) })
+                            val serverInfo = JsonObject().apply {
+                                addProperty("name", "xiaozhi-android")
+                                addProperty("version", "1.0.0")
+                            }
+                            add("serverInfo", serverInfo)
+                        }
+                        add("result", result)
+                    }
+                    add("payload", responsePayload)
+                }
+                sendTextMessage(response.toString())
+                Logger.i(TAG, "回复MCP initialized响应")
+            }
+            "tools/list" -> {
+                val toolList = MCPToolRegistry.getToolList()
+                val response = JsonObject().apply {
+                    addProperty("type", "mcp")
+                    addProperty("session_id", sessionId)
+                    val responsePayload = JsonObject().apply {
+                        addProperty("jsonrpc", "2.0")
+                        add("id", msgId)
+                        add("result", JsonObject().apply { add("tools", toolList) })
+                    }
+                    add("payload", responsePayload)
+                }
+                sendTextMessage(response.toString())
+                Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
+            }
+            "tools/call" -> {
+                val params = payload?.get("params")?.asJsonObject
+                val toolName = params?.get("name")?.asString ?: ""
+                val arguments = params?.get("arguments")?.asJsonObject
+                val argsMap = mutableMapOf<String, Any>()
+                arguments?.entrySet()?.forEach { (k, v) ->
+                    argsMap[k] = when {
+                        v.isJsonPrimitive -> {
+                            val prim = v.asJsonPrimitive
+                            if (prim.isString) prim.asString
+                            else if (prim.isNumber) prim.asNumber
+                            else if (prim.isBoolean) prim.asBoolean
+                            else prim.toString()
+                        }
+                        else -> v.toString()
+                    }
+                }
+                scope.launch(Dispatchers.IO) {
+                    val (isSuccess, result) = MCPToolRegistry.callTool(toolName, argsMap)
+                    val response = JsonObject().apply {
+                        addProperty("type", "mcp")
+                        addProperty("session_id", sessionId)
+                        val responsePayload = JsonObject().apply {
+                            addProperty("jsonrpc", "2.0")
+                            add("id", msgId)
+                            if (isSuccess) {
+                                add("result", JsonObject().apply {
+                                    add("content", JsonArray().apply {
+                                        add(JsonObject().apply {
+                                            addProperty("type", "text")
+                                            addProperty("text", (result as JsonObject).toString())
+                                        })
+                                    })
+                                })
+                            } else {
+                                add("error", JsonObject().apply {
+                                    addProperty("code", -32603)
+                                    addProperty("message", result as String)
+                                })
+                            }
+                        }
+                        add("payload", responsePayload)
+                    }
+                    sendTextMessage(response.toString())
+                    Logger.i(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
+                }
+            }
+            "notifications/initialized" -> { /* JSON-RPC 通知，无需回复 */ }
+            else -> Logger.w(TAG, "未知MCP方法: $method")
+        }
+    }
+
+    private fun handleAbort(json: JsonObject) {
+        _aiState.value = AiStateStr.IDLE
+        val reason = json.get("reason")?.asString ?: ""
+        _textMessage.value = "[中断] $reason"
+    }
+
+    private fun handleAlert(json: JsonObject) {
+        val alertText = json.get("text")?.asString
+            ?: json.get("message")?.asString
+            ?: json.get("content")?.asString
+            ?: "收到通知"
+        Logger.i(TAG, "收到Alert: $alertText")
+        scope.launch { _alert.emit(alertText) }
     }
 
     /**
