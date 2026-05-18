@@ -158,4 +158,37 @@ fun registerBasicTools() {
             addProperty("storage_avail_gb", String.format(Locale.US, "%.1f", availBlocks * blockSize / 1e9))
         }
     }
+
+    // 统一系统信息工具（对应 ESP32 self.get_system_info）
+    MCPToolRegistry.registerTool(
+        name = "get_system_info",
+        description = "获取设备的完整系统信息，一次性返回厂商、型号、电量、内存、存储、时间等",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = AppContainer.context
+        val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val batteryLevel = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+        val stats = android.os.StatFs("/data")
+        val blockSize = stats.blockSizeLong
+        val totalBlocks = stats.blockCountLong
+        val freeBlocks = stats.freeBlocksLong
+        val runtime = Runtime.getRuntime()
+        JsonObject().apply {
+            addProperty("manufacturer", android.os.Build.MANUFACTURER)
+            addProperty("model", android.os.Build.MODEL)
+            addProperty("android_version", android.os.Build.VERSION.RELEASE)
+            addProperty("sdk_int", android.os.Build.VERSION.SDK_INT)
+            addProperty("brand", android.os.Build.BRAND)
+            addProperty("battery_level", batteryLevel)
+            addProperty("battery_status", if (batteryLevel >= 0) "ok" else "unavailable")
+            addProperty("ram_total_mb", runtime.totalMemory() / 1024 / 1024)
+            addProperty("ram_free_mb", runtime.freeMemory() / 1024 / 1024)
+            addProperty("ram_max_mb", runtime.maxMemory() / 1024 / 1024)
+            addProperty("storage_total_gb", String.format(Locale.US, "%.1f", totalBlocks * blockSize / 1e9))
+            addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
+            addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
+            addProperty("app_version_code", com.xiaozhi.aiservice.BuildConfig.VERSION_CODE)
+            addProperty("current_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+        }
+    }
 }
