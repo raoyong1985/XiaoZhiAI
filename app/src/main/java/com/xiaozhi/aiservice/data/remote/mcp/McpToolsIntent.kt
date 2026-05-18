@@ -455,6 +455,10 @@ fun registerIntentTools() {
 
         // 只有 name 没有 number 时，从通讯录查找
         if (number.isEmpty() && name.isNotEmpty()) {
+            val contactPerm = checkPermissionWithGuide(
+                Manifest.permission.READ_CONTACTS, permissionName = "通讯录"
+            )
+            if (contactPerm != null) return@registerTool contactPerm
             number = lookupContactNumber(ctx, name)
             if (number.isEmpty()) throw Exception("未在通讯录中找到联系人: $name")
         }
