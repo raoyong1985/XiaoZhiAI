@@ -441,72 +441,48 @@ fun registerIntentTools() {
 
     MCPToolRegistry.registerTool(
         name = "make_call",
-        description = "拨打电话。支持联系人名称查找、直接呼叫（需权限）或打开拨号界面",
+        description = "拨打电话。从通讯录查找联系人并打开拨号界面（无需额外权限）",
         inputSchema = jsonSchema(
             "phone_number" to jsonStringProp("电话号码（可选，提供 name 时会自动查找联系人号码）"),
-            "name" to jsonStringProp("联系人姓名（可选，提供后自动从通讯录查找号码）"),
-            "direct" to jsonBoolProp("是否直接呼叫（需 CALL_PHONE 权限），false 则打开拨号界面，默认 false"),
+            "name" to jsonStringProp("联系人姓名（可选，自动从通讯录查找号码）"),
         )
     ) { args ->
         val ctx = AppContainer.context
         var number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
-        val direct = (args["direct"] as? Boolean) ?: false
 
         // 只有 name 没有 number 时，从通讯录查找
         if (number.isEmpty() && name.isNotEmpty()) {
-            val contactPerm = checkPermissionWithGuide(
-                Manifest.permission.READ_CONTACTS, permissionName = "通讯录"
-            )
-            if (contactPerm != null) return@registerTool contactPerm
-            number = lookupContactNumber(ctx, name)
+            try {
+                number = lookupContactNumber(ctx, name)
+            } catch (_: Exception) {}
             if (number.isEmpty()) throw Exception("未在通讯录中找到联系人: $name")
         }
         if (number.isEmpty()) throw Exception("phone_number 或 name 至少提供一个")
-        // 清理号码格式
         number = number.replace(Regex("[\\s\\-()（）]"), "")
         val displayName = if (name.isNotEmpty()) "$name($number)" else number
 
-        if (direct) {
-            // 直接呼叫（需要 CALL_PHONE 权限）
-            val callPerm = checkPermissionWithGuide(
-                Manifest.permission.CALL_PHONE, permissionName = "通话"
-            )
-            if (callPerm != null) return@registerTool callPerm
-            val intent = Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", number, null)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            ctx.startActivity(intent)
-            JsonObject().apply {
-                addProperty("success", true)
-                addProperty("phone_number", number)
-                if (name.isNotEmpty()) addProperty("name", name)
-                addProperty("direct", true)
-                addProperty("message", "正在呼叫: $displayName")
-            }
-        } else {
-            val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            ctx.startActivity(intent)
-            JsonObject().apply {
-                addProperty("success", true)
-                addProperty("phone_number", number)
-                if (name.isNotEmpty()) addProperty("name", name)
-                addProperty("direct", false)
-                addProperty("message", "已打开拨号界面: $displayName")
-            }
+        // 直接打开拨号界面（无需 CALL_PHONE 权限）
+        val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null)).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        ctx.startActivity(intent)
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("phone_number", number)
+            if (name.isNotEmpty()) addProperty("name", name)
+            addProperty("message", "已打开拨号界面: $displayName")
         }
     }
 
     MCPToolRegistry.registerTool(
         name = "send_sms",
-        description = "发送短信。支持联系人名称查找、直接发送（需权限）或打开短信编辑界面",
+        description = "发送短信。支持联系人名称查找并打开短信编辑界面（无需额外权限）",
         inputSchema = jsonSchema(
             "phone_number" to jsonStringProp("接收短信的电话号码（可选，提供 name 时会自动查找）"),
             "message" to jsonStringProp("短信内容"),
             "name" to jsonStringProp("联系人姓名（可选，自动从通讯录查找号码）"),
-            "direct" to jsonBoolProp("是否直接发送（需 SEND_SMS 权限），false 则打开短信界面，默认 false"),
             required = listOf("message")
         )
     ) { args ->
@@ -515,70 +491,29 @@ fun registerIntentTools() {
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val message = (args["message"] as? String)?.takeIf { it.isNotBlank() }
             ?: throw Exception("message 不能为空")
-        val direct = (args["direct"] as? Boolean) ?: false
 
         // 只有 name 没有 number 时，从通讯录查找
         if (number.isEmpty() && name.isNotEmpty()) {
-            number = lookupContactNumber(ctx, name)
+            try {
+                number = lookupContactNumber(ctx, name)
+            } catch (_: Exception) {}
             if (number.isEmpty()) throw Exception("未在通讯录中找到联系人: $name")
         }
         if (number.isEmpty()) throw Exception("phone_number 或 name 至少提供一个")
         number = number.replace(Regex("[\\s\\-()（）]"), "")
-        val displayName = if (name.isNotEmpty()) name else number
 
-        if (direct) {
-            // 直接发送（需要 SEND_SMS 权限）
-            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.SEND_SMS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                // 无权限，降级到打开短信界面
-                val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
-                    putExtra("sms_body", message)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true)
-                    addProperty("phone_number", number)
-                    if (name.isNotEmpty()) addProperty("name", name)
-                    addProperty("direct", false)
-                    addProperty("message_length", message.length)
-                    addProperty("message", "未授予发送权限，已打开短信编辑界面，收件人: $displayName")
-                }
-            }
-            // 使用 SmsManager 直接发送
-            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
-                @Suppress("DEPRECATION")
-                (ctx.getSystemService("telephony_sms") as? android.telephony.SmsManager)
-                    ?: android.telephony.SmsManager.getDefault()
-            } else {
-                @Suppress("DEPRECATION")
-                android.telephony.SmsManager.getDefault()
-            }
-            @Suppress("DEPRECATION")
-            smsManager.sendTextMessage(number, null, message, null, null)
-            JsonObject().apply {
-                addProperty("success", true)
-                addProperty("phone_number", number)
-                if (name.isNotEmpty()) addProperty("name", name)
-                addProperty("direct", true)
-                addProperty("message_length", message.length)
-                addProperty("message", "短信已发送到: $displayName")
-            }
-        } else {
-            val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
-                putExtra("sms_body", message)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            ctx.startActivity(intent)
-            JsonObject().apply {
-                addProperty("success", true)
-                addProperty("phone_number", number)
-                if (name.isNotEmpty()) addProperty("name", name)
-                addProperty("direct", false)
-                addProperty("message_length", message.length)
-                addProperty("message", "已打开短信编辑界面，收件人: $displayName")
-            }
+        // 打开短信界面（无需 SEND_SMS 权限）
+        val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
+            putExtra("sms_body", message)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        ctx.startActivity(intent)
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("phone_number", number)
+            if (name.isNotEmpty()) addProperty("name", name)
+            addProperty("message", "已打开短信编辑界面: $number")
         }
     }
 
