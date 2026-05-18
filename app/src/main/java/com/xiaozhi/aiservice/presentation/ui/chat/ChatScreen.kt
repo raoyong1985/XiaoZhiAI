@@ -124,21 +124,6 @@ fun ChatScreen(
         else -> null
     }
 
-    // 情绪→Emoji 映射（服务器通过 llm 消息下发 emotion 字段）
-    val emotionEmoji = when (uiState.emotion.lowercase()) {
-        "happy" -> "😊"
-        "sad" -> "😢"
-        "angry" -> "😠"
-        "worried" -> "😟"
-        "thoughtful" -> "🤔"
-        "gentle" -> "😌"
-        "doubtful" -> "🤨"
-        "surprised" -> "😮"
-        "love" -> "🥰"
-        "sleepy" -> "😴"
-        else -> "" // neutral 或未知不显示
-    }
-
     // Alert Snackbar 状态
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(uiState.alert) {
@@ -163,13 +148,6 @@ fun ChatScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            if (emotionEmoji.isNotEmpty() && uiState.aiState == AiState.SPEAKING) {
-                                Text(
-                                    text = emotionEmoji,
-                                    fontSize = 20.sp
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                            }
                             stateIcon?.let { icon ->
                                 Icon(
                                     imageVector = icon,
