@@ -67,7 +67,7 @@ class GroupChatViewModel : ViewModel() {
     private val recentHints = mutableListOf<String>()
     private val recentCandidates = mutableListOf<String>()
     private var deadloopCount = 0
-    private val MAX_DEADLOOP = 3
+    private val MAX_DEADLOOP = 5
 
     // 去重
     private val recentReplyKeys = java.util.concurrent.ConcurrentLinkedDeque<String>()
@@ -422,6 +422,7 @@ class GroupChatViewModel : ViewModel() {
                             val botIndex = rs.botIds.indexOf(botId)
                             if (rs.waitingSpeakerIndex >= 0 && botIndex != rs.waitingSpeakerIndex && botIndex >= 0) {
                                 android.util.Log.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，丢弃音频")
+                                replyText = ""  // 清空累积文本，避免下次转发旧数据
                                 continue
                             }
                             hasSpoken = true
@@ -462,6 +463,9 @@ class GroupChatViewModel : ViewModel() {
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
                                     android.util.Log.i(TAG, "[$botName] triggering next, fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
+                                } else {
+                                    // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
+                                    replyText = ""
                                 }
                             }
                             if (shouldTrigger) {
@@ -547,6 +551,8 @@ class GroupChatViewModel : ViewModel() {
                     relayState = relayState.clearWaiting()
                     continue
                 }
+                // 文字兜底前清理旧音频缓存，防止新旧数据混合
+                audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
                 android.util.Log.i(TAG, "文字兜底 ${textToSend.length}字 → $speakerId: '$textToSend'")
                 try {
                     service.sendTextContent(textToSend)
