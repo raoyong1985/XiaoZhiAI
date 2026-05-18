@@ -41,23 +41,27 @@ class XiaoZhiBackendService(private val gson: Gson) {
     companion object {
         private const val PROTOCOL_VERSION = "1"
         private const val TAG = "XiaoZhiWS"
+        private const val MAX_RECONNECT_ATTEMPTS = 10  // 最多重连 10 次，防无限循环
         /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
         @JvmStatic
         var visionUrl: String? = null
         /** 服务器下发的视觉AI token */
         @JvmStatic
         var visionToken: String? = null
+
+        /** 共享 OkHttpClient 实例，减少连接池和线程创建开销 */
+        val sharedClient = OkHttpClient.Builder()
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .writeTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(10, TimeUnit.SECONDS)
+            .build()
     }
 
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
 
     private var webSocket: WebSocket? = null
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .writeTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(10, TimeUnit.SECONDS)
-        .build()
+    private val client = sharedClient
 
     // 连接状态
     sealed class ConnectionState {
@@ -318,6 +322,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private fun scheduleReconnect() {
         if (isDisconnecting) return
         if (serverUrl.isEmpty()) return
+        if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+            Logger.e(TAG, "重连已达到最大次数($MAX_RECONNECT_ATTEMPTS)，停止重连")
+            _connectionState.value = ConnectionState.Error
+            return
+        }
 
         reconnectAttempt++
 

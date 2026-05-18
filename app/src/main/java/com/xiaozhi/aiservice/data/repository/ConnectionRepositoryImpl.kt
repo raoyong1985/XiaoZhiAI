@@ -536,18 +536,15 @@ class ConnectionRepositoryImpl(
     }
 
     private suspend fun drainAndFlushPlayback() {
+        var hadData = false
         opusDecoder?.let { decoder ->
-            // 自然排空：等待解码队列中的 PCM 写完到 AudioTrack
-            // 等效 ESP32 WaitForPlaybackQueueEmpty()
             if (!decoder.waitForQueueEmpty(1000)) {
                 Logger.w(TAG, "等待队列排空超时（>1s），继续执行")
             }
-
-            // 硬件输出延迟补偿：AudioTrack 内部缓冲 + DAC 缓冲 + 振膜物理震荡 ~200ms
-            // 残余播放音会被后续启动的录音 AEC 消除
-            delay(200)
-            Logger.i(TAG, "drainAndFlushPlayback 完成（自然排空）")
-        } ?: Logger.w(TAG, "opusDecoder 为 null，跳过排空")
+            hadData = true
+        }
+        if (hadData) delay(200)
+        Logger.i(TAG, "drainAndFlushPlayback 完成（自然排空，${if (hadData) "有数据需等待" else "无数据跳过"}）")
     }
 
     /**

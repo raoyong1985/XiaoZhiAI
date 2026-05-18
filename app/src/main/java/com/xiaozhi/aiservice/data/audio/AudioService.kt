@@ -26,7 +26,7 @@ class AudioService {
         private const val SILENCE_CONSECUTIVE_BUFFERS = 2
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
         private const val MIN_SPEECH_DURATION_MS = 300L
-        private const val POOL_CAPACITY = 4
+        private const val POOL_CAPACITY = 16
 
         /** 唤醒词模式录音参数（小缓冲、低延迟） */
         private const val WAKE_WORD_SAMPLE_RATE = 16000

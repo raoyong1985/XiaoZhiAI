@@ -255,13 +255,8 @@ class NativeOpusDecoder(
             if (abs > peak) peak = abs
         }
 
-        if (peak <= HARD_CLIP) {
-            val result = ShortArray(pcm.size)
-            for (i in pcm.indices) {
-                result[i] = pcm[i].toInt().coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
-            }
-            return result
-        }
+        // 无削峰时直接返回，避免不必要的内存分配
+        if (peak <= HARD_CLIP) return pcm
 
         val ratio = HARD_CLIP.toDouble() / peak
         val result = ShortArray(pcm.size)

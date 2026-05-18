@@ -152,8 +152,18 @@ class GroupChatViewModel : ViewModel() {
         // 接龙看门狗：定期检查接龙是否卡死（等待某个bot但20秒无响应），自动恢复
         stuckRelayWatcher?.cancel()
         stuckRelayWatcher = viewModelScope.launch {
+            var lastCleanup = 0L
             while (true) {
                 delay(15_000)
+                // 定期清理死 bot 列表（每 2 分钟一次）
+                val now = System.currentTimeMillis()
+                if (now - lastCleanup > 120_000 && deadBotIds.isNotEmpty()) {
+                    lastCleanup = now
+                    val count = deadBotIds.size
+                    deadBotIds.clear()
+                    android.util.Log.i(TAG, "清理死 bot 列表: ${count}个已过期")
+                }
+
                 val rs = relayState
                 if (rs.waitingSpeakerIndex < 0) continue  // 没有正在等待的bot，跳过
                 if (_isRecording.value) continue           // 用户正在录音，跳过
