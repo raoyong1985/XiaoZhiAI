@@ -152,7 +152,7 @@ class ConnectionRepositoryImpl(
                         pendingTextResponse = null
                     }
 
-                    // AUTO 模式：AI 说完话回到 IDLE，且是 AUTO 模式 → 等播放排空后重启监听
+                    // AUTO 模式：AI 说完话回到 IDLE → 等播放排空后重启监听
                     // 文本模式下(textInputActive=true)不自动重启（参考 ESP32: 非 REALTIME 走 IDLE）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
                         if (textInputActive) {
@@ -164,41 +164,7 @@ class ConnectionRepositoryImpl(
                             return@withLock
                         }
                         Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
-                        // 更新设备状态
-                        _deviceState.value = DeviceState.IDLE
-                        // 排空播放缓冲 + 强制 flush + 硬件延迟补偿
-                        // 参考 ESP32: WaitForPlaybackQueueEmpty() + ResetDecoder()
-                        drainAndFlushPlayback()
-                        // 复用之前的 encoder（避免重新初始化延迟），或立即创建新的
-                        var encoder = opusEncoder
-                        if (encoder == null) {
-                            val sampleRate = audioService.getSampleRate()
-                            opusEncoder = OpusEncoder(sampleRate = sampleRate)
-                            encoder = opusEncoder
-                        }
-                        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-                            audioService.setOnSilenceDetected {
-                                scope.launch { stopListening(userExplicitStop = false) }
-                            }
-                            // AUTO 模式使用 VAD 自动停止 + AEC 回声消除
-                            if (audioService.isAecSupported()) {
-                                audioService.setAecEnabled(true)
-                            }
-                            val encoderRef = encoder
-                            audioService.startRecording({ pcmData ->
-                                encoderRef?.encode(pcmData)
-                            }, enableVAD = true)
-                            backendService.sendListenStart("auto")
-                            _aiState.value = AiState.LISTENING
-                            _deviceState.value = DeviceState.LISTENING
-                            weStartedRecording = true
-                            Logger.i(TAG, "AUTO 模式监听已重启")
-                        } else {
-                            Logger.e(TAG, "AUTO 模式重启监听失败：Opus 编码器初始化失败")
-                            opusEncoder = null
-                            isAutoMode = false
-                            _aiState.value = AiState.IDLE
-                        }
+                        restartListeningAfterSpeaking("auto", enableVAD = true)
                     }
 
                     // Manual Stop 模式：TTS 结束后回到 IDLE，不自动重启监听，等待用户手动触发
@@ -213,9 +179,7 @@ class ConnectionRepositoryImpl(
                     }
 
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
-                    // 参考 ESP32 kListeningModeRealtime 行为
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
-                        // 文本模式下不自动重启语音监听
                         if (textInputActive) {
                             Logger.i(TAG, "Realtime 模式：文本输入中，不重启监听")
                             _deviceState.value = DeviceState.IDLE
@@ -224,36 +188,7 @@ class ConnectionRepositoryImpl(
                             return@withLock
                         }
                         Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听")
-                        _deviceState.value = DeviceState.IDLE
-                        // 排空播放缓冲 + 强制 flush + 硬件延迟补偿
-                        drainAndFlushPlayback()
-                        var encoder = opusEncoder
-                        if (encoder == null) {
-                            val sampleRate = audioService.getSampleRate()
-                            opusEncoder = OpusEncoder(sampleRate = sampleRate)
-                            encoder = opusEncoder
-                        }
-                        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-                            audioService.setOnSilenceDetected {
-                                scope.launch { stopListening(userExplicitStop = false) }
-                            }
-                            // Realtime 模式：禁用 VAD 自动停止（持续录音）+ AEC 回声消除
-                            if (audioService.isAecSupported()) {
-                                audioService.setAecEnabled(true)
-                            }
-                            audioService.startRecording({ pcmData ->
-                                encoder.encode(pcmData)
-                            }, enableVAD = false)
-                            backendService.sendListenStart("realtime")
-                            _aiState.value = AiState.LISTENING
-                            _deviceState.value = DeviceState.LISTENING
-                            weStartedRecording = true
-                            Logger.i(TAG, "Realtime 模式监听已重启（无 VAD 自动停止）")
-                        } else {
-                            Logger.e(TAG, "Realtime 模式重启监听失败")
-                            opusEncoder = null
-                            _aiState.value = AiState.IDLE
-                        }
+                        restartListeningAfterSpeaking("realtime", enableVAD = false)
                     }
                 }
             }
@@ -564,6 +499,42 @@ class ConnectionRepositoryImpl(
      *
      * 用户主动打断时才用 forceFlushPlayback() 强行停止。
      */
+
+    /**
+     * 共享方法：AI 说完后重启监听（消除 AUTO/REALTIME 重复代码）
+     */
+    private suspend fun restartListeningAfterSpeaking(mode: String, enableVAD: Boolean) {
+        _deviceState.value = DeviceState.IDLE
+        drainAndFlushPlayback()
+        var encoder = opusEncoder
+        if (encoder == null) {
+            val sampleRate = audioService.getSampleRate()
+            opusEncoder = OpusEncoder(sampleRate = sampleRate)
+            encoder = opusEncoder
+        }
+        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
+            audioService.setOnSilenceDetected {
+                scope.launch { stopListening(userExplicitStop = false) }
+            }
+            if (audioService.isAecSupported()) {
+                audioService.setAecEnabled(true)
+            }
+            val encoderRef = encoder
+            audioService.startRecording({ pcmData ->
+                encoderRef.encode(pcmData)
+            }, enableVAD = enableVAD)
+            backendService.sendListenStart(mode)
+            _aiState.value = AiState.LISTENING
+            _deviceState.value = DeviceState.LISTENING
+            weStartedRecording = true
+            Logger.i(TAG, "${mode} 模式监听已重启")
+        } else {
+            Logger.e(TAG, "${mode} 模式重启监听失败")
+            opusEncoder = null
+            _aiState.value = AiState.IDLE
+        }
+    }
+
     private suspend fun drainAndFlushPlayback() {
         opusDecoder?.let { decoder ->
             // 自然排空：等待解码队列中的 PCM 写完到 AudioTrack

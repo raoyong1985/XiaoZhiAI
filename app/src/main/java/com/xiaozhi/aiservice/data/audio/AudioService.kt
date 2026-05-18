@@ -8,9 +8,6 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
@@ -323,13 +320,10 @@ class AudioService {
         val bufferSize = maxOf(minBuffer * 4, 8192)  // 8KB 缓冲
 
         try {
-            // VOICE_RECOGNITION 保留原始音频不做 AEC/NS 处理，STT 准确率最高
-            // 但如果启用了增强（AEC/AGC/NS），我们用 VOICE_COMMUNICATION 让系统做预处理
-            val audioSource = if (audioEnhancer.aecEnabled || audioEnhancer.agcEnabled || audioEnhancer.nsEnabled) {
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            } else {
-                MediaRecorder.AudioSource.VOICE_RECOGNITION
-            }
+            // 固定 VOICE_RECOGNITION：保留原始音频不做系统级 AEC/NS 预处理
+            // 如果 AudioEnhancer 启用了 AEC/AGC/NS，由 AudioEnhancer 统一处理
+            // 不要用 VOICE_COMMUNICATION——它自带系统 AEC/NS 会与 AudioEnhancer 冲突（双重处理降质）
+            val audioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION
 
             audioRecord = AudioRecord(
                 audioSource,
@@ -424,7 +418,7 @@ class AudioService {
             }
             recordingThread?.start()
 
-            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 增强: ${audioEnhancer.getStatusSummary()}, 音频源: ${if (audioEnhancer.isActive) "VOICE_COMMUNICATION" else "VOICE_RECOGNITION"}")
+            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 增强: ${audioEnhancer.getStatusSummary()}, 音频源: VOICE_RECOGNITION")
             return true
         } catch (e: SecurityException) {
             Logger.e(TAG, "录音权限被拒绝: ${e.message}")
