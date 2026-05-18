@@ -353,7 +353,11 @@ class AudioService {
             // 参考 ESP32 audio_service.cc EnableDeviceAec() + AFE 配置
             if (audioEnhancer.aecEnabled || audioEnhancer.agcEnabled || audioEnhancer.nsEnabled) {
                 val sessionId = audioRecord?.audioSessionId ?: 0
-                if (sessionId > 0) audioEnhancer.init(sessionId)
+                if (sessionId > 0) {
+                    audioEnhancer.init(sessionId)
+                } else {
+                    Logger.w(TAG, "AudioRecord sessionId=0，AudioFX 增强器无法绑定（音频增强不生效）")
+                }
             }
 
             isRecording.set(true)

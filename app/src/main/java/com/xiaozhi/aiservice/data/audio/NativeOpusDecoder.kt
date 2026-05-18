@@ -228,18 +228,35 @@ class NativeOpusDecoder(
         val outputLength = (inputSamples.toDouble() * outputRate / inputRate).toInt()
         val output = ShortArray(outputLength)
 
+        // Catmull-Rom Hermite 立方插值，比线性插值更平滑、频谱保持更好
+        // 参考: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
         for (i in 0 until outputLength) {
             val srcIndex = i * inputRate.toDouble() / outputRate
             val srcIndexInt = srcIndex.toInt()
             val frac = srcIndex - srcIndexInt
 
-            if (srcIndexInt >= inputSamples - 1) {
-                output[i] = input[inputSamples - 1]
+            if (srcIndexInt <= 0) {
+                // 左边界：线性插值
+                val s0 = input[0].toInt()
+                val s1 = if (srcIndexInt + 1 < inputSamples) input[1].toInt() else s0
+                output[i] = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767).toShort()
+            } else if (srcIndexInt >= inputSamples - 2) {
+                // 右边界：线性插值
+                val s0 = input[inputSamples - 2].toInt()
+                val s1 = input[inputSamples - 1].toInt()
+                output[i] = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767).toShort()
             } else {
-                val s0 = input[srcIndexInt].toInt()
-                val s1 = input[srcIndexInt + 1].toInt()
-                val resampled = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32767, 32767)
-                output[i] = resampled.toShort()
+                // Hermite 立方插值
+                val m1 = input[srcIndexInt - 1].toInt()
+                val a = input[srcIndexInt].toInt()
+                val b = input[srcIndexInt + 1].toInt()
+                val m2 = input[srcIndexInt + 2].toInt()
+                val c0 = a
+                val c1 = 0.5f * (b - m1)
+                val c2 = m1 - 2.5f * a + 2f * b - 0.5f * m2
+                val c3 = 0.5f * (m2 - m1) + 1.5f * (a - b)
+                val resampled = ((c3 * frac + c2) * frac + c1) * frac + c0
+                output[i] = resampled.toInt().coerceIn(-32768, 32767).toShort()
             }
         }
 
