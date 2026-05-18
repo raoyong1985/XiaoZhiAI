@@ -28,6 +28,10 @@ class AudioService {
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
         private const val MIN_SPEECH_DURATION_MS = 300L
         private const val POOL_CAPACITY = 4
+
+        /** 唤醒词模式录音参数（小缓冲、低延迟） */
+        private const val WAKE_WORD_SAMPLE_RATE = 16000
+        private const val WAKE_WORD_BUFFER_MS = 50  // 50ms 缓冲
     }
 
     // ByteArray 池：减少录音→编码链路 GC 压力
@@ -59,8 +63,17 @@ class AudioService {
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
     private var aecEnabled = false
+    private var appContext: android.content.Context? = null
+
+    // 唤醒词检测相关（参考 ESP32 AudioService::wake_word_）
+    private val wakeWordDetector = WakeWordDetector()
+    private var onWakeWordDetected: ((String) -> Unit)? = null
+    private val isWakeWordRecording = AtomicBoolean(false)
+    private var wakeWordThread: Thread? = null
+    private var wakeWordRecord: AudioRecord? = null
 
     fun init(context: Context) {
+        appContext = context
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
 
@@ -152,6 +165,129 @@ class AudioService {
      */
     fun setOnSilenceDetected(callback: () -> Unit) {
         onSilenceDetected = callback
+    }
+
+    /**
+     * 设置唤醒词检测回调
+     * 对应 ESP32 AudioServiceCallbacks.on_wake_word_detected
+     */
+    fun setOnWakeWordDetected(callback: (String) -> Unit) {
+        onWakeWordDetected = callback
+    }
+
+    /**
+     * 唤醒词引擎是否可用（AccessKey 已配置）
+     */
+    fun isWakeWordAvailable(): Boolean = wakeWordDetector.isReady()
+
+    /**
+     * 唤醒词检测是否正在运行
+     */
+    fun isWakeWordRunning(): Boolean = isWakeWordRecording.get()
+
+    /**
+     * 初始化并启动唤醒词检测
+     * 对应 ESP32 AudioService::EnableWakeWordDetection(true)
+     *
+     * 使用独立的 AudioRecord（小缓冲、VOICE_RECOGNITION），
+     * 录音数据仅用于 Porcupine 引擎，不编码不发送
+     *
+     * @param accessKey Picovoice AccessKey
+     * @param keyword 唤醒词
+     */
+    fun startWakeWordDetection(
+        accessKey: String = WakeWordDetector.ACCESS_KEY,
+        keyword: String = WakeWordDetector.DEFAULT_KEYWORD
+    ): Boolean {
+        if (isWakeWordRecording.get()) return true
+        if (isRecording.get()) {
+            Logger.w(TAG, "语音录音中，暂不启动唤醒词检测")
+            return false
+        }
+
+        // 初始化引擎（首次调用）
+        if (!wakeWordDetector.initialize(accessKey, keyword, appContext)) {
+            Logger.w(TAG, "唤醒词引擎初始化失败（AccessKey 未配置？），唤醒词不生效")
+            return false
+        }
+
+        // 设置回调链：WakeWordDetector → AudioService → App
+        wakeWordDetector.setOnWakeWordDetected { wakeWord ->
+            Logger.i(TAG, "唤醒词检测命中: $wakeWord")
+            onWakeWordDetected?.invoke(wakeWord)
+            // 检测到后自动停止唤醒模式
+            stopWakeWordDetection()
+        }
+
+        return startWakeWordRecording()
+    }
+
+    /**
+     * 启动唤醒词专用录音
+     */
+    private fun startWakeWordRecording(): Boolean {
+        val bufferSize = AudioRecord.getMinBufferSize(
+            WAKE_WORD_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT
+        )
+        val frameBytes = WAKE_WORD_SAMPLE_RATE * 2 * WAKE_WORD_BUFFER_MS / 1000 // 16bit = 2 bytes
+
+        return try {
+            wakeWordRecord = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                WAKE_WORD_SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                maxOf(bufferSize, frameBytes)
+            )
+
+            if (wakeWordRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                Logger.e(TAG, "唤醒词 AudioRecord 初始化失败")
+                wakeWordRecord?.release()
+                wakeWordRecord = null
+                return false
+            }
+
+            isWakeWordRecording.set(true)
+            wakeWordRecord?.startRecording()
+
+            wakeWordThread = Thread {
+                val buffer = ByteArray(frameBytes)
+                while (isWakeWordRecording.get()) {
+                    val readSize = wakeWordRecord?.read(buffer, 0, frameBytes) ?: 0
+                    if (readSize > 0) {
+                        val actualData = if (readSize < frameBytes) buffer.copyOf(readSize) else buffer
+                        wakeWordDetector.feed(actualData)
+                    }
+                }
+            }.also { it.start() }
+
+            Logger.i(TAG, "唤醒词录音已启动（采样率: ${WAKE_WORD_SAMPLE_RATE}Hz, 缓冲: ${WAKE_WORD_BUFFER_MS}ms）")
+            true
+        } catch (e: SecurityException) {
+            Logger.e(TAG, "唤醒词录音权限被拒绝: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Logger.e(TAG, "唤醒词录音启动失败: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 停止唤醒词检测
+     * 对应 ESP32 AudioService::EnableWakeWordDetection(false)
+     */
+    fun stopWakeWordDetection() {
+        isWakeWordRecording.set(false)
+        try {
+            wakeWordRecord?.stop()
+        } catch (_: Exception) {}
+        wakeWordThread?.join(300)
+        wakeWordThread = null
+        try {
+            wakeWordRecord?.release()
+        } catch (_: Exception) {}
+        wakeWordRecord = null
+        Logger.i(TAG, "唤醒词检测已停止")
     }
 
     /**
@@ -356,11 +492,15 @@ class AudioService {
         } catch (_: Exception) {}
         acousticEchoCanceler = null
 
+        // 6. 停止唤醒词检测（如果正在运行）
+        stopWakeWordDetection()
+
         Logger.i(TAG, "录音停止")
     }
 
     fun release() {
         stopRecording()
+        wakeWordDetector.release()
     }
 
     fun isRecording(): Boolean = isRecording.get()

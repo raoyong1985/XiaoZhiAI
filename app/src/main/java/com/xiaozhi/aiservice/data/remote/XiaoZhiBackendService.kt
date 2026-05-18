@@ -44,6 +44,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
         /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
         @JvmStatic
         var visionUrl: String? = null
+        /** 服务器下发的视觉AI token */
+        @JvmStatic
+        var visionToken: String? = null
     }
 
     private val supervisorJob = SupervisorJob()
@@ -642,6 +645,11 @@ class XiaoZhiBackendService(private val gson: Gson) {
                             if (visionUrlStr != null) {
                                 visionUrl = visionUrlStr
                                 Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
+                            }
+                            val visionTokenStr = vision?.get("token")?.asString
+                            if (visionTokenStr != null) {
+                                visionToken = visionTokenStr
+                                Logger.i(TAG, "服务器视觉AI Token: $visionTokenStr")
                             }
                             val response = JsonObject().apply {
                                 addProperty("type", "mcp")

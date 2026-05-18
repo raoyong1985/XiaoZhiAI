@@ -11,8 +11,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 47
-        versionName "1.0.88"
+        versionCode 50
+        versionName "1.0.98"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -44,6 +44,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
             buildConfigField "boolean", "ENABLE_DEBUG_LOG", "false"
             buildConfigField "String", "NEWS_API_KEY", "\"YOUR_API_KEY_HERE\""
         }
@@ -141,4 +142,7 @@ dependencies {
     // Debug
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    // Porcupine wake word engine
+    implementation 'ai.picovoice:porcupine-android:3.0.2'
 }

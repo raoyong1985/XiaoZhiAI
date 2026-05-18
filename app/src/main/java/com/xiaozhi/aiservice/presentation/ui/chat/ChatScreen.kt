@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -33,11 +34,14 @@ import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
@@ -237,13 +241,51 @@ fun ChatScreen(
 private fun MessageBubble(message: ChatMessage) {
     val isFromMe = message.direction == MessageDirection.SENT
 
-    // 流式消息：透明度 0.5→1 呼吸动画（统一的，避免每个气泡独立动画导致全局重绘闪烁）
+    // 流式消息：透明度 0.5→1 呼吸动画
     val streamingAlpha by animateFloatAsState(
         targetValue = if (message.isStreaming) 1f else 0.5f,
         animationSpec = tween(400),
         label = "streaming_alpha"
     )
 
+    when (message.type) {
+        MessageType.IMAGE -> ImageBubble(message, isFromMe, streamingAlpha)
+        else -> TextBubble(message, isFromMe, streamingAlpha)
+    }
+}
+
+@Composable
+private fun ImageBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(message.content)  // 本地文件路径
+                .crossfade(true)
+                .build(),
+            contentDescription = "照片",
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .heightIn(max = 360.dp)
+                .clip(
+                    RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (isFromMe) 16.dp else 4.dp,
+                        bottomEnd = if (isFromMe) 4.dp else 16.dp
+                    )
+                ),
+            contentScale = ContentScale.Fit
+        )
+    }
+}
+
+@Composable
+private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

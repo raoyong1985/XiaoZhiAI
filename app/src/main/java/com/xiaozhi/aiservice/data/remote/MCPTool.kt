@@ -26,6 +26,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.net.URLEncoder
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,10 +39,12 @@ data class MCPTool(
     val description: String,
     val inputSchema: JsonObject,
     val readOnly: Boolean = true,
+    val userOnly: Boolean = false,
     val handler: suspend (Map<String, Any>) -> JsonObject
 )
 
 object MCPToolRegistry {
+    private const val TAG = "MCPToolRegistry"
     private val tools = mutableListOf<MCPTool>()
     private var cachedToolList: JsonArray? = null
 
@@ -1443,31 +1447,45 @@ object MCPToolRegistry {
         description: String,
         inputSchema: JsonObject,
         readOnly: Boolean = true,
+        userOnly: Boolean = false,
         handler: suspend (Map<String, Any>) -> JsonObject
     ) {
-        tools.add(MCPTool(name, description, inputSchema, readOnly, handler))
+        tools.add(MCPTool(name, description, inputSchema, readOnly, userOnly, handler))
         cachedToolList = null
     }
 
     fun getToolList(): JsonArray {
         if (cachedToolList != null) return cachedToolList!!
         val arr = JsonArray()
-        tools.forEach { tool ->
-            arr.add(JsonObject().apply {
-                addProperty("name", tool.name)
-                addProperty("description", tool.description)
-                add("inputSchema", tool.inputSchema)
-                add("annotations", JsonObject().apply {
-                    addProperty("readOnly", tool.readOnly)
-                })
-            })
+        tools.filter { !it.userOnly }.forEach { tool ->
+            arr.add(toToolJson(tool))
         }
         cachedToolList = arr
         return arr
     }
 
+    /** 返回全部工具（含 userOnly），供 UI 展示使用 */
+    fun getAllToolList(): JsonArray {
+        val arr = JsonArray()
+        tools.forEach { tool ->
+            arr.add(toToolJson(tool))
+        }
+        return arr
+    }
+
+    private fun toToolJson(tool: MCPTool): JsonObject = JsonObject().apply {
+        addProperty("name", tool.name)
+        addProperty("description", tool.description)
+        add("inputSchema", tool.inputSchema)
+        add("annotations", JsonObject().apply {
+            addProperty("readOnly", tool.readOnly)
+            addProperty("userOnly", tool.userOnly)
+        })
+    }
+
     suspend fun callTool(name: String, arguments: Map<String, Any>): Pair<Boolean, Any> {
         val tool = tools.find { it.name == name } ?: return Pair(false, "工具 $name 不存在")
+        if (tool.userOnly) return Pair(false, "工具 $name 是用户专属工具，AI 不可调用")
         return try {
             Pair(true, tool.handler.invoke(arguments))
         } catch (e: Exception) {
@@ -1837,8 +1855,37 @@ object MCPToolRegistry {
             val base64Result = kotlinx.coroutines.withTimeoutOrNull(30_000L) { deferred.await() }
                 ?: throw Exception("拍照超时（30秒），请重试")
 
-            // 发送到视觉 API 分析
-            val description = analyzeWithVision(base64Result)
+            // 保存图片到文件，插入聊天气泡
+            val jpegBytes: ByteArray
+            try {
+                jpegBytes = android.util.Base64.decode(base64Result, android.util.Base64.DEFAULT)
+                val photoDir = File(context.cacheDir, "photos")
+                photoDir.mkdirs()
+                val photoFile = File(photoDir, "photo_${System.currentTimeMillis()}.jpg")
+                FileOutputStream(photoFile).use { it.write(jpegBytes) }
+
+                val contactId = (AppContainer.connectionRepository as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
+                if (contactId.isNotEmpty()) {
+                    AppContainer.messageRepository.addSentMessage(
+                        contactId,
+                        com.xiaozhi.aiservice.domain.model.ChatMessage(
+                            id = java.util.UUID.randomUUID().toString(),
+                            content = photoFile.absolutePath,
+                            type = com.xiaozhi.aiservice.domain.model.MessageType.IMAGE,
+                            direction = com.xiaozhi.aiservice.domain.model.MessageDirection.SENT,
+                            status = com.xiaozhi.aiservice.domain.model.MessageStatus.SENT,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
+                    android.util.Log.i(TAG, "照片已添加到聊天: ${photoFile.absolutePath}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "保存照片或插入消息失败: ${e.message}")
+                throw e
+            }
+
+            // 发送到视觉 API 分析（传原始 JPEG 字节，用 multipart/form-data）
+            val description = analyzeWithVision(jpegBytes)
             JsonObject().apply {
                 addProperty("success", true)
                 addProperty("description", description)
@@ -1847,26 +1894,38 @@ object MCPToolRegistry {
     }
 
     /**
-     * 发送图片到视觉 API 分析
+     * 发送图片到视觉 API 分析（multipart/form-data 方式，与 ESP32 一致）
      */
-    private suspend fun analyzeWithVision(base64Image: String): String {
+    private suspend fun analyzeWithVision(jpegData: ByteArray): String {
         val visionUrl = com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService.visionUrl
-        if (visionUrl.isNullOrBlank()) return "已拍照成功，但未配置视觉AI分析服务"
+        if (visionUrl.isNullOrBlank()) return "照片已拍好，但视觉AI分析服务未配置"
 
         try {
-            val jsonBody = com.google.gson.JsonObject().apply {
-                addProperty("image", base64Image)
-                addProperty("prompt", "请详细描述这张图片中的内容，包括物体、场景、文字、颜色等")
-            }
+            val boundary = "----AndroidCameraBoundary"
+            val token = com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService.visionToken
+
+            // 构造 multipart body
+            val bodyBuilder = okhttp3.MultipartBody.Builder()
+                .setType("multipart/form-data".toMediaTypeOrNull()!!)
+                .addFormDataPart("question", "请详细描述这张图片中的内容，包括物体、场景、文字、颜色等")
+                .addFormDataPart("file", "camera.jpg",
+                    okhttp3.RequestBody.create("image/jpeg".toMediaTypeOrNull(), jpegData))
+
+            val request = okhttp3.Request.Builder()
+                .url(visionUrl)
+                .header("Device-Id", com.xiaozhi.aiservice.di.AppContainer.deviceId)
+                .header("Client-Id", com.xiaozhi.aiservice.di.AppContainer.clientId)
+                .apply {
+                    if (!token.isNullOrBlank()) {
+                        header("Authorization", "Bearer $token")
+                    }
+                }
+                .post(bodyBuilder.build())
+                .build()
 
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
-                .build()
-
-            val request = okhttp3.Request.Builder()
-                .url(visionUrl)
-                .post(jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull()))
                 .build()
 
             val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1874,16 +1933,21 @@ object MCPToolRegistry {
             }
 
             val body = response.body?.string() ?: "空响应"
-            if (!response.isSuccessful) return "视觉分析失败: HTTP ${response.code}"
+            if (!response.isSuccessful) return "照片已拍好，但视觉分析服务暂时不可用（HTTP ${response.code}），请稍后再试"
 
-            val json = com.google.gson.JsonParser.parseString(body).asJsonObject
+            // 解析返回的 JSON
+            val json = try {
+                com.google.gson.JsonParser.parseString(body).asJsonObject
+            } catch (e: Exception) {
+                return body  // 直接返回服务器原文
+            }
             return json.get("description")?.asString
                 ?: json.get("result")?.asString
                 ?: json.get("text")?.asString
                 ?: json.get("message")?.asString
-                ?: "视觉分析完成（无法解析返回格式）"
+                ?: body  // 无法解析则返回原文
         } catch (e: Exception) {
-            return "视觉分析失败: ${e.message}"
+            return "照片已拍好，但视觉分析请求出错: ${e.message}"
         }
     }
 }

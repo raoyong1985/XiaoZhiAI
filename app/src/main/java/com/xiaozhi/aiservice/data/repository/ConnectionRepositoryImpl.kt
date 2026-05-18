@@ -6,6 +6,7 @@ import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
+import com.xiaozhi.aiservice.data.audio.WakeWordDetector
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -57,7 +58,7 @@ class ConnectionRepositoryImpl(
     private val lastSentTextLock = Any()
 
     // 当前联系人ID，用于消息路由
-    private var currentContactId: String = ""
+    var currentContactId: String = ""
 
     // 跟踪我们自己启动的录音（用于 AI 说话时自动停止，避免回声）
     private var weStartedRecording = false
@@ -69,6 +70,8 @@ class ConnectionRepositoryImpl(
     private var textInputActive = false
     // 等待文本消息回复（参考对方 Completer 模式）
     private var pendingTextResponse: CompletableDeferred<Unit>? = null
+    // 唤醒词已启用
+    private var wakeWordEnabled = false
 
     // 设备状态（参考 ESP32 device_state_machine.cc）
     // 使用 internal 可见性让 MCP 工具能访问，同时对接口暴露为 StateFlow
@@ -153,10 +156,11 @@ class ConnectionRepositoryImpl(
                     // 文本模式下(textInputActive=true)不自动重启（参考 ESP32: 非 REALTIME 走 IDLE）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
                         if (textInputActive) {
-                            Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听")
+                            Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听，启动唤醒词检测")
                             _deviceState.value = DeviceState.IDLE
                             audioService.abandonAudioFocus()
                             weStartedRecording = false
+                            startWakeWordMode()
                             return@withLock
                         }
                         Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
@@ -200,11 +204,12 @@ class ConnectionRepositoryImpl(
                     // Manual Stop 模式：TTS 结束后回到 IDLE，不自动重启监听，等待用户手动触发
                     // 参考 ESP32 kListeningModeManualStop 行为
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.MANUAL) {
-                        Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，等待用户手动启动监听")
+                        Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，启动唤醒词检测")
                         _deviceState.value = DeviceState.IDLE
                         audioService.abandonAudioFocus()
                         isAutoMode = false
                         weStartedRecording = false
+                        startWakeWordMode()
                     }
 
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
@@ -264,11 +269,20 @@ class ConnectionRepositoryImpl(
                     audioService.setSampleRate(serverSampleRate)
                     // 不在这初始化解码器，等 hello 收到后再初始化
                     Logger.i(TAG, "已连接，等待服务器hello...")
+
+                    // 连接建立后，在 IDLE 状态启动唤醒词检测
+                    // 延迟启动避免与初始化流程竞争
+                    scope.launch {
+                        kotlinx.coroutines.delay(2000)
+                        startWakeWordMode()
+                    }
                 } else if (state is XiaoZhiBackendService.ConnectionState.Disconnected ||
                            state is XiaoZhiBackendService.ConnectionState.Error) {
                     opusDecoder?.release()
                     opusDecoder = null
                     Logger.i(TAG, "连接断开，解码器已释放")
+                    // 断开后唤醒词已经在 disconnect() 中启动，但如果在 observeBackendService 外断开（如后端主动断开），此处兜底
+                    startWakeWordMode()
                 }
             }
         }
@@ -373,6 +387,8 @@ class ConnectionRepositoryImpl(
         opusDecoder = null
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiState.IDLE
+        // 断开后重启唤醒词检测
+        startWakeWordMode()
     }
     
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
@@ -424,7 +440,45 @@ class ConnectionRepositoryImpl(
         }
     }
     
+    /**
+     * 初始化并启动唤醒词模式
+     * 对应 ESP32 EnableWakeWordDetection(true)
+     * 在 IDLE 状态时运行，监听唤醒词后自动切换到语音模式
+     */
+    fun startWakeWordMode() {
+        if (wakeWordEnabled) return
+        if (_aiState.value != AiState.IDLE) return
+
+        // 设置唤醒检测回调（唤醒→启动语音模式）
+        audioService.setOnWakeWordDetected { wakeWord ->
+            Logger.i(TAG, "🎤 检测到唤醒词「$wakeWord」，启动语音模式")
+            wakeWordEnabled = false
+            scope.launch {
+                startListening("realtime")
+            }
+        }
+
+        if (audioService.startWakeWordDetection()) {
+            wakeWordEnabled = true
+            Logger.i(TAG, "唤醒词模式已启动，说「${WakeWordDetector.DEFAULT_KEYWORD}」唤醒")
+        }
+    }
+
+    /**
+     * 停止唤醒词模式
+     * 对应 ESP32 EnableWakeWordDetection(false)
+     */
+    fun stopWakeWordMode() {
+        if (!wakeWordEnabled) return
+        wakeWordEnabled = false
+        audioService.stopWakeWordDetection()
+        Logger.i(TAG, "唤醒词模式已停止")
+    }
+
     override suspend fun startListening(mode: String) {
+        // 停止唤醒词检测（录音冲突）
+        stopWakeWordMode()
+
         stateMutex.withLock {
             // 用户开始语音输入，关闭文本模式标记
             textInputActive = false
@@ -485,8 +539,12 @@ class ConnectionRepositoryImpl(
             if (userExplicitStop) {
                 isAutoMode = false
                 _aiState.value = AiState.IDLE
+                // 用户手动停止后重启唤醒词检测
+                startWakeWordMode()
             } else if (!isAutoMode) {
                 _aiState.value = AiState.IDLE
+                // 非 AUTO 模式回到 IDLE 后重启唤醒词
+                startWakeWordMode()
             } else {
                 Logger.i(TAG, "VAD auto-stop (AUTO 模式)，保持状态等待 TTS")
             }
