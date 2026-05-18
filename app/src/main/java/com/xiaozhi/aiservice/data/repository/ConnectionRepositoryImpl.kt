@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.data.repository
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.utils.Logger
+import com.xiaozhi.aiservice.utils.SoundEffect
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
@@ -143,6 +144,13 @@ class ConnectionRepositoryImpl(
 
                     // 更新状态
                     _aiState.value = newAiState
+
+                    // AI 开始说话时播放提示音
+                    if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
+                        scope.launch {
+                            SoundEffect.play(AppContainer.context, SoundEffect.Type.AI_SPEAK)
+                        }
+                    }
 
                     // ESP32 HandleStateChangedEvent(Speaking): ResetDecoder() 清空残留音频队列
                     if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
@@ -443,6 +451,8 @@ class ConnectionRepositoryImpl(
                 audioService.startRecording({ pcmData ->
                     encoder.encode(pcmData)
                 }, enableVAD = enableVAD)
+                // 开始监听提示音
+                scope.launch { SoundEffect.play(AppContainer.context, SoundEffect.Type.LISTEN_START) }
             } else {
                 Logger.e(TAG, "Opus 编码器初始化失败")
                 opusEncoder = null
@@ -475,6 +485,7 @@ class ConnectionRepositoryImpl(
                 isAutoMode = false
                 _aiState.value = AiState.IDLE
                 // 用户手动停止后重启唤醒词检测
+                scope.launch { SoundEffect.play(AppContainer.context, SoundEffect.Type.LISTEN_STOP) }
                 startWakeWordMode()
             } else if (!isAutoMode) {
                 _aiState.value = AiState.IDLE
