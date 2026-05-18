@@ -9,6 +9,8 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
@@ -55,15 +57,15 @@ class AudioService {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var acousticEchoCanceler: AcousticEchoCanceler? = null
+    private val audioEnhancer = AudioEnhancer()
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
     private var onSilenceDetected: (() -> Unit)? = null
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
-    private var aecEnabled = false
     private var appContext: android.content.Context? = null
+    private var audioSettingsBackup = mutableMapOf<String, Boolean>()  // 存旧增强配置
 
     // 唤醒词检测相关（参考 ESP32 AudioService::wake_word_）
     private val wakeWordDetector = WakeWordDetector()
@@ -80,28 +82,43 @@ class AudioService {
     /**
      * 设置 AEC（声学回声消除）启用状态
      * 参考 ESP32 AudioService::EnableDeviceAec()
-     * 注意：AEC 需要 AudioRecord 初始化后才能应用，会在下次 startRecording() 时生效
      */
     fun setAecEnabled(enabled: Boolean) {
-        aecEnabled = enabled
-        // 如果已经初始化了 AEC，启用/停用它
-        acousticEchoCanceler?.let {
-            try {
-                it.enabled = enabled
-                Logger.i(TAG, "AEC ${if (enabled) "启用" else "停用"}")
-            } catch (e: Exception) {
-                Logger.e(TAG, "AEC enabled 失败: ${e.message}")
-            }
-        }
-        Logger.i(TAG, "AEC 状态设置为 ${if (enabled) "启用" else "禁用"}（将在下次录音时应用）")
+        audioEnhancer.aecEnabled = enabled
+        audioEnhancer.reset()
+        Logger.i(TAG, "AEC ${if (enabled) "启用" else "禁用"}")
     }
 
-    fun isAecEnabled(): Boolean = aecEnabled
+    fun isAecEnabled(): Boolean = audioEnhancer.aecEnabled
 
     /**
      * 检查设备是否支持 AEC
      */
-    fun isAecSupported(): Boolean = AcousticEchoCanceler.isAvailable()
+    fun isAecSupported(): Boolean = audioEnhancer.isAecSupported()
+
+    /**
+     * 设置 AGC（自动增益控制）启用状态
+     */
+    fun setAgcEnabled(enabled: Boolean) {
+        audioEnhancer.agcEnabled = enabled
+        audioEnhancer.reset()
+        Logger.i(TAG, "AGC ${if (enabled) "启用" else "禁用"}")
+    }
+
+    fun isAgcEnabled(): Boolean = audioEnhancer.agcEnabled
+    fun isAgcSupported(): Boolean = audioEnhancer.isAgcSupported()
+
+    /**
+     * 设置 NS（降噪）启用状态
+     */
+    fun setNsEnabled(enabled: Boolean) {
+        audioEnhancer.nsEnabled = enabled
+        audioEnhancer.reset()
+        Logger.i(TAG, "降噪 ${if (enabled) "启用" else "禁用"}")
+    }
+
+    fun isNsEnabled(): Boolean = audioEnhancer.nsEnabled
+    fun isNsSupported(): Boolean = audioEnhancer.isNsSupported()
 
     /**
      * 请求音频焦点（播放时使用）
@@ -307,8 +324,8 @@ class AudioService {
 
         try {
             // VOICE_RECOGNITION 保留原始音频不做 AEC/NS 处理，STT 准确率最高
-            // 但如果启用了 AEC，我们用 VOICE_COMMUNICATION 让系统做 AEC
-            val audioSource = if (aecEnabled) {
+            // 但如果启用了增强（AEC/AGC/NS），我们用 VOICE_COMMUNICATION 让系统做预处理
+            val audioSource = if (audioEnhancer.aecEnabled || audioEnhancer.agcEnabled || audioEnhancer.nsEnabled) {
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION
             } else {
                 MediaRecorder.AudioSource.VOICE_RECOGNITION
@@ -338,10 +355,11 @@ class AudioService {
                 }
             }
 
-            // 初始化并启用 AEC（声学回声消除）
-            // 参考 ESP32 audio_service.cc EnableDeviceAec()
-            if (aecEnabled) {
-                initAec()
+            // 初始化 AudioFX 增强器（AEC + AGC + 降噪一体）
+            // 参考 ESP32 audio_service.cc EnableDeviceAec() + AFE 配置
+            if (audioEnhancer.aecEnabled || audioEnhancer.agcEnabled || audioEnhancer.nsEnabled) {
+                val sessionId = audioRecord?.audioSessionId ?: 0
+                if (sessionId > 0) audioEnhancer.init(sessionId)
             }
 
             isRecording.set(true)
@@ -406,7 +424,7 @@ class AudioService {
             }
             recordingThread?.start()
 
-            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, AEC: $aecEnabled, 音频源: ${if (aecEnabled) "VOICE_COMMUNICATION" else "VOICE_RECOGNITION"}")
+            Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 增强: ${audioEnhancer.getStatusSummary()}, 音频源: ${if (audioEnhancer.isActive) "VOICE_COMMUNICATION" else "VOICE_RECOGNITION"}")
             return true
         } catch (e: SecurityException) {
             Logger.e(TAG, "录音权限被拒绝: ${e.message}")
@@ -414,42 +432,6 @@ class AudioService {
         } catch (e: Exception) {
             Logger.e(TAG, "录音启动失败: ${e.message}")
             return false
-        }
-    }
-
-    /**
-     * 初始化 AEC（声学回声消除）
-     * 参考 ESP32 audio_service.cc EnableDeviceAec()
-     * 使用 Android AcousticEchoCanceler API 对麦克风采集的音频进行回声消除
-     */
-    private fun initAec() {
-        if (!isAecSupported()) {
-            Logger.w(TAG, "设备不支持 AEC（AcousticEchoCanceler）")
-            return
-        }
-
-        try {
-            val sessionId = audioRecord?.audioSessionId ?: 0
-            if (sessionId == 0) {
-                Logger.w(TAG, "AudioRecord session ID 为 0，无法创建 AEC")
-                return
-            }
-
-            // 释放旧的 AEC
-            acousticEchoCanceler?.release()
-            acousticEchoCanceler = null
-
-            acousticEchoCanceler = AcousticEchoCanceler.create(sessionId)
-            if (acousticEchoCanceler != null) {
-                acousticEchoCanceler?.enabled = aecEnabled
-                Logger.i(TAG, "AcousticEchoCanceler 初始化成功, sessionId=$sessionId, enabled=$aecEnabled")
-            } else {
-                Logger.w(TAG, "AcousticEchoCanceler.create() 返回 null")
-            }
-        } catch (e: Exception) {
-            Logger.e(TAG, "AEC 初始化失败: ${e.message}")
-            acousticEchoCanceler?.release()
-            acousticEchoCanceler = null
         }
     }
 
@@ -486,11 +468,8 @@ class AudioService {
             audioRecord?.release()
         } catch (_: Exception) {}
         audioRecord = null
-        // 5. 释放 AEC
-        try {
-            acousticEchoCanceler?.release()
-        } catch (_: Exception) {}
-        acousticEchoCanceler = null
+        // 5. 释放 AudioFX 增强器（AEC+AGC+NS）
+        audioEnhancer.release()
 
         // 6. 停止唤醒词检测（如果正在运行）
         stopWakeWordDetection()
