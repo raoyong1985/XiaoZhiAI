@@ -78,6 +78,10 @@ class GroupChatViewModel : ViewModel() {
         private val GOODBYE_KEYWORDS = listOf("再见", "拜拜", "下次聊", "不打扰", "回头聊", "bye", "goodbye")
         private const val AUDIO_DRAIN_TIMEOUT_MS = 3000L
         private const val AUDIO_DRAIN_SILENCE_MS = 300L
+        /** 同时保留的最大解码器数，防止 AudioTrack 耗尽 */
+        private const val MAX_DECODERS = 6
+        /** 音频转发缓冲单 bot 上限（防止内存持续增长） */
+        private const val MAX_FORWARD_BUFFER_SIZE = 200
     }
 
     init {
@@ -357,7 +361,11 @@ class GroupChatViewModel : ViewModel() {
                     }
                 } else existingDecoder
                 finalDecoder.decodePacket(audioData)
-                audioForwardBuffer.getOrPut(botId) { mutableListOf() }.add(audioData)
+                val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
+                buf.add(audioData)
+                if (buf.size > MAX_FORWARD_BUFFER_SIZE) {
+                    buf.removeAt(0) // 超出上限时丢弃最早的数据
+                }
             }
         }
 
@@ -684,9 +692,18 @@ class GroupChatViewModel : ViewModel() {
 
     private fun releaseOldDecoders() {
         val currentId = relayState.currentBotId
+        // 保留 currentId 的 decoder，释放其余
         val toRelease = botAudioDecoders.filterKeys { it != currentId }
-        toRelease.values.forEach { if (!it.isReleased) it.release() }
-        botAudioDecoders.keys.removeAll(toRelease.keys)
+        val targetSize = maxOf(1, MAX_DECODERS - 1) // 当前 speaker 占 1 个
+        val evict = if (toRelease.size > targetSize) {
+            val sorted = toRelease.keys.sorted()
+            sorted.take(toRelease.size - targetSize)
+        } else emptyList()
+
+        val toRemove = if (evict.isNotEmpty()) toRelease.filterKeys { it in evict } else toRelease
+        if (evict.isNotEmpty()) android.util.Log.w(TAG, "解码器超上限(${botAudioDecoders.size}>$MAX_DECODERS)，淘汰 ${evict.size} 个")
+        toRemove.values.forEach { if (!it.isReleased) it.release() }
+        botAudioDecoders.keys.removeAll(toRemove.keys)
     }
 
     // ── 音频转发 ──
