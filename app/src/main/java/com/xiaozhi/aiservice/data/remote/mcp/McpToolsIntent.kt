@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.provider.AlarmClock
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -217,7 +219,7 @@ fun registerIntentTools() {
         if (ActivityCompat.checkSelfPermission(AppContainer.context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            throw Exception("未授予通知权限（POST_NOTIFICATIONS），请在设置中开启")
+            openAppPermissionSettings("通知权限不足")
         }
         NotificationManagerCompat.from(AppContainer.context).notify(
             System.currentTimeMillis().toInt(), notification
@@ -637,7 +639,22 @@ fun registerIntentTools() {
             ?: throw Exception("此设备不支持 WiFi")
 
         try {
-            wifiManager.isWifiEnabled = enable
+            // Android 10+ (API 29+) 禁止应用直接开关 WiFi
+            if (Build.VERSION.SDK_INT >= 29) {
+                // 尝试通过 Settings.Global 开关（需 WRITE_SETTINGS 特殊权限）
+                if (ensureWriteSettingsOrGuide()) {
+                    Settings.Global.putInt(ctx.contentResolver, Settings.Global.WIFI_ON, if (enable) 1 else 0)
+                } else {
+                    return@registerTool JsonObject().apply {
+                        addProperty("success", false)
+                        addProperty("enabled", enable)
+                        addProperty("via_settings_panel", true)
+                        addProperty("message", "已打开「修改系统设置」权限页面，请手动开启「允许修改系统设置」开关，然后重试")
+                    }
+                }
+            } else {
+                wifiManager.isWifiEnabled = enable
+            }
             JsonObject().apply {
                 addProperty("success", true)
                 addProperty("enabled", enable)

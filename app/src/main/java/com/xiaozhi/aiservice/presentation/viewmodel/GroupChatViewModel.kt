@@ -518,6 +518,7 @@ class GroupChatViewModel : ViewModel() {
         }
 
         val prevIndex = rs.currentSpeakerIndex
+        val prevBotId = rs.botIds.getOrNull(prevIndex)
         val candidates = resolveSpeakerCandidates(prevIndex, previousReply, rs.botIds)
 
         val connected = candidates.filter { (_, id) ->
@@ -530,7 +531,7 @@ class GroupChatViewModel : ViewModel() {
             val service = botConnections[speakerId] ?: continue
             relayState = relayState.moveToSpeaker(targetIndex)
 
-            val audioOk = forwardAudioToBot(prevIndex, service)
+            val audioOk = forwardAudioToBot(prevBotId, service)
             if (audioOk) {
                 android.util.Log.i(TAG, "等待 $speakerId 开始说话 (10s超时)")
                 val startConfirmed = withTimeoutOrNull(10_000) {
@@ -549,7 +550,7 @@ class GroupChatViewModel : ViewModel() {
                     if (previousReply.isNotBlank()) {
                         relayState = relayState.copy(originalUserQuery = previousReply.take(20))
                     }
-                    audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
+                    audioForwardBuffer.remove(prevBotId)
                     android.util.Log.i(TAG, "音频转发成功 → $speakerId fwd=${relayState.forwardRound}")
                     return
                 }
@@ -570,7 +571,7 @@ class GroupChatViewModel : ViewModel() {
                     continue
                 }
                 // 文字兜底前清理旧音频缓存，防止新旧数据混合
-                audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
+                audioForwardBuffer.remove(prevBotId)
                 android.util.Log.i(TAG, "文字兜底 ${textToSend.length}字 → $speakerId: '$textToSend'")
                 try {
                     service.sendTextContent(textToSend)
@@ -594,23 +595,39 @@ class GroupChatViewModel : ViewModel() {
             }
         }
 
-        audioForwardBuffer.remove(rs.botIds.getOrNull(prevIndex))
+        audioForwardBuffer.remove(prevBotId)
         android.util.Log.w(TAG, "无可用bot转发，跳过本轮")
-        relayState = rs.clearWaiting().copy(
-            currentSpeakerIndex = rs.botIds.indexOf(rs.botIds.firstOrNull()).coerceAtLeast(0)
-        )
+        relayState = rs.clearWaiting()
+        val firstAlive = relayState.botIds.firstOrNull()
+        if (firstAlive != null) {
+            relayState = relayState.copy(
+                currentSpeakerIndex = relayState.botIds.indexOf(firstAlive).coerceAtLeast(0)
+            )
+        }
     }
 
     // ── 智能 speaker 选择 ──
     private fun resolveSpeakerCandidates(prevIndex: Int, previousReply: String, botIds: List<String>): List<Pair<Int, String>> {
         if (botIds.isEmpty()) return emptyList()
-        data class Candidate(val index: Int, val id: String, var score: Float)
-        val candidates = botIds.indices
-            .filter { it != prevIndex && !deadBotIds.contains(botIds[it]) }
-            .map { Candidate(it, botIds[it], 0f) }
-        if (candidates.isEmpty()) return emptyList()
+
+        // 过滤死 bot，压缩索引 —— 返回 compacted 索引，避免指向死 bot
+        val aliveBotIds = botIds.filter { !deadBotIds.contains(it) }
+        if (aliveBotIds.isEmpty()) return emptyList()
 
         val rs = relayState
+
+        // 重映射 prevIndex 和 spokenInThisRound 到压缩后的索引
+        val prevBotId = botIds.getOrNull(prevIndex)
+        val compactedPrevIndex = if (prevBotId != null) aliveBotIds.indexOf(prevBotId) else -1
+        val compactedSpoken = rs.spokenInThisRound.mapNotNull { i ->
+            botIds.getOrNull(i)?.let { aliveBotIds.indexOf(it) }
+        }.filter { it >= 0 }.toSet()
+
+        data class Candidate(val index: Int, val id: String, var score: Float)
+        val candidates = aliveBotIds.indices
+            .filter { it != compactedPrevIndex }
+            .map { Candidate(it, aliveBotIds[it], 0f) }
+        if (candidates.isEmpty()) return emptyList()
 
         if (previousReply.isNotBlank()) {
             val mentionMatch = Regex("@([\\w\\u4e00-\\u9fff]+)").find(previousReply)
@@ -632,18 +649,28 @@ class GroupChatViewModel : ViewModel() {
         }
 
         candidates.forEach { c ->
-            if (c.index !in rs.spokenInThisRound) c.score += 20f
+            if (c.index !in compactedSpoken) c.score += 20f
         }
         candidates.forEach { c -> c.score += (Math.random().toFloat() * 15f) }
 
         val sorted = candidates.sortedWith(compareByDescending<Candidate> { it.score }
             .thenBy { Math.random() })
 
-        // spokenInThisRound 重置
-        val allSpoken = sorted.all { it.index in rs.spokenInThisRound }
-        val forceReset = rs.spokenRoundCounter >= maxOf(botIds.size * 2, 4)
+        // 压缩索引后的 spokenInThisRound 重置
+        val allSpoken = sorted.all { it.index in compactedSpoken }
+        val forceReset = rs.spokenRoundCounter >= maxOf(aliveBotIds.size * 2, 4)
         if (allSpoken || forceReset) {
-            relayState = relayState.resetSpokenRound()
+            relayState = rs.copy(
+                botIds = aliveBotIds,
+                spokenInThisRound = emptySet(),
+                spokenRoundCounter = 0
+            )
+        } else {
+            // 更新 relayState.botIds 为压缩后的列表，保持索引一致
+            relayState = rs.copy(
+                botIds = aliveBotIds,
+                spokenInThisRound = compactedSpoken
+            )
         }
 
         return sorted.map { it.index to it.id }
@@ -717,7 +744,7 @@ class GroupChatViewModel : ViewModel() {
     }
 
     // ── 音频转发 ──
-    private suspend fun forwardAudioToBot(prevIndex: Int, service: XiaoZhiBackendService): Boolean {
+    private suspend fun forwardAudioToBot(prevBotId: String?, service: XiaoZhiBackendService): Boolean {
         // 用户正在录音时禁止转发音频，避免录音与音频发送冲突
         if (_isRecording.value) {
             android.util.Log.w(TAG, "用户正在录音，跳过音频转发")
@@ -728,7 +755,7 @@ class GroupChatViewModel : ViewModel() {
             android.util.Log.w(TAG, "音频转发失败：WebSocket未连接")
             return false
         }
-        val prevBotId = relayState.botIds.getOrNull(prevIndex) ?: return false
+        if (prevBotId == null) return false
         val cachedList = audioForwardBuffer[prevBotId] ?: return false
         if (cachedList.isEmpty()) return false
         val cachedOpus = cachedList.toList()

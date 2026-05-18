@@ -27,7 +27,7 @@ fun registerCameraTool() {
                 context, Manifest.permission.CAMERA
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            throw Exception("未授予相机权限，请在系统设置中开启相机权限")
+            openAppPermissionSettings("相机权限不足")
         }
 
         // 启动拍照 Activity 并等待结果

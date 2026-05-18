@@ -4,6 +4,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.mcp.registerBasicTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerCameraTool
+import com.xiaozhi.aiservice.data.remote.mcp.registerExtraTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerIntentTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerLocationTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerNetworkTools
@@ -30,6 +31,7 @@ object MCPToolRegistry {
         registerIntentTools()
         registerXiaozhiTools()
         registerCameraTool()
+        registerExtraTools()
     }
 
     fun registerTool(

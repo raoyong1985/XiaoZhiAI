@@ -187,8 +187,8 @@ class ConnectionRepositoryImpl(
                             weStartedRecording = false
                             return@withLock
                         }
-                        Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听")
-                        restartListeningAfterSpeaking("realtime", enableVAD = false)
+                        Logger.i(TAG, "Realtime 模式：AI 说完话，等待播放排空后重启监听（启用VAD防回声）")
+                        restartListeningAfterSpeaking("realtime", enableVAD = true)
                     }
                 }
             }
@@ -543,8 +543,13 @@ class ConnectionRepositoryImpl(
             }
             hadData = true
         }
-        if (hadData) delay(200)
-        Logger.i(TAG, "drainAndFlushPlayback 完成（自然排空，${if (hadData) "有数据需等待" else "无数据跳过"}）")
+        if (hadData) {
+            // 等硬件 AudioTrack 缓冲排空，防止麦克风采集到扬声器残留音频
+            delay(800)
+            Logger.i(TAG, "drainAndFlushPlayback 完成（等待 ${if (hadData) "800ms 硬件排空" else "无数据跳过"}）")
+        } else {
+            Logger.i(TAG, "drainAndFlushPlayback 完成（无数据跳过）")
+        }
     }
 
     /**

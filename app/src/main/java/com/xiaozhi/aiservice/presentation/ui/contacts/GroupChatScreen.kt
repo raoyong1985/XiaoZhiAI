@@ -268,17 +268,28 @@ private fun GroupChatInputArea(
                                 value = inputText,
                                 onValueChange = onInputTextChange,
                                 modifier = Modifier.weight(1f),
-                                placeholder = { Text("输入消息...") },
+                                placeholder = { Text("输入消息...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                                 singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                    cursorColor = MaterialTheme.colorScheme.primary,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium,
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                 keyboardActions = KeyboardActions(onSend = { onSendText() })
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             FilledIconButton(
                                 onClick = onSendText,
-                                enabled = inputText.isNotBlank()
+                                enabled = inputText.isNotBlank(),
+                                modifier = Modifier.size(52.dp),
+                                shape = RoundedCornerShape(14.dp)
                             ) {
-                                Icon(Icons.Default.Send, contentDescription = "发送")
+                                Icon(Icons.Default.Send, contentDescription = "发送", modifier = Modifier.size(24.dp))
                             }
                         }
                     }

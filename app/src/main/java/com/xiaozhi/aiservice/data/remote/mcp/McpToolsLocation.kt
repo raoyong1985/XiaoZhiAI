@@ -1,8 +1,12 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
+import com.xiaozhi.aiservice.di.AppContainer
 
 fun registerLocationTools() {
     MCPToolRegistry.registerTool(
@@ -10,6 +14,11 @@ fun registerLocationTools() {
         description = "获取设备当前地理位置（经纬度），需要定位权限",
         inputSchema = jsonSchema()
     ) { _ ->
+        val ctx = AppContainer.context
+        if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            openAppPermissionSettings("定位权限不足")
+        }
         val loc = getCurrentLocation()
         if (loc != null) {
             JsonObject().apply {

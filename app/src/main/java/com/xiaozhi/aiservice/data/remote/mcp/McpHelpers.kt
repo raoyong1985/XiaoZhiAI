@@ -2,7 +2,9 @@ package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -322,7 +324,7 @@ object CalendarHelper {
         val context = AppContainer.context
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED
-        ) { throw Exception("未授予日历读取权限（READ_CALENDAR），请在设置中开启") }
+        ) { openAppPermissionSettings("日历读取权限不足") }
 
         val dateFmt = dateOnlyFmt.get()!!
         val dateTimeFormat = dateTimeFmt.get()!!
@@ -383,6 +385,36 @@ object CalendarHelper {
         }
         return events
     }
+}
+
+// ========== 通讯录查询 ==========
+
+/**
+ * 跳转到应用权限设置页面，引导用户开启指定权限
+ */
+fun openAppPermissionSettings(message: String): Nothing {
+    val ctx = AppContainer.context
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = android.net.Uri.fromParts("package", ctx.packageName, null)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    }
+    ctx.startActivity(intent)
+    throw Exception("$message 已打开应用权限设置，请手动开启后重试")
+}
+
+/**
+ * 检查并引导 WRITE_SETTINGS 特殊权限
+ */
+fun ensureWriteSettingsOrGuide(): Boolean {
+    val ctx = AppContainer.context
+    if (Settings.System.canWrite(ctx)) return true
+    // 引导用户去系统设置中开启
+    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+        data = android.net.Uri.fromParts("package", ctx.packageName, null)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    }
+    ctx.startActivity(intent)
+    return false
 }
 
 // ========== 通讯录查询 ==========

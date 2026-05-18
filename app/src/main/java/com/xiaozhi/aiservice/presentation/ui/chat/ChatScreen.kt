@@ -440,8 +440,17 @@ private fun ChatInputArea(
                                     value = text,
                                     onValueChange = { text = it },
                                     modifier = Modifier.weight(1f),
-                                    placeholder = { Text("输入消息...") },
+                                    placeholder = { Text("输入消息...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                                     singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                        cursorColor = MaterialTheme.colorScheme.primary,
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    textStyle = MaterialTheme.typography.bodyMedium,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
@@ -459,7 +468,7 @@ private fun ChatInputArea(
                                         }
                                     )
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 FilledIconButton(
                                     onClick = {
                                         val isOffline = connectionState is ConnectionState.Disconnected ||
@@ -474,26 +483,16 @@ private fun ChatInputArea(
                                             text = ""
                                         }
                                     },
-                                    enabled = text.isNotBlank() && !isAiWorking && !sending
+                                    enabled = text.isNotBlank() && !isAiWorking && !sending,
+                                    modifier = Modifier.size(52.dp),
+                                    shape = RoundedCornerShape(14.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Send,
-                                        contentDescription = "发送"
+                                        contentDescription = "发送",
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
-                            }
-                            // AI工作中时的提示文字（文字模式下显示）
-                            if (isAiWorking && inputMode == 1) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = when (aiState) {
-                                        AiState.PROCESSING -> "思考中..."
-                                        AiState.SPEAKING -> "正在回答..."
-                                        else -> ""  // LISTENING 在文本模式下无意义，不显示
-                                    },
-                                    fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
                             }
                         }
                     }

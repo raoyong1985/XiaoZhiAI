@@ -7,6 +7,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
+import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import com.xiaozhi.aiservice.di.AppContainer
 
 fun registerNetworkTools() {
@@ -57,10 +58,10 @@ fun registerNetworkTools() {
         inputSchema = jsonSchema()
     ) { _ ->
         try {
-            val text = httpGet("https://httpbin.org/ip", timeoutMs = 5000)
+            val text = httpGet("https://api.ipify.org?format=json", timeoutMs = 5000)
             if (text.isEmpty()) throw Exception("请求失败")
             val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-            val ip = json?.get("origin")?.asString ?: text.trim()
+            val ip = json?.get("ip")?.asString ?: text.trim()
             val locText = httpGet("https://ipapi.co/$ip/json/", timeoutMs = 5000)
             var city = ""; var country = ""; var isp = ""
             try {
@@ -119,9 +120,12 @@ fun registerNetworkTools() {
         val country = (args["country"] as? String)?.lowercase()?.takeIf { it.isNotBlank() } ?: "cn"
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 20) ?: 5
         val catParam = if (category == "top") "" else "&category=$category"
-        val url = "https://newsapi.org/v2/top-headlines?country=$country$catParam&pageSize=$maxResults&apiKey=***"
+        val newsApiKey = DeviceSettings.getNewsApiKey(AppContainer.context)
+        val url = if (newsApiKey.isNotBlank()) {
+            "https://newsapi.org/v2/top-headlines?country=$country$catParam&pageSize=$maxResults&apiKey=$newsApiKey"
+        } else ""
         try {
-            var text = httpGet(url, timeoutMs = 6000)
+            var text = if (url.isNotEmpty()) httpGet(url, timeoutMs = 6000) else ""
             var json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
             var articles = json?.getAsJsonArray("articles")
             if (articles == null || articles.size() == 0) {

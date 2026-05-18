@@ -42,6 +42,10 @@ object DeviceSettings {
     /** 唤醒词类型, 对应 ESP32 wake_word_type */
     const val KEY_WAKE_WORD_TYPE = "wake_word_type"
 
+    // ===== API密钥 =====
+    /** NewsAPI密钥 */
+    const val KEY_NEWS_API_KEY = "news_api_key"
+
     /**
      * AEC模式枚举 (与 ESP32 AecMode 对应)
      */
@@ -120,6 +124,14 @@ object DeviceSettings {
     @JvmStatic
     fun setAecMode(ctx: Context, mode: AecMode) =
         Settings(ctx, NS).setString(KEY_AEC_MODE, mode.value)
+
+    @JvmStatic
+    fun getNewsApiKey(ctx: Context): String =
+        Settings(ctx, NS).getString(KEY_NEWS_API_KEY, "")
+
+    @JvmStatic
+    fun setNewsApiKey(ctx: Context, value: String) =
+        Settings(ctx, NS).setString(KEY_NEWS_API_KEY, value)
 
     /**
      * 清除所有设备配置 (用于重置/切换账号)
