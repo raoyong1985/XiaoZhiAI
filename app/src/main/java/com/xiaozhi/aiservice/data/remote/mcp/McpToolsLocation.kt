@@ -15,10 +15,12 @@ fun registerLocationTools() {
         inputSchema = jsonSchema()
     ) { _ ->
         val ctx = AppContainer.context
-        if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            openAppPermissionSettings("定位权限不足")
-        }
+        val permCheck = checkPermissionWithGuide(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            permissionName = "位置信息"
+        )
+        if (permCheck != null) return@registerTool permCheck
         val loc = getCurrentLocation()
         if (loc != null) {
             JsonObject().apply {

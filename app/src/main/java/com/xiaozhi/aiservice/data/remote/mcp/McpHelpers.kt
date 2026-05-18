@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -322,9 +324,10 @@ object CalendarHelper {
 
     fun getEvents(startDate: String?, endDate: String?, maxResults: Int): List<CalendarEvent> {
         val context = AppContainer.context
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
-            != PackageManager.PERMISSION_GRANTED
-        ) { openAppPermissionSettings("日历读取权限不足") }
+        val calPerm = checkPermissionWithGuide(
+            Manifest.permission.READ_CALENDAR, permissionName = "日历"
+        )
+        if (calPerm != null) throw Exception("权限不足")  // getEvents 需同步返回，这里保持 throw 兼容
 
         val dateFmt = dateOnlyFmt.get()!!
         val dateTimeFormat = dateTimeFmt.get()!!
@@ -390,15 +393,75 @@ object CalendarHelper {
 // ========== 通讯录查询 ==========
 
 /**
- * 跳转到应用权限设置页面，引导用户开启指定权限
+ * 发送通知引导用户开启权限，并返回标准的权限不足 JSON
+ * 在后台服务中无法可靠地 startActivity，用通知替代
+ */
+fun sendPermissionGuideNotification(permissionName: String): JsonObject {
+    val ctx = AppContainer.context
+    val channelId = "permission_guide"
+    ensureNotificationChannel(channelId)
+
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = android.net.Uri.fromParts("package", ctx.packageName, null)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pendingIntent = android.app.PendingIntent.getActivity(
+        ctx, System.currentTimeMillis().toInt(), intent,
+        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val notification = NotificationCompat.Builder(ctx, channelId)
+        .setSmallIcon(android.R.drawable.ic_lock_lock)
+        .setContentTitle("小智 AI - 需要 $permissionName 权限")
+        .setContentText("点击前往设置开启「$permissionName」权限")
+        .setContentIntent(pendingIntent)
+        .setAutoCancel(true)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .build()
+
+    try {
+        NotificationManagerCompat.from(ctx).notify(
+            (System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification
+        )
+    } catch (_: Exception) {}
+
+    return JsonObject().apply {
+        addProperty("success", false)
+        addProperty("error", "permission_denied")
+        addProperty("permission", permissionName)
+        addProperty("message", "需要「$permissionName」权限，已发送通知提醒，请点击通知前往系统设置开启")
+    }
+}
+
+/**
+ * 通用权限检查 + 通知引导。权限不足时发送通知 → 返回 JsonObject 让调用方 return
+ * 用法: if (permMissing) return@registerTool checkPermissionWithGuide("相机")
+ */
+fun checkPermissionWithGuide(
+    permission: String,
+    vararg permissions: String,
+    permissionName: String
+): JsonObject? {
+    val ctx = AppContainer.context
+    val allGranted = (listOf(permission) + permissions).all { p ->
+        ActivityCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
+    }
+    if (allGranted) return null
+    return sendPermissionGuideNotification(permissionName)
+}
+
+/**
+ * 旧版兼容：跳转到应用权限设置页面（只在应用可见时有效）
  */
 fun openAppPermissionSettings(message: String): Nothing {
     val ctx = AppContainer.context
-    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-        data = android.net.Uri.fromParts("package", ctx.packageName, null)
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-    }
-    ctx.startActivity(intent)
+    try {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.fromParts("package", ctx.packageName, null)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        ctx.startActivity(intent)
+    } catch (_: Exception) {}
     throw Exception("$message 已打开应用权限设置，请手动开启后重试")
 }
 
@@ -432,26 +495,57 @@ fun lookupContactNumber(context: Context, contactName: String): String {
         android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
         android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
     )
-    val nameLower = contactName.lowercase()
+    val nameTrimmed = contactName.trim()
+    val nameClean = nameTrimmed.replace(Regex("[\\s\\-_.（）()]+"), "")
 
-    // 先精确匹配
+    // 策略1: 精确匹配
     val exactSelection = "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} = ?"
-    context.contentResolver.query(uri, projection, exactSelection, arrayOf(contactName), null)?.use { cursor ->
+    context.contentResolver.query(uri, projection, exactSelection, arrayOf(nameTrimmed), null)?.use { cursor ->
         while (cursor.moveToNext()) {
             val number = cursor.getString(1).replace(Regex("[\\s\\-]"), "")
             if (number.isNotEmpty()) return number
         }
     }
 
-    // 再模糊匹配
-    val fuzzySelection = "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
-    context.contentResolver.query(uri, projection, fuzzySelection, arrayOf("%$contactName%"), null)?.use { cursor ->
+    // 策略2: LIKE 模糊匹配（包含）
+    val likeSelection = "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+    context.contentResolver.query(uri, projection, likeSelection, arrayOf("%$nameTrimmed%"), null)?.use { cursor ->
+        while (cursor.moveToNext()) {
+            val number = cursor.getString(1).replace(Regex("[\\s\\-]"), "")
+            if (number.isNotEmpty()) return number
+        }
+    }
+
+    // 策略3: 去特殊字符后精确匹配（"张三" vs "张三(家)"）
+    val allRows = mutableListOf<Pair<String, String>>()
+    context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
         while (cursor.moveToNext()) {
             val name = cursor.getString(0) ?: ""
             val number = cursor.getString(1).replace(Regex("[\\s\\-]"), "")
-            if (number.isNotEmpty()) return number
+            if (number.isNotEmpty()) allRows.add(name to number)
         }
     }
 
+    // 去特殊字符匹配
+    for ((name, number) in allRows) {
+        if (name.replace(Regex("[\\s\\-_.（）()\\[\\]【】]+"), "").contains(nameClean, ignoreCase = true) ||
+            nameClean.contains(name.replace(Regex("[\\s\\-_.（）()\\[\\]【】]+"), ""), ignoreCase = true)
+        ) {
+            android.util.Log.i("ContactLookup", "模糊匹配成功: '$name' -> $number (查询: $contactName)")
+            return number
+        }
+    }
+
+    // 策略4: 前缀匹配（"爸" → "爸爸", "张" → "张三"）
+    for ((name, number) in allRows) {
+        if (name.startsWith(nameTrimmed, ignoreCase = true) ||
+            nameTrimmed.startsWith(name, ignoreCase = true)
+        ) {
+            android.util.Log.i("ContactLookup", "前缀匹配成功: '$name' -> $number (查询: $contactName)")
+            return number
+        }
+    }
+
+    android.util.Log.w("ContactLookup", "未找到联系人: $contactName (通讯录共${allRows.size}条)")
     return ""
 }

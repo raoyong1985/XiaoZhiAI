@@ -55,6 +55,12 @@
     <!-- Phone calls -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
+    <!-- Contacts lookup for ai_make_call -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Phone state - for ai_make_call call status monitoring -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
     <!-- SMS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
 

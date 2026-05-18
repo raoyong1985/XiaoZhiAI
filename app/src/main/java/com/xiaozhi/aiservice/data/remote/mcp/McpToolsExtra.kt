@@ -223,12 +223,12 @@ fun registerExtraTools() {
 
         // 检查权限
         if (Build.VERSION.SDK_INT >= 31) {
-            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_SCAN)
-                != PackageManager.PERMISSION_GRANTED
-            ) openAppPermissionSettings("蓝牙扫描权限不足（BLUETOOTH_SCAN）")
-            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED
-            ) openAppPermissionSettings("蓝牙连接权限不足（BLUETOOTH_CONNECT）")
+            val btPerm = checkPermissionWithGuide(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                permissionName = "蓝牙"
+            )
+            if (btPerm != null) return@registerTool btPerm
         }
 
         val adapter = BluetoothAdapter.getDefaultAdapter()

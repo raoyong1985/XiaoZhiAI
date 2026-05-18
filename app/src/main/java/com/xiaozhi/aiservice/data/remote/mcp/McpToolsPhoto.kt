@@ -23,12 +23,10 @@ fun registerCameraTool() {
         val context = AppContainer.context
 
         // 检查相机权限
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                context, Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            openAppPermissionSettings("相机权限不足")
-        }
+        val permCheck = checkPermissionWithGuide(
+            Manifest.permission.CAMERA, permissionName = "相机"
+        )
+        if (permCheck != null) return@registerTool permCheck
 
         // 启动拍照 Activity 并等待结果
         val deferred = kotlinx.coroutines.CompletableDeferred<String>()

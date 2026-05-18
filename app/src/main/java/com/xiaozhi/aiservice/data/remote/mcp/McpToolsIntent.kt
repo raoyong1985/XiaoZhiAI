@@ -216,11 +216,10 @@ fun registerIntentTools() {
             .setAutoCancel(true)
             .build()
 
-        if (ActivityCompat.checkSelfPermission(AppContainer.context, Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            openAppPermissionSettings("通知权限不足")
-        }
+        val notifPerm = checkPermissionWithGuide(
+            Manifest.permission.POST_NOTIFICATIONS, permissionName = "通知"
+        )
+        if (notifPerm != null) return@registerTool notifPerm
         NotificationManagerCompat.from(AppContainer.context).notify(
             System.currentTimeMillis().toInt(), notification
         )
@@ -466,22 +465,10 @@ fun registerIntentTools() {
 
         if (direct) {
             // 直接呼叫（需要 CALL_PHONE 权限）
-            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                // 无权限，降级到 ACTION_DIAL
-                val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null)).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true)
-                    addProperty("phone_number", number)
-                    addProperty("name", name)
-                    addProperty("direct", false)
-                    addProperty("message", "未授予通话权限，已打开拨号界面: $displayName")
-                }
-            }
+            val callPerm = checkPermissionWithGuide(
+                Manifest.permission.CALL_PHONE, permissionName = "通话"
+            )
+            if (callPerm != null) return@registerTool callPerm
             val intent = Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", number, null)).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
