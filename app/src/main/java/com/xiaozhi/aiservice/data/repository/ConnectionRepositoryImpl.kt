@@ -5,7 +5,7 @@ import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
-import com.xiaozhi.aiservice.data.audio.OpusEncoder
+import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.audio.WakeWordDetector
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.AiState
@@ -80,8 +80,8 @@ class ConnectionRepositoryImpl(
 
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private var opusDecoder: NativeOpusDecoder? = null
-    // Opus 编码器（录音用）
-    private var opusEncoder: OpusEncoder? = null
+    // 录音管理器
+    private val audioRecorder = AudioRecorder(audioService)
 
     // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
     private val stateMutex = Mutex()
@@ -120,9 +120,7 @@ class ConnectionRepositoryImpl(
                     if (newAiState == AiState.SPEAKING && oldAiState == AiState.LISTENING && isAutoMode) {
                         Logger.i(TAG, "AUTO 模式：TTS 开始（从 LISTENING → SPEAKING），停止 encoder 防止回声")
                         _deviceState.value = DeviceState.SPEAKING
-                        audioService.stopRecording()
-                        opusEncoder?.stop()
-                        opusEncoder = null
+                        audioRecorder.stop()
                         weStartedRecording = false
                         // 不发送 abort，服务器知道我们在 listening 状态
                         _aiState.value = newAiState
@@ -134,10 +132,8 @@ class ConnectionRepositoryImpl(
                     if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
                         Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声（保留 AI 回复）")
                         _deviceState.value = DeviceState.SPEAKING
-                        audioService.stopRecording()
+                        audioRecorder.stop()
                         audioService.abandonAudioFocus()
-                        opusEncoder?.stop()
-                        opusEncoder = null
                         weStartedRecording = false
                     }
 
@@ -286,8 +282,7 @@ class ConnectionRepositoryImpl(
             _connectionState.value is ConnectionState.Connecting) {
             Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
-            opusEncoder?.stop()
-            opusEncoder = null
+            audioRecorder.stop()
             opusDecoder?.release()
             opusDecoder = null
             _connectionState.value = ConnectionState.Disconnected
@@ -316,8 +311,7 @@ class ConnectionRepositoryImpl(
     
     override suspend fun disconnect() {
         backendService.disconnect()
-        opusEncoder?.stop()
-        opusEncoder = null
+        audioRecorder.stop()
         opusDecoder?.release()
         opusDecoder = null
         _connectionState.value = ConnectionState.Disconnected
@@ -432,20 +426,13 @@ class ConnectionRepositoryImpl(
             // 注意：Realtime 模式需要 AEC 支持才能在说话时继续录音
             val enableVAD = listeningMode != VoiceMode.REALTIME
 
-            audioService.setOnSilenceDetected {
-                scope.launch { stopListening(userExplicitStop = false) }
-            }
-
-            val sampleRate = audioService.getSampleRate()
-            opusEncoder = OpusEncoder(sampleRate = sampleRate)
-            val encoder = opusEncoder
-            if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-                audioService.startRecording({ pcmData ->
-                    encoder.encode(pcmData)
-                }, enableVAD = enableVAD)
-            } else {
-                Logger.e(TAG, "Opus 编码器初始化失败")
-                opusEncoder = null
+            if (!audioRecorder.start(
+                    scope = scope,
+                    enableVAD = enableVAD,
+                    onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
+                    onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
+                )) {
+                Logger.e(TAG, "录音启动失败")
                 weStartedRecording = false
                 isAutoMode = false
                 _aiState.value = AiState.IDLE
@@ -462,9 +449,7 @@ class ConnectionRepositoryImpl(
 
             // AUTO 模式 VAD 自然结束：只停录音和 encoder，保持状态等 TTS
             val isAutoStop = !userExplicitStop && isAutoMode
-            audioService.stopRecording()
-            opusEncoder?.stop()
-            opusEncoder = null
+            audioRecorder.stop()
             weStartedRecording = false
 
             if (!isAutoStop) {
@@ -506,33 +491,24 @@ class ConnectionRepositoryImpl(
     private suspend fun restartListeningAfterSpeaking(mode: String, enableVAD: Boolean) {
         _deviceState.value = DeviceState.IDLE
         drainAndFlushPlayback()
-        var encoder = opusEncoder
-        if (encoder == null) {
-            val sampleRate = audioService.getSampleRate()
-            opusEncoder = OpusEncoder(sampleRate = sampleRate)
-            encoder = opusEncoder
+        if (audioService.isAecSupported()) {
+            audioService.setAecEnabled(true)
         }
-        if (encoder?.init { opusPacket -> scope.launch { sendAudio(opusPacket) } } == true) {
-            audioService.setOnSilenceDetected {
-                scope.launch { stopListening(userExplicitStop = false) }
-            }
-            if (audioService.isAecSupported()) {
-                audioService.setAecEnabled(true)
-            }
-            val encoderRef = encoder
-            audioService.startRecording({ pcmData ->
-                encoderRef.encode(pcmData)
-            }, enableVAD = enableVAD)
-            backendService.sendListenStart(mode)
-            _aiState.value = AiState.LISTENING
-            _deviceState.value = DeviceState.LISTENING
-            weStartedRecording = true
-            Logger.i(TAG, "${mode} 模式监听已重启")
-        } else {
+        if (!audioRecorder.start(
+                scope = scope,
+                enableVAD = enableVAD,
+                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
+                onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
+            )) {
             Logger.e(TAG, "${mode} 模式重启监听失败")
-            opusEncoder = null
             _aiState.value = AiState.IDLE
+            return
         }
+        backendService.sendListenStart(mode)
+        _aiState.value = AiState.LISTENING
+        _deviceState.value = DeviceState.LISTENING
+        weStartedRecording = true
+        Logger.i(TAG, "${mode} 模式监听已重启")
     }
 
     private suspend fun drainAndFlushPlayback() {

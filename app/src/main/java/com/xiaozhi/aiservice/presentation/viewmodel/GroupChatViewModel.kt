@@ -5,8 +5,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
-import com.xiaozhi.aiservice.data.audio.OpusEncoder
+import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
+import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.GroupChat
@@ -52,12 +53,10 @@ class GroupChatViewModel : ViewModel() {
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
-    private var opusEncoder: OpusEncoder? = null
     private val audioService = AppContainer.audioService
+    private val audioRecorder = AudioRecorder(audioService)
     private var currentGroupId = ""
     private var sttCollectorJob: Job? = null
-    private var recordingGeneration = 0
-    private var timeoutJob: Job? = null
     private var observeJob: Job? = null
     private var stuckRelayWatcher: Job? = null
 
@@ -225,53 +224,22 @@ class GroupChatViewModel : ViewModel() {
         )
         recentReplyKeys.clear()
 
-        recordingGeneration++
-        val currentGen = recordingGeneration
-
-        timeoutJob?.cancel()
-        timeoutJob = null
-        audioService.stopRecording()
-        opusEncoder?.stop()
-        opusEncoder = null
-
-        _isRecording.value = true
         service.sendListenStart("auto")
 
-        audioService.setOnSilenceDetected {
-            android.util.Log.i(TAG, "VAD触发")
-            if (recordingGeneration == currentGen) {
-                viewModelScope.launch { stopVoiceInput(userExplicitStop = false) }
-            }
-        }
-
-        timeoutJob = viewModelScope.launch {
-            delay(8_000)
-            if (_isRecording.value && recordingGeneration == currentGen) {
-                android.util.Log.w(TAG, "8秒超时触发")
-                stopVoiceInput(userExplicitStop = false)
-            }
-        }
-
-        val sampleRate = audioService.getSampleRate()
-        val encoder = OpusEncoder(sampleRate = sampleRate)
-        opusEncoder = encoder
-
-        if (!encoder.init { opusPacket -> service.sendAudio(opusPacket) }) {
-            android.util.Log.w(TAG, "编码器初始化失败")
-            service.sendListenStop()
-            opusEncoder = null
-            _isRecording.value = false
-            return
-        }
-
-        if (!audioService.startRecording({ pcmData -> encoder.encode(pcmData) }, enableVAD = true)) {
+        if (!audioRecorder.start(
+                scope = viewModelScope,
+                enableVAD = true,
+                onOpusPacket = { packet -> service.sendAudio(packet) },
+                onSilenceDetected = {
+                    android.util.Log.i(TAG, "VAD触发")
+                    viewModelScope.launch { stopVoiceInput(userExplicitStop = false) }
+                }
+            )) {
             android.util.Log.w(TAG, "录音启动失败")
             service.sendListenStop()
-            opusEncoder?.stop()
-            opusEncoder = null
-            _isRecording.value = false
             return
         }
+        _isRecording.value = true
 
         sttCollectorJob?.cancel()
         sttCollectorJob = viewModelScope.launch {
@@ -297,18 +265,13 @@ class GroupChatViewModel : ViewModel() {
         _isRecording.value = false
         android.util.Log.i(TAG, "停止录音 userExplicitStop=$userExplicitStop")
 
-        timeoutJob?.cancel()
-        timeoutJob = null
-
         if (userExplicitStop) {
             botConnections.forEach { (_, svc) ->
                 try { svc.sendAbort("user_stop") } catch (_: Exception) {}
             }
         }
 
-        audioService.stopRecording()
-        opusEncoder?.stop()
-        opusEncoder = null
+        audioRecorder.stop()
         audioService.abandonAudioFocus()
 
         try { botConnections[relayState.botIds.firstOrNull()]?.sendListenStopOnly() } catch (_: Exception) {}
@@ -362,8 +325,10 @@ class GroupChatViewModel : ViewModel() {
                             releaseOldDecoders()
                             val serverRate = service.getServerSampleRate()
                             val serverCh = service.getServerChannels()
-                            d = NativeOpusDecoder(serverRate, 16000, serverCh).also {
+                            val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                            d = NativeOpusDecoder(serverRate, 16000, serverCh, volume).also {
                                 it.init()
+                                if (volume < 100) it.setVolume(volume)
                                 botAudioDecoders[botId] = it
                             }
                         }
@@ -437,6 +402,8 @@ class GroupChatViewModel : ViewModel() {
                         android.util.Log.i(TAG, "[$botName] aiState=$state reply='${replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
 
                         if (state == "speaking") {
+                            // 请求音频焦点，确保其他应用降音量
+                            audioService.requestAudioFocus()
                             val botIndex = rs.botIds.indexOf(botId)
                             if (rs.waitingSpeakerIndex >= 0 && botIndex != rs.waitingSpeakerIndex && botIndex >= 0) {
                                 android.util.Log.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，丢弃音频")
@@ -455,11 +422,13 @@ class GroupChatViewModel : ViewModel() {
                             if (botAudioDecoders[botId] == null) {
                                 val serverRate = service.getServerSampleRate()
                                 val serverCh = service.getServerChannels()
-                                NativeOpusDecoder(serverRate, 16000, serverCh).also {
+                                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                                NativeOpusDecoder(serverRate, 16000, serverCh, volume).also {
                                     it.init()
+                                    if (volume < 100) it.setVolume(volume)
                                     botAudioDecoders[botId] = it
                                 }
-                                android.util.Log.i(TAG, "[$botName] 预创建解码器 (${serverRate}Hz)")
+                                android.util.Log.i(TAG, "[$botName] 预创建解码器 (${serverRate}Hz, 音量=$volume%)")
                             }
                         }
 
@@ -929,8 +898,7 @@ class GroupChatViewModel : ViewModel() {
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    fun disconnectGroup() {
         stopVoiceInput()
         sttCollectorJob?.cancel()
         stuckRelayWatcher?.cancel()
@@ -940,6 +908,17 @@ class GroupChatViewModel : ViewModel() {
         botObserverJobs.clear()
         botAudioDecoders.values.forEach { it.release() }
         botAudioDecoders.clear()
+        deadBotIds.clear()
+        audioForwardBuffer.clear()
+        botLastAudioTime.clear()
+        recentReplyKeys.clear()
+        relayState = RelayState()
+        android.util.Log.i(TAG, "disconnectGroup: 群聊资源已全部释放")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        disconnectGroup()
     }
 
     class Factory : ViewModelProvider.Factory {

@@ -64,6 +64,11 @@ fun GroupChatScreen(
     LaunchedEffect(groupId) {
         viewModel.connectGroup(groupId)
     }
+    DisposableEffect(groupId) {
+        onDispose {
+            viewModel.disconnectGroup()
+        }
+    }
 
     var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(messages.size) {
