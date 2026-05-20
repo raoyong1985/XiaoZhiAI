@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
-import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
+import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.settings.AudioSettings
@@ -30,7 +30,7 @@ class GroupChatViewModel : ViewModel() {
     private val contactsRepository = AppContainer.contactsRepository
 
     private val botConnections = ConcurrentHashMap<String, XiaoZhiBackendService>()
-    private val botAudioDecoders = ConcurrentHashMap<String, NativeOpusDecoder>()
+    private val playbackManager = AudioPlaybackManager()
     private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
     // ── 接龙状态（不可变 RelayState，每次变更用 copy） ──
@@ -109,8 +109,7 @@ class GroupChatViewModel : ViewModel() {
         botConnections.clear()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
-        botAudioDecoders.values.forEach { it.release() }
-        botAudioDecoders.clear()
+        playbackManager.releaseAll()
         deadBotIds.clear()
         relayState = RelayState()
         audioForwardBuffer.clear()
@@ -205,8 +204,7 @@ class GroupChatViewModel : ViewModel() {
         botConnections.forEach { (_, svc) ->
             try { svc.sendAbort("user_interrupt") } catch (_: Exception) {}
         }
-        botAudioDecoders.values.forEach { it.release() }
-        botAudioDecoders.clear()
+        playbackManager.releaseAll()
         // 不取消 botObserverJobs！监听器跨录音会话存活，
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
@@ -316,26 +314,19 @@ class GroupChatViewModel : ViewModel() {
                 val idx = rs.botIds.indexOf(botId)
                 if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) return@collect
 
-                val existingDecoder = botAudioDecoders[botId]
-                val finalDecoder = if (existingDecoder == null) {
+                val serverRate = service.getServerSampleRate()
+                val serverCh = service.getServerChannels()
+                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                if (!playbackManager.contains(botId)) {
                     drainPreviousDecodersBeforeSwitch()
                     speakerMutex.withLock {
-                        var d = botAudioDecoders[botId]
-                        if (d == null) {
+                        if (!playbackManager.contains(botId)) {
                             releaseOldDecoders()
-                            val serverRate = service.getServerSampleRate()
-                            val serverCh = service.getServerChannels()
-                            val volume = AudioSettings.getOutputVolume(AppContainer.context)
-                            d = NativeOpusDecoder(serverRate, 16000, serverCh, volume).also {
-                                it.init()
-                                if (volume < 100) it.setVolume(volume)
-                                botAudioDecoders[botId] = it
-                            }
+                            playbackManager.getOrCreate(botId, serverRate, serverCh, volume)
                         }
-                        d!!
                     }
-                } else existingDecoder
-                finalDecoder.decodePacket(audioData)
+                }
+                playbackManager.decodeAndPlay(botId, serverRate, serverCh, audioData, volume)
                 val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
                 buf.add(audioData)
                 if (buf.size > MAX_FORWARD_BUFFER_SIZE) {
@@ -419,15 +410,11 @@ class GroupChatViewModel : ViewModel() {
                                 }
                                 sttCollectorJob?.cancel()
                             }
-                            if (botAudioDecoders[botId] == null) {
+                            if (!playbackManager.contains(botId)) {
                                 val serverRate = service.getServerSampleRate()
                                 val serverCh = service.getServerChannels()
                                 val volume = AudioSettings.getOutputVolume(AppContainer.context)
-                                NativeOpusDecoder(serverRate, 16000, serverCh, volume).also {
-                                    it.init()
-                                    if (volume < 100) it.setVolume(volume)
-                                    botAudioDecoders[botId] = it
-                                }
+                                playbackManager.getOrCreate(botId, serverRate, serverCh, volume)
                                 android.util.Log.i(TAG, "[$botName] 预创建解码器 (${serverRate}Hz, 音量=$volume%)")
                             }
                         }
@@ -677,39 +664,25 @@ class GroupChatViewModel : ViewModel() {
             }
         }
         delay(500) // in-flight 包
-        val decoder = botAudioDecoders[prevBotId]
-        if (decoder != null && !decoder.isReleased) {
-            if (!decoder.waitForQueueEmpty(2000L)) {
-                android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
-            }
+        if (!playbackManager.waitForQueueEmpty(prevBotId, 2000L)) {
+            android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
         }
         delay(200) // AudioTrack 硬件缓冲补偿
     }
 
     private suspend fun drainPreviousDecodersBeforeSwitch() {
-        val currentId = relayState.currentBotId
-        for ((_, decoder) in botAudioDecoders.filterKeys { it != currentId }) {
-            if (decoder.isReleased) continue
-            if (!decoder.waitForQueueEmpty(2000L)) {
-                android.util.Log.w(TAG, "drainPreviousDecoders 超时")
-            }
-        }
+        val currentId = relayState.currentBotId ?: return
+        playbackManager.drainAllExcept(currentId, 2000L)
     }
 
     private fun releaseOldDecoders() {
         val currentId = relayState.currentBotId
-        // 保留 currentId 的 decoder，释放其余
-        val toRelease = botAudioDecoders.filterKeys { it != currentId }
-        val targetSize = maxOf(1, MAX_DECODERS - 1) // 当前 speaker 占 1 个
-        val evict = if (toRelease.size > targetSize) {
-            val sorted = toRelease.keys.sorted()
-            sorted.take(toRelease.size - targetSize)
-        } else emptyList()
-
-        val toRemove = if (evict.isNotEmpty()) toRelease.filterKeys { it in evict } else toRelease
-        if (evict.isNotEmpty()) android.util.Log.w(TAG, "解码器超上限(${botAudioDecoders.size}>$MAX_DECODERS)，淘汰 ${evict.size} 个")
-        toRemove.values.forEach { if (!it.isReleased) it.release() }
-        botAudioDecoders.keys.removeAll(toRemove.keys)
+        val beforeSize = playbackManager.size
+        playbackManager.releaseExcess(MAX_DECODERS, currentId)
+        val afterSize = playbackManager.size
+        if (afterSize < beforeSize) {
+            android.util.Log.w(TAG, "解码器超上限(${beforeSize}>$MAX_DECODERS)，淘汰 ${beforeSize - afterSize} 个")
+        }
     }
 
     // ── 音频转发 ──
@@ -819,8 +792,7 @@ class GroupChatViewModel : ViewModel() {
         botConnections.clear()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
-        botAudioDecoders.values.forEach { it.release() }
-        botAudioDecoders.clear()
+        playbackManager.releaseAll()
         loadGroups()
     }
 
@@ -906,8 +878,7 @@ class GroupChatViewModel : ViewModel() {
         botConnections.clear()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
-        botAudioDecoders.values.forEach { it.release() }
-        botAudioDecoders.clear()
+        playbackManager.releaseAll()
         deadBotIds.clear()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()

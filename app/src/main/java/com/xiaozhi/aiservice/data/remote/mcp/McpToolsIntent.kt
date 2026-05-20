@@ -1,6 +1,8 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.Manifest
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,6 +19,7 @@ import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContainer
 import java.net.URLEncoder
+import java.util.Calendar
 import java.util.Locale
 
 fun registerIntentTools() {
@@ -108,30 +111,86 @@ fun registerIntentTools() {
             required = listOf("hour", "minute")
         )
     ) { args ->
+        val ctx = AppContainer.context
         val hour = (args["hour"] as? Number)?.toInt() ?: throw Exception("hour 必须为 0-23 的数字")
         val minute = (args["minute"] as? Number)?.toInt() ?: throw Exception("minute 必须为 0-59 的数字")
         require(hour in 0..23) { "hour 必须在 0-23 之间" }
         require(minute in 0..59) { "minute 必须在 0-59 之间" }
-        val message = args["message"] as? String ?: ""
+        val message = args["message"] as? String ?: "闹钟"
+        val timeStr = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
 
-        Intent(AlarmClock.ACTION_SET_ALARM).apply {
-            putExtra(AlarmClock.EXTRA_HOUR, hour)
-            putExtra(AlarmClock.EXTRA_MINUTES, minute)
-            if (message.isNotEmpty()) putExtra(AlarmClock.EXTRA_MESSAGE, message)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }.let { intent ->
-            try {
-                AppContainer.context.startActivity(intent)
-                JsonObject().apply {
-                    addProperty("success", true)
-                    addProperty("hour", hour)
-                    addProperty("minute", minute)
-                    addProperty("message", message)
-                    addProperty("time", String.format(Locale.getDefault(), "%02d:%02d", hour, minute))
-                }
-            } catch (e: Exception) {
-                throw Exception("无法设置闹钟，请检查是否授予闹钟权限: ${e.message}")
+        // 创建通知频道（首次调用会自动创建）
+        try {
+            val channel = android.app.NotificationChannel(
+                "alarm_channel", "闹钟提醒",
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "AI设置的闹钟提醒"
+                enableVibration(true)
             }
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.createNotificationChannel(channel)
+        } catch (_: Exception) {}
+
+        // 计算时间
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            if (before(Calendar.getInstance())) {
+                add(Calendar.DAY_OF_MONTH, 1) // 已过则设到明天
+            }
+        }
+
+        val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            ?: throw Exception("系统闹钟服务不可用")
+
+        // 检查 SCHEDULE_EXACT_ALARM 权限
+        if (Build.VERSION.SDK_INT >= 31) {
+            val hasPerm = alarmManager.canScheduleExactAlarms()
+            if (!hasPerm) {
+                sendPermissionGuideNotification("精确闹钟")
+                // 用 inexact 降级
+                val pIntent = PendingIntent.getBroadcast(
+                    ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
+                        putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+                    },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pIntent)
+            } else {
+                val pIntent = PendingIntent.getBroadcast(
+                    ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
+                        putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+                    },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pIntent),
+                    pIntent
+                )
+            }
+        } else {
+            val pIntent = PendingIntent.getBroadcast(
+                ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
+                    putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(calendar.timeInMillis, pIntent),
+                pIntent
+            )
+        }
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("hour", hour)
+            addProperty("minute", minute)
+            addProperty("message", message)
+            addProperty("time", timeStr)
+            addProperty("alarm_time", if (calendar.timeInMillis > System.currentTimeMillis()) "今天 $timeStr" else "明天 $timeStr")
         }
     }
 
@@ -441,7 +500,7 @@ fun registerIntentTools() {
 
     MCPToolRegistry.registerTool(
         name = "make_call",
-        description = "拨打电话。从通讯录查找联系人并打开拨号界面（无需额外权限）",
+        description = "拨打电话。有权限直接呼叫，无权限打开拨号界面",
         inputSchema = jsonSchema(
             "phone_number" to jsonStringProp("电话号码（可选，提供 name 时会自动查找联系人号码）"),
             "name" to jsonStringProp("联系人姓名（可选，自动从通讯录查找号码）"),
@@ -462,23 +521,39 @@ fun registerIntentTools() {
         number = number.replace(Regex("[\\s\\-()（）]"), "")
         val displayName = if (name.isNotEmpty()) "$name($number)" else number
 
-        // 直接打开拨号界面（无需 CALL_PHONE 权限）
-        val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null)).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        ctx.startActivity(intent)
+        val hasCallPerm = ActivityCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 
-        JsonObject().apply {
-            addProperty("success", true)
-            addProperty("phone_number", number)
-            if (name.isNotEmpty()) addProperty("name", name)
-            addProperty("message", "已打开拨号界面: $displayName")
+        if (hasCallPerm) {
+            // 有权限 → 直接呼叫
+            val intent = Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", number, null)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            ctx.startActivity(intent)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("phone_number", number)
+                if (name.isNotEmpty()) addProperty("name", name)
+                addProperty("message", "正在呼叫: $displayName")
+            }
+        } else {
+            // 无权限 → 通知引导 + 打开拨号界面
+            sendPermissionGuideNotification("通话")
+            val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            ctx.startActivity(intent)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("phone_number", number)
+                if (name.isNotEmpty()) addProperty("name", name)
+                addProperty("message", "已打开拨号界面: $displayName（尚未授予通话权限，已发送通知引导设置）")
+            }
         }
     }
 
     MCPToolRegistry.registerTool(
         name = "send_sms",
-        description = "发送短信。支持联系人名称查找并打开短信编辑界面（无需额外权限）",
+        description = "发送短信。有权限直接发送，无权限打开短信编辑界面",
         inputSchema = jsonSchema(
             "phone_number" to jsonStringProp("接收短信的电话号码（可选，提供 name 时会自动查找）"),
             "message" to jsonStringProp("短信内容"),
@@ -501,19 +576,44 @@ fun registerIntentTools() {
         }
         if (number.isEmpty()) throw Exception("phone_number 或 name 至少提供一个")
         number = number.replace(Regex("[\\s\\-()（）]"), "")
+        val displayName = if (name.isNotEmpty()) name else number
 
-        // 打开短信界面（无需 SEND_SMS 权限）
-        val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
-            putExtra("sms_body", message)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        ctx.startActivity(intent)
+        val hasSmsPerm = ActivityCompat.checkSelfPermission(ctx, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
 
-        JsonObject().apply {
-            addProperty("success", true)
-            addProperty("phone_number", number)
-            if (name.isNotEmpty()) addProperty("name", name)
-            addProperty("message", "已打开短信编辑界面: $number")
+        if (hasSmsPerm) {
+            // 有权限 → 直接发送
+            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                @Suppress("DEPRECATION")
+                (ctx.getSystemService("telephony_sms") as? android.telephony.SmsManager)
+                    ?: android.telephony.SmsManager.getDefault()
+            } else {
+                @Suppress("DEPRECATION")
+                android.telephony.SmsManager.getDefault()
+            }
+            @Suppress("DEPRECATION")
+            smsManager.sendTextMessage(number, null, message, null, null)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("phone_number", number)
+                if (name.isNotEmpty()) addProperty("name", name)
+                addProperty("message_length", message.length)
+                addProperty("message", "短信已发送到: $displayName")
+            }
+        } else {
+            // 无权限 → 通知引导 + 打开短信界面
+            sendPermissionGuideNotification("短信")
+            val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.fromParts("smsto", number, null)).apply {
+                putExtra("sms_body", message)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            ctx.startActivity(intent)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("phone_number", number)
+                if (name.isNotEmpty()) addProperty("name", name)
+                addProperty("message_length", message.length)
+                addProperty("message", "已打开短信编辑界面（尚未授予短信权限，已发送通知引导设置）")
+            }
         }
     }
 

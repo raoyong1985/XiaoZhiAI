@@ -27,6 +27,8 @@ class NativeOpusDecoder(
         private const val TAG = "NativeOpusDecoder"
         private const val MAX_QUEUE_SIZE = 200
         private const val BUFFER_MULTIPLIER = 6
+        /** 播放线程空闲超时：无音频数据持续此时间后自动停止播放线程释放音频硬件 */
+        private const val PLAY_IDLE_TIMEOUT_MS = 5000L
     }
 
     private var decoderPtr: Long = 0
@@ -39,9 +41,10 @@ class NativeOpusDecoder(
     private val totalBytesWritten = AtomicLong(0L)
 
     private val serverFrameSamples = serverSampleRate * 60 / 1000
-    private val silenceFrame = ByteArray(12800)
 
     private val pendingDecodePackets = AtomicInteger(0)
+    /** 最后一次成功的音频播放时间戳，用于空闲超时检测 */
+    private val lastAudioActivityMs = AtomicLong(System.currentTimeMillis())
 
     /**
      * 强制 flush AudioTrack：清空队列 + 暂停+flush+恢复
@@ -141,10 +144,12 @@ class NativeOpusDecoder(
             playThread = Thread {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 Logger.i(TAG, "Play thread started")
+                lastAudioActivityMs.set(System.currentTimeMillis())
                 while (isPlaying.get()) {
                     try {
                         val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
+                            lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
@@ -153,14 +158,13 @@ class NativeOpusDecoder(
                                 Logger.e(TAG, "AudioTrack write error: $written")
                             }
                         } else {
-                            try {
-                                for (i in 0 until 3) {
-                                    val ret = audioTrack?.write(silenceFrame, 0, silenceFrame.size)
-                                    if (ret != null && ret > 0) {
-                                        totalBytesWritten.updateAndGet { it + ret }
-                                    } else break
-                                }
-                            } catch (_: Exception) {}
+                            // 空闲超时检测：无音频数据持续 PLAY_IDLE_TIMEOUT_MS 则自动停止播放线程
+                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > PLAY_IDLE_TIMEOUT_MS) {
+                                Logger.i(TAG, "播放空闲超时(${PLAY_IDLE_TIMEOUT_MS}ms)，停止播放线程以省电")
+                                break
+                            }
+                            // ✅ 不写静音帧到 AudioTrack！让出CPU让系统进入深度休眠
+                            Thread.sleep(50)
                         }
                     } catch (e: InterruptedException) {
                         break
@@ -168,6 +172,7 @@ class NativeOpusDecoder(
                         Logger.e(TAG, "play err: ${e.message}")
                     }
                 }
+                isPlaying.set(false)
                 Logger.i(TAG, "Play thread ended")
             }.apply { start() }
 
@@ -176,8 +181,100 @@ class NativeOpusDecoder(
         }
     }
 
+    /**
+     * 惰性重启播放（省电优化）
+     *
+     * 当播放线程因空闲超时自动停止后，新音频到达时重建 AudioTrack 和播放线程。
+     * 不重新创建 native Opus 解码器（decoderPtr 复用），避免不必要的 JNI 开销。
+     *
+     * 对应 ESP32 ResumeVoicePlayback() 语义
+     */
+    private fun restartPlayback() {
+        try {
+            val minBuffer = AudioTrack.getMinBufferSize(
+                clientSampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
+
+            val track = AudioTrack(
+                AudioManager.STREAM_MUSIC,
+                clientSampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize,
+                AudioTrack.MODE_STREAM
+            )
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                Logger.e(TAG, "restartPlayback: AudioTrack 初始化失败")
+                track.release()
+                return
+            }
+
+            // 释放旧的 AudioTrack（如果有）
+            try { audioTrack?.stop(); audioTrack?.release() } catch (_: Exception) {}
+            audioTrack = track
+            audioQueue.clear()
+            pendingDecodePackets.set(0)
+            totalBytesWritten.set(0L)
+            lastAudioActivityMs.set(System.currentTimeMillis())
+
+            track.play()
+            isPlaying.set(true)
+
+            // 预填充静音（防止部分设备不出声）
+            try { track.write(ByteArray(4096), 0, 4096) } catch (_: Exception) {}
+
+            // 重建播放线程
+            playThread = Thread {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+                Logger.i(TAG, "Play thread restarted")
+                while (isPlaying.get()) {
+                    try {
+                        val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
+                        if (data != null && data.isNotEmpty()) {
+                            lastAudioActivityMs.set(System.currentTimeMillis())
+                            pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
+                            val written = track.write(data, 0, data.size) ?: -1
+                            if (written > 0) {
+                                totalBytesWritten.updateAndGet { it + written }
+                            } else if (written < 0) {
+                                Logger.e(TAG, "AudioTrack write error: $written")
+                            }
+                        } else {
+                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > PLAY_IDLE_TIMEOUT_MS) {
+                                Logger.i(TAG, "播放空闲超时，停止重启后的播放线程")
+                                break
+                            }
+                            Thread.sleep(50)
+                        }
+                    } catch (e: InterruptedException) {
+                        break
+                    } catch (e: Exception) {
+                        Logger.e(TAG, "play err: ${e.message}")
+                    }
+                }
+                isPlaying.set(false)
+                Logger.i(TAG, "Play thread restarted ended")
+            }.apply { start() }
+
+            Logger.i(TAG, "restartPlayback 完成（${clientSampleRate}Hz mono）")
+        } catch (e: Exception) {
+            Logger.e(TAG, "restartPlayback 失败: ${e.message}")
+            isPlaying.set(false)
+        }
+    }
+
     fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
-        if (decoderPtr == 0L || !isPlaying.get()) return
+        if (decoderPtr == 0L) return
+
+        // 惰性重启：播放线程因空闲超时停止后，有新音频到达时自动恢复
+        if (!isPlaying.get()) {
+            Logger.i(TAG, "播放线程已停止，新音频到达，自动重启播放")
+            restartPlayback()
+            if (!isPlaying.get()) return  // 重启失败
+        }
 
         try {
             val audioPayload = opusData

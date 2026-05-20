@@ -4,8 +4,8 @@ import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
-import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
+import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.WakeWordDetector
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.AiState
@@ -79,8 +79,7 @@ class ConnectionRepositoryImpl(
     override val deviceState: StateFlow<DeviceState> = _deviceState.asStateFlow()
 
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
-    private var opusDecoder: NativeOpusDecoder? = null
-    // 录音管理器
+    private val playbackManager = AudioPlaybackManager()
     private val audioRecorder = AudioRecorder(audioService)
 
     // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
@@ -142,7 +141,7 @@ class ConnectionRepositoryImpl(
 
                     // ESP32 HandleStateChangedEvent(Speaking): ResetDecoder() 清空残留音频队列
                     if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
-                        opusDecoder?.flushAudio()
+                        playbackManager.flushSource("main")
                         // 参考对方 Completer 模式：AI 开始说话 → 文本消息回复确认
                         pendingTextResponse?.complete(Unit)
                         pendingTextResponse = null
@@ -209,8 +208,7 @@ class ConnectionRepositoryImpl(
                     }
                 } else if (state is XiaoZhiBackendService.ConnectionState.Disconnected ||
                            state is XiaoZhiBackendService.ConnectionState.Error) {
-                    opusDecoder?.release()
-                    opusDecoder = null
+                    playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
                     // 断开后唤醒词已经在 disconnect() 中启动，但如果在 observeBackendService 外断开（如后端主动断开），此处兜底
                     startWakeWordMode()
@@ -249,23 +247,10 @@ class ConnectionRepositoryImpl(
                 // 移除 _aiState != SPEAKING 检查解决竞态条件（音频包与状态切换同时到达时被丢弃）
                 if (audioData.isEmpty()) return@collect
                 val t0 = System.nanoTime()
-                // 延迟初始化解码器：hello 肯定已在此时处理完
-                var decoder = opusDecoder
-                if (decoder == null) {
-                    val serverRate = backendService.getServerSampleRate()
-                    val serverCh = backendService.getServerChannels()
-                    // 从持久化存储读取音量设置（参考 ESP32 audio_codec.cc SetOutputVolume）
-                    val volume = AudioSettings.getOutputVolume(AppContainer.context)
-                    decoder = NativeOpusDecoder(serverRate, 16000, serverCh, volume)
-                    // 如果保存的音量不是 100%，立即应用
-                    if (volume < 100) {
-                        decoder.setVolume(volume)
-                    }
-                    decoder.init()
-                    opusDecoder = decoder
-                    Logger.i(TAG, "Native Opus解码器初始化成功(${serverRate}Hz → 16kHz, ${serverCh}ch, 音量=$volume%)")
-                }
-                decoder.decodePacket(audioData)
+                val serverRate = backendService.getServerSampleRate()
+                val serverCh = backendService.getServerChannels()
+                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                playbackManager.decodeAndPlay("main", serverRate, serverCh, audioData, volume)
                 val dt = (System.nanoTime() - t0) / 1000
                 if (dt > 5000) {
                     Logger.w(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
@@ -283,8 +268,7 @@ class ConnectionRepositoryImpl(
             Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
             audioRecorder.stop()
-            opusDecoder?.release()
-            opusDecoder = null
+            playbackManager.releaseAll()
             _connectionState.value = ConnectionState.Disconnected
             _aiState.value = AiState.IDLE
         }
@@ -312,8 +296,7 @@ class ConnectionRepositoryImpl(
     override suspend fun disconnect() {
         backendService.disconnect()
         audioRecorder.stop()
-        opusDecoder?.release()
-        opusDecoder = null
+        playbackManager.releaseAll()
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiState.IDLE
         // 断开后重启唤醒词检测
@@ -513,10 +496,7 @@ class ConnectionRepositoryImpl(
 
     private suspend fun drainAndFlushPlayback() {
         var hadData = false
-        opusDecoder?.let { decoder ->
-            if (!decoder.waitForQueueEmpty(1000)) {
-                Logger.w(TAG, "等待队列排空超时（>1s），继续执行")
-            }
+        if (playbackManager.waitForQueueEmpty("main", 1000)) {
             hadData = true
         }
         if (hadData) {
@@ -533,9 +513,7 @@ class ConnectionRepositoryImpl(
      * 参考 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
      */
     private fun forceFlushPlayback() {
-        opusDecoder?.let { decoder ->
-            decoder.flushAudio()
-            Logger.i(TAG, "forceFlushPlayback 完成")
-        }
+        playbackManager.flushSource("main")
+        Logger.i(TAG, "forceFlushPlayback 完成")
     }
 }

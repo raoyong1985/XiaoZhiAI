@@ -73,6 +73,10 @@
     <!-- Foreground service microphone -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
+    <!-- Exact alarm scheduling -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application
         android:name=".XiaoZhiApplication"
         android:allowBackup="true"
@@ -118,6 +122,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Alarm receiver for set_alarm -->
+        <receiver
+            android:name=".data.remote.mcp.AlarmReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
