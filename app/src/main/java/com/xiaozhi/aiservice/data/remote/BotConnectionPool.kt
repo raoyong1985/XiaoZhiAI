@@ -64,6 +64,8 @@ class BotConnectionPool(private val gson: Gson) {
             return false
         }
         Logger.w(TAG, "重新连接: $botId")
+        // 覆盖前断开旧连接，防止泄漏
+        connections[botId]?.disconnect()
         val newService = XiaoZhiBackendService(gson)
         connections[botId] = newService
         newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)

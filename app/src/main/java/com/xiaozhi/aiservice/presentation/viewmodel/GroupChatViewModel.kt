@@ -34,8 +34,8 @@ class GroupChatViewModel : ViewModel() {
     private val playbackManager = AudioPlaybackManager()
     private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
-    // ── 接龙状态（不可变 RelayState，每次变更用 copy） ──
-    @Volatile private var relayState: RelayState = RelayState()
+    // ── 接龙状态（不可变 RelayState，每次变更用 copy，通过 MutableStateFlow 保证原子性） ──
+    private val _relayState = MutableStateFlow(RelayState())
 
     private val audioForwardBuffer = ConcurrentHashMap<String, MutableList<ByteArray>>()
     private val botLastAudioTime = ConcurrentHashMap<String, Long>()
@@ -110,7 +110,7 @@ class GroupChatViewModel : ViewModel() {
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
         playbackManager.releaseAll()
-        relayState = RelayState()
+        _relayState.value = RelayState()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
         recentReplyKeys.clear()
@@ -137,7 +137,7 @@ class GroupChatViewModel : ViewModel() {
                             }
                         }
                     }.forEach { it.await() }
-                    relayState = relayState.copy(botIds = g.botIds)
+                    _relayState.update { it.copy(botIds = g.botIds) }
                 }
             } finally {
                 _isConnecting.value = false
@@ -158,7 +158,7 @@ class GroupChatViewModel : ViewModel() {
                     android.util.Log.i(TAG, "清理死 bot 列表")
                 }
 
-                val rs = relayState
+                val rs = _relayState.value
                 if (rs.waitingSpeakerIndex < 0) continue  // 没有正在等待的bot，跳过
                 if (_isRecording.value) continue           // 用户正在录音，跳过
                 
@@ -169,7 +169,7 @@ class GroupChatViewModel : ViewModel() {
                 
                 if (silenceDuration > 20_000) {
                     android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s，清除等待状态并重启接龙")
-                    relayState = rs.clearWaiting()
+                    _relayState.update { it.clearWaiting() }
                     triggerNextSpeaker("")
                 }
             }
@@ -194,7 +194,7 @@ class GroupChatViewModel : ViewModel() {
 
     fun startVoiceInput(groupId: String) {
         if (_isRecording.value) return
-        if (relayState.botIds.isEmpty()) return
+        if (_relayState.value.botIds.isEmpty()) return
 
         currentGroupId = groupId
         botConnectionPool.abortAll("user_interrupt")
@@ -207,13 +207,13 @@ class GroupChatViewModel : ViewModel() {
         recentHints.clear()
         recentCandidates.clear()
 
-        val firstBotId = relayState.botIds[0]
+        val firstBotId = _relayState.value.botIds[0]
         val service = botConnectionPool.get(firstBotId) ?: return
 
-        relayState = relayState.nextSession().copy(
+        _relayState.update { it.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0,
             waitingSpeakerIndex = 0, originalUserQuery = ""
-        )
+        ) }
         recentReplyKeys.clear()
 
         service.sendListenStart("auto")
@@ -237,8 +237,8 @@ class GroupChatViewModel : ViewModel() {
         sttCollectorJob = viewModelScope.launch {
             service.textMessage.drop(1).collect { text ->
                 if (text.isNotBlank()) {
-                    if (relayState.originalUserQuery.isEmpty()) {
-                        relayState = relayState.copy(originalUserQuery = text)
+                    if (_relayState.value.originalUserQuery.isEmpty()) {
+                        _relayState.update { it.copy(originalUserQuery = text) }
                     }
                     val userMessage = GroupMessage(
                         id = java.util.UUID.randomUUID().toString(), groupId = currentGroupId,
@@ -264,7 +264,7 @@ class GroupChatViewModel : ViewModel() {
         audioRecorder.stop()
         audioService.abandonAudioFocus()
 
-        try { botConnectionPool.get(relayState.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (_: Exception) {}
+        try { botConnectionPool.get(_relayState.value.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (_: Exception) {}
     }
 
     // ═══════════════════════════════════════════
@@ -302,7 +302,7 @@ class GroupChatViewModel : ViewModel() {
             service.audioData.collect { audioData ->
                 if (audioData.isEmpty()) return@collect
                 botLastAudioTime[botId] = System.currentTimeMillis()
-                val rs = relayState
+                val rs = _relayState.value
                 val idx = rs.botIds.indexOf(botId)
                 if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) return@collect
 
@@ -341,11 +341,11 @@ class GroupChatViewModel : ViewModel() {
                         if (wasDisconnected) {
                             wasDisconnected = false
                             android.util.Log.i(TAG, "[$botName] WebSocket重连完成，检查接龙状态")
-                            val rs = relayState
+                            val rs = _relayState.value
                             val idx = rs.botIds.indexOf(botId)
                             if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx == rs.waitingSpeakerIndex) {
                                 android.util.Log.i(TAG, "[$botName] 接龙正等待本bot，清除等待状态")
-                                relayState = rs.clearWaiting()
+                                _relayState.update { it.clearWaiting() }
                             }
                         }
                     }
@@ -381,7 +381,7 @@ class GroupChatViewModel : ViewModel() {
                     }
                     is BotEvent.AiState -> {
                         val state = event.state
-                        val rs = relayState
+                        val rs = _relayState.value
                         android.util.Log.i(TAG, "[$botName] aiState=$state reply='${replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
 
                         if (state == "speaking") {
@@ -435,7 +435,8 @@ class GroupChatViewModel : ViewModel() {
                                 }
                             }
                             if (shouldTrigger) {
-                                triggerNextSpeaker(replyToForward)
+                                val reply = replyToForward
+                                viewModelScope.launch { triggerNextSpeaker(reply) }
                             }
                         }
                     }
@@ -449,25 +450,31 @@ class GroupChatViewModel : ViewModel() {
     // ═══════════════════════════════════════════
 
     private suspend fun triggerNextSpeaker(previousReply: String = "") {
-        val rs = relayState
+        val rs = _relayState.value
         if (rs.botIds.size <= 1) {
-            relayState = rs.clearWaiting()
+            _relayState.update { it.clearWaiting() }
             return
         }
         if (_isRecording.value) {
             android.util.Log.w(TAG, "用户正在录音，跳过转发")
-            relayState = rs.clearWaiting()
+            _relayState.update { it.clearWaiting() }
             return
         }
         if (previousReply.isNotBlank() && GOODBYE_KEYWORDS.any { previousReply.contains(it) }) {
             android.util.Log.i(TAG, "检测到结束语，停止接龙: '${previousReply.take(20)}'")
-            relayState = rs.clearWaiting()
+            _relayState.update { it.clearWaiting() }
             return
         }
 
         val prevIndex = rs.currentSpeakerIndex
         val prevBotId = rs.botIds.getOrNull(prevIndex)
-        val candidates = resolveSpeakerCandidates(prevIndex, previousReply, rs.botIds)
+        // 原子地读取状态、计算候选、写入更新（避免读-计算-写之间的竞态）
+        var candidates: List<Pair<Int, String>> = emptyList()
+        _relayState.update { current ->
+            val (result, newState) = resolveSpeakerCandidates(prevIndex, previousReply, current.botIds, current)
+            candidates = result
+            newState
+        }
 
         val connected = candidates.filter { (_, id) ->
             val svc = botConnectionPool.get(id)
@@ -480,7 +487,7 @@ class GroupChatViewModel : ViewModel() {
 
         for ((targetIndex, speakerId) in connected) {
             val service = botConnectionPool.get(speakerId) ?: continue
-            relayState = relayState.moveToSpeaker(targetIndex)
+            _relayState.update { it.moveToSpeaker(targetIndex) }
 
             val audioOk = forwardAudioToBot(prevBotId, service)
             if (audioOk) {
@@ -489,36 +496,38 @@ class GroupChatViewModel : ViewModel() {
                     service.aiState.first { it == "speaking" }
                 }
                 if (startConfirmed != null) {
-                    val hint = if (previousReply.isNotBlank()) relayState.originalUserQuery.take(8) else ""
+                    val hint = if (previousReply.isNotBlank()) _relayState.value.originalUserQuery.take(8) else ""
                     if (checkDeadloop(hint, speakerId)) {
                         android.util.Log.i(TAG, "死循环终止，跳过转发")
-                        relayState = relayState.clearWaiting()
+                        _relayState.update { it.clearWaiting() }
                         return
                     }
-                    relayState = relayState.copy(
-                        forwardRound = relayState.forwardRound + 1
-                    ).markSpoken(targetIndex)
+                    _relayState.update {
+                        it.copy(
+                            forwardRound = it.forwardRound + 1
+                        ).markSpoken(targetIndex)
+                    }
                     if (previousReply.isNotBlank()) {
-                        relayState = relayState.copy(originalUserQuery = previousReply.take(20))
+                        _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
                     }
                     audioForwardBuffer.remove(prevBotId)
-                    android.util.Log.i(TAG, "音频转发成功 → $speakerId fwd=${relayState.forwardRound}")
+                    android.util.Log.i(TAG, "音频转发成功 → $speakerId fwd=${_relayState.value.forwardRound}")
                     return
                 }
                 android.util.Log.w(TAG, "音频转发超时($speakerId 10s未响应)，尝试下一候选")
-                relayState = relayState.clearWaiting()
+                _relayState.update { it.clearWaiting() }
             }
 
             val textToSend = buildForwardMessage(previousReply)
             if (checkDeadloop(textToSend)) {
                 android.util.Log.i(TAG, "死循环终止，跳过本轮转发")
-                relayState = relayState.clearWaiting()
+                _relayState.update { it.clearWaiting() }
                 return
             }
             if (textToSend.isNotBlank()) {
                 if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
                     android.util.Log.w(TAG, "文字兜底失败: $speakerId WebSocket未连接")
-                    relayState = relayState.clearWaiting()
+                    _relayState.update { it.clearWaiting() }
                     continue
                 }
                 // 文字兜底前清理旧音频缓存，防止新旧数据混合
@@ -527,45 +536,47 @@ class GroupChatViewModel : ViewModel() {
                 try {
                     service.sendTextContent(textToSend)
                     if (previousReply.isNotBlank()) {
-                        relayState = relayState.copy(originalUserQuery = previousReply.take(20))
+                        _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
                     }
                     val startConfirmed = withTimeoutOrNull(10_000) {
                         service.aiState.first { it == "speaking" }
                     }
                     if (startConfirmed != null) {
-                        relayState = relayState.markSpoken(targetIndex)
+                        _relayState.update { it.markSpoken(targetIndex) }
                         android.util.Log.i(TAG, "文字兜底转发成功")
                         return
                     }
                     android.util.Log.w(TAG, "文字兜底超时($speakerId 10s未响应)")
-                    relayState = relayState.clearWaiting()
+                    _relayState.update { it.clearWaiting() }
                 } catch (e: Exception) {
                     android.util.Log.w(TAG, "文字兜底异常: ${e.message}")
-                    relayState = relayState.clearWaiting()
+                    _relayState.update { it.clearWaiting() }
                 }
             }
         }
 
         audioForwardBuffer.remove(prevBotId)
         android.util.Log.w(TAG, "无可用bot转发，跳过本轮")
-        relayState = rs.clearWaiting()
-        val firstAlive = relayState.botIds.firstOrNull()
+        _relayState.update { it.clearWaiting() }
+        val firstAlive = _relayState.value.botIds.firstOrNull()
         if (firstAlive != null) {
-            relayState = relayState.copy(
-                currentSpeakerIndex = relayState.botIds.indexOf(firstAlive).coerceAtLeast(0)
-            )
+            _relayState.update {
+                it.copy(
+                    currentSpeakerIndex = it.botIds.indexOf(firstAlive).coerceAtLeast(0)
+                )
+            }
         }
     }
 
     // ── 智能 speaker 选择 ──
-    private fun resolveSpeakerCandidates(prevIndex: Int, previousReply: String, botIds: List<String>): List<Pair<Int, String>> {
-        if (botIds.isEmpty()) return emptyList()
+    private fun resolveSpeakerCandidates(
+        prevIndex: Int, previousReply: String, botIds: List<String>, rs: RelayState
+    ): Pair<List<Pair<Int, String>>, RelayState> {
+        if (botIds.isEmpty()) return emptyList<Pair<Int, String>>() to rs
 
         // 过滤死 bot，压缩索引 —— 返回 compacted 索引，避免指向死 bot
         val aliveBotIds = botIds.filter { !botConnectionPool.isDead(it) }
-        if (aliveBotIds.isEmpty()) return emptyList()
-
-        val rs = relayState
+        if (aliveBotIds.isEmpty()) return emptyList<Pair<Int, String>>() to rs
 
         // 重映射 prevIndex 和 spokenInThisRound 到压缩后的索引
         val prevBotId = botIds.getOrNull(prevIndex)
@@ -578,7 +589,7 @@ class GroupChatViewModel : ViewModel() {
         val candidates = aliveBotIds.indices
             .filter { it != compactedPrevIndex }
             .map { Candidate(it, aliveBotIds[it], 0f) }
-        if (candidates.isEmpty()) return emptyList()
+        if (candidates.isEmpty()) return emptyList<Pair<Int, String>>() to rs
 
         if (previousReply.isNotBlank()) {
             val mentionMatch = Regex("@([\\w\\u4e00-\\u9fff]+)").find(previousReply)
@@ -610,21 +621,20 @@ class GroupChatViewModel : ViewModel() {
         // 压缩索引后的 spokenInThisRound 重置
         val allSpoken = sorted.all { it.index in compactedSpoken }
         val forceReset = rs.spokenRoundCounter >= maxOf(aliveBotIds.size * 2, 4)
-        if (allSpoken || forceReset) {
-            relayState = rs.copy(
+        val newRs = if (allSpoken || forceReset) {
+            rs.copy(
                 botIds = aliveBotIds,
                 spokenInThisRound = emptySet(),
                 spokenRoundCounter = 0
             )
         } else {
-            // 更新 relayState.botIds 为压缩后的列表，保持索引一致
-            relayState = rs.copy(
+            rs.copy(
                 botIds = aliveBotIds,
                 spokenInThisRound = compactedSpoken
             )
         }
 
-        return sorted.map { it.index to it.id }
+        return sorted.map { it.index to it.id } to newRs
     }
 
     // ── 连接保活 ──
@@ -648,12 +658,12 @@ class GroupChatViewModel : ViewModel() {
     }
 
     private suspend fun drainPreviousDecodersBeforeSwitch() {
-        val currentId = relayState.currentBotId ?: return
+        val currentId = _relayState.value.currentBotId ?: return
         playbackManager.drainAllExcept(currentId, 2000L)
     }
 
     private fun releaseOldDecoders() {
-        val currentId = relayState.currentBotId
+        val currentId = _relayState.value.currentBotId
         val beforeSize = playbackManager.size
         playbackManager.releaseExcess(MAX_DECODERS, currentId)
         val afterSize = playbackManager.size
@@ -701,7 +711,7 @@ class GroupChatViewModel : ViewModel() {
     // ── 文字兜底 ──
     private fun buildForwardMessage(previousReply: String): String {
         if (previousReply.isBlank()) return ""
-        val hint = if (relayState.originalUserQuery.isNotBlank()) relayState.originalUserQuery.take(8)
+        val hint = if (_relayState.value.originalUserQuery.isNotBlank()) _relayState.value.originalUserQuery.take(8)
         else truncateReply(previousReply, 8)
         return hint
     }
@@ -723,7 +733,7 @@ class GroupChatViewModel : ViewModel() {
             deadloopCount++
             if (deadloopCount >= MAX_DEADLOOP) {
                 deadloopCount = 0; recentHints.clear(); recentCandidates.clear()
-                relayState = relayState.clearWaiting()
+                _relayState.update { it.clearWaiting() }
                 return true
             }
         } else deadloopCount = 0
@@ -784,17 +794,17 @@ class GroupChatViewModel : ViewModel() {
         )
         groupChatRepository.addMessage(groupId, userMessage)
 
-        relayState = relayState.nextSession().copy(
+        _relayState.update { it.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0, waitingSpeakerIndex = 0,
             originalUserQuery = content
-        )
+        ) }
         audioForwardBuffer.clear()
         recentReplyKeys.clear()
         recentHints.clear()
         recentCandidates.clear()
 
-        if (relayState.botIds.isNotEmpty()) {
-            val firstBotId = relayState.botIds[0]
+        if (_relayState.value.botIds.isNotEmpty()) {
+            val firstBotId = _relayState.value.botIds[0]
             val svc = botConnectionPool.get(firstBotId)
             if (svc != null) {
                 val contact = _contacts.value.find { it.id == firstBotId }
@@ -813,13 +823,13 @@ class GroupChatViewModel : ViewModel() {
 
     suspend fun addBotToGroup(groupId: String, botId: String) {
         groupChatRepository.addBotToGroup(groupId, botId)
-        relayState = relayState.copy(botIds = relayState.botIds + botId)
+        _relayState.update { it.copy(botIds = it.botIds + botId) }
         loadGroups()
     }
 
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
         groupChatRepository.removeBotFromGroup(groupId, botId)
-        relayState = relayState.copy(botIds = relayState.botIds - botId)
+        _relayState.update { it.copy(botIds = it.botIds - botId) }
         loadGroups()
     }
 
@@ -853,13 +863,14 @@ class GroupChatViewModel : ViewModel() {
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
         recentReplyKeys.clear()
-        relayState = RelayState()
+        _relayState.value = RelayState()
         android.util.Log.i(TAG, "disconnectGroup: 群聊资源已全部释放")
     }
 
     override fun onCleared() {
         super.onCleared()
         disconnectGroup()
+        audioRecorder.release()
     }
 
     class Factory : ViewModelProvider.Factory {

@@ -30,12 +30,25 @@ class WakeWordDetector {
          * 替换成你自己的 AccessKey 后生效
          */
         const val ACCESS_KEY = "YOUR_PICOVOICE_ACCESS_KEY_HERE"
+
+        /**
+         * 预分配最大样本数（2048 = 4096 字节 PCM）
+         * WAKE_WORD_BUFFER_MS=100ms, 16kHz → 1600 样本，2048 充裕覆盖
+         */
+        private const val MAX_SAMPLES = 2048
     }
 
     private var porcupine: Porcupine? = null
     private var isInitialized = false
     private var detectionCallback: ((String) -> Unit)? = null
     private var androidContext: Context? = null
+
+    /** 预分配 ShortArray，避免每 50ms 创建新数组的 GC 风暴 */
+    private val samples = ShortArray(MAX_SAMPLES)
+
+    /** 预分配帧缓冲，避免循环内每帧 copyOfRange 分配 */
+    private var frameBuffer: ShortArray? = null
+
     /**
      * 当前使用的唤醒词名称
      */
@@ -133,18 +146,31 @@ class WakeWordDetector {
         if (!isInitialized) return null
 
         try {
-            // 转换为 short[]（Porcupine 要求 16-bit PCM 样本数组）
-            val shortBuf = ByteBuffer.wrap(pcmData)
+            val sampleCount = pcmData.size / 2
+            if (sampleCount > MAX_SAMPLES) {
+                Logger.w(TAG, "PCM 样本数 ($sampleCount) 超出预分配缓冲 ($MAX_SAMPLES)，跳过检测")
+                return null
+            }
+
+            // 复用预分配 samples 数组，将 PCM 字节直接解码为 short
+            ByteBuffer.wrap(pcmData)
                 .order(ByteOrder.LITTLE_ENDIAN)
                 .asShortBuffer()
-            val samples = ShortArray(shortBuf.remaining())
-            shortBuf.get(samples)
+                .get(samples, 0, sampleCount)
 
             val frameLen = pp.frameLength
+            // 惰性初始化帧缓冲（Porcupine 初始化后才知道 frameLength）
+            var fb = frameBuffer
+            if (fb == null || fb.size != frameLen) {
+                fb = ShortArray(frameLen)
+                frameBuffer = fb
+            }
+
             var offset = 0
-            while (offset + frameLen <= samples.size) {
-                val frame = samples.copyOfRange(offset, offset + frameLen)
-                val keywordIndex = pp.process(frame)
+            while (offset + frameLen <= sampleCount) {
+                // System.arraycopy → 零分配，替代 copyOfRange 造成的 GC 压力
+                System.arraycopy(samples, offset, fb, 0, frameLen)
+                val keywordIndex = pp.process(fb)
                 if (keywordIndex >= 0) {
                     Logger.i(TAG, "检测到唤醒词: $currentKeyword (index=$keywordIndex)")
                     detectionCallback?.invoke(currentKeyword)
@@ -168,6 +194,7 @@ class WakeWordDetector {
         porcupine = null
         isInitialized = false
         detectionCallback = null
+        frameBuffer = null
     }
 
     fun isReady(): Boolean = isInitialized && porcupine != null

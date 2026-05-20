@@ -146,41 +146,32 @@ fun registerIntentTools() {
         val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             ?: throw Exception("系统闹钟服务不可用")
 
+        // 唯一 requestCode：时间戳 + 分钟偏移，同分钟不同闹钟不冲突
+        val requestCode = ((hour * 60 + minute) and 0x7FFFFFFF) xor (System.nanoTime().toInt() and 0xFFFF)
+        fun createPendingIntent(): PendingIntent = PendingIntent.getBroadcast(
+            ctx, requestCode, Intent(ctx, AlarmReceiver::class.java).apply {
+                putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         // 检查 SCHEDULE_EXACT_ALARM 权限
         if (Build.VERSION.SDK_INT >= 31) {
             val hasPerm = alarmManager.canScheduleExactAlarms()
             if (!hasPerm) {
                 sendPermissionGuideNotification("精确闹钟")
                 // 用 inexact 降级
-                val pIntent = PendingIntent.getBroadcast(
-                    ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
-                        putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
-                    },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pIntent)
+                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, createPendingIntent())
             } else {
-                val pIntent = PendingIntent.getBroadcast(
-                    ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
-                        putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
-                    },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
                 alarmManager.setAlarmClock(
-                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pIntent),
-                    pIntent
+                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, createPendingIntent()),
+                    createPendingIntent()
                 )
             }
         } else {
-            val pIntent = PendingIntent.getBroadcast(
-                ctx, (hour * 60 + minute + 1000), Intent(ctx, AlarmReceiver::class.java).apply {
-                    putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
             alarmManager.setAlarmClock(
-                AlarmManager.AlarmClockInfo(calendar.timeInMillis, pIntent),
-                pIntent
+                AlarmManager.AlarmClockInfo(calendar.timeInMillis, createPendingIntent()),
+                createPendingIntent()
             )
         }
 

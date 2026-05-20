@@ -185,44 +185,47 @@ class XiaoZhiBackendService(private val gson: Gson) {
             .addHeader("Content-Type", "application/json")
             .build()
 
-        val client = OkHttpClient()
-        val response = client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: "empty"
-        Logger.i(TAG, "OTA注册响应: ${response.code} - ${responseBody.take(200)}")
+        val client = sharedClient
+        client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string() ?: "empty"
+            Logger.i(TAG, "OTA注册响应: ${response.code} - ${responseBody.take(200)}")
 
-        if (response.isSuccessful) {
-            try {
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                // 保存WebSocket token
-                val wsObj = json.getAsJsonObject("websocket")
-                if (wsObj != null) {
-                    wsToken = wsObj.get("token")?.asString ?: ""
-                    Logger.i(TAG, "WebSocket token 已获取")
+            if (response.isSuccessful) {
+                try {
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    // 保存WebSocket token
+                    val wsObj = json.getAsJsonObject("websocket")
+                    if (wsObj != null) {
+                        wsToken = wsObj.get("token")?.asString ?: ""
+                        Logger.i(TAG, "WebSocket token 已获取")
+                    }
+                    // 保存激活challenge（如果有）
+                    if (json.has("activation")) {
+                        val activation = json.getAsJsonObject("activation")
+                        pendingActivationChallenge = activation?.get("challenge")?.asString ?: ""
+                        val code = activation?.get("code")?.asString ?: ""
+                        Logger.i(TAG, "设备需要激活，验证码: $code")
+                        // 显示验证码到聊天界面
+                        val message = ChatMessage(
+                            id = java.util.UUID.randomUUID().toString(),
+                            content = "🔐 设备需要激活，请在 xiaozhi.me 输入验证码：$code",
+                            type = MessageType.TEXT,
+                            direction = MessageDirection.RECEIVED,
+                            status = MessageStatus.SENT,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        scope.launch { _chatMessages.emit(message) }
+                    }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "解析OTA响应失败: ${e.message}")
                 }
-                // 保存激活challenge（如果有）
-                if (json.has("activation")) {
-                    val activation = json.getAsJsonObject("activation")
-                    pendingActivationChallenge = activation?.get("challenge")?.asString ?: ""
-                    val code = activation?.get("code")?.asString ?: ""
-                    Logger.i(TAG, "设备需要激活，验证码: $code")
-                    // 显示验证码到聊天界面
-                    val message = ChatMessage(
-                        id = java.util.UUID.randomUUID().toString(),
-                        content = "🔐 设备需要激活，请在 xiaozhi.me 输入验证码：$code",
-                        type = MessageType.TEXT,
-                        direction = MessageDirection.RECEIVED,
-                        status = MessageStatus.SENT,
-                        timestamp = System.currentTimeMillis()
-                    )
-                    scope.launch { _chatMessages.emit(message) }
-                }
-            } catch (e: Exception) {
-                Logger.e(TAG, "解析OTA响应失败: ${e.message}")
             }
         }
     }
 
     private fun doConnect(url: String, deviceId: String, clientId: String, accessToken: String) {
+        // 创建新连接前关闭旧连接，防止泄漏
+        webSocket?.close(1001, "Reconnecting")
         Logger.i(TAG, "Device-Id: $deviceId, Client-Id: $clientId")
 
         val headers = Headers.Builder().apply {

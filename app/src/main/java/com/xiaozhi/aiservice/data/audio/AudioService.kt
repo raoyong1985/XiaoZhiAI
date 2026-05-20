@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.PowerManager
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.core.content.ContextCompat
@@ -30,7 +31,7 @@ class AudioService {
 
         /** 唤醒词模式录音参数（小缓冲、低延迟） */
         private const val WAKE_WORD_SAMPLE_RATE = 16000
-        private const val WAKE_WORD_BUFFER_MS = 50  // 50ms 缓冲
+        private const val WAKE_WORD_BUFFER_MS = 100  // 100ms 缓冲
     }
 
     // ByteArray 池：减少录音→编码链路 GC 压力
@@ -70,6 +71,7 @@ class AudioService {
     private val isWakeWordRecording = AtomicBoolean(false)
     private var wakeWordThread: Thread? = null
     private var wakeWordRecord: AudioRecord? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     fun init(context: Context) {
         appContext = context
@@ -246,13 +248,17 @@ class AudioService {
         val frameBytes = WAKE_WORD_SAMPLE_RATE * 2 * WAKE_WORD_BUFFER_MS / 1000 // 16bit = 2 bytes
 
         return try {
-            wakeWordRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                WAKE_WORD_SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                maxOf(bufferSize, frameBytes)
-            )
+            val audioFormat = AudioFormat.Builder()
+                .setEncoding(AUDIO_FORMAT)
+                .setSampleRate(WAKE_WORD_SAMPLE_RATE)
+                .setChannelMask(CHANNEL_CONFIG)
+                .build()
+
+            wakeWordRecord = AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                .setAudioFormat(audioFormat)
+                .setBufferSizeInBytes(maxOf(bufferSize, frameBytes))
+                .build()
 
             if (wakeWordRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Logger.e(TAG, "唤醒词 AudioRecord 初始化失败")
@@ -261,29 +267,62 @@ class AudioService {
                 return false
             }
 
+            // AudioRecord 初始化成功后获取 PARTIAL_WAKE_LOCK 防止 CPU 休眠
+            // 无超时——唤醒词常驻运行，stopWakeWordDetection 中释放
+            val powerManager = appContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null) {
+                wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "AudioService:WakeWordRecording"
+                )
+                wakeLock?.acquire()
+            }
+
             isWakeWordRecording.set(true)
             wakeWordRecord?.startRecording()
 
             wakeWordThread = Thread {
-                val buffer = ByteArray(frameBytes)
-                while (isWakeWordRecording.get()) {
-                    val readSize = wakeWordRecord?.read(buffer, 0, frameBytes) ?: 0
-                    if (readSize > 0) {
-                        val actualData = if (readSize < frameBytes) buffer.copyOf(readSize) else buffer
-                        wakeWordDetector.feed(actualData)
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                var buffer = acquireBuffer(frameBytes)
+                try {
+                    while (isWakeWordRecording.get()) {
+                        val readSize = wakeWordRecord?.read(buffer, 0, frameBytes) ?: 0
+                        if (readSize > 0) {
+                            val actualData = if (readSize < frameBytes) buffer.copyOf(readSize) else buffer
+                            wakeWordDetector.feed(actualData)
+                            // 若 buffer 被 copyOf 替换过，重新从池中获取
+                            if (actualData !== buffer) {
+                                recycleBuffer(buffer)
+                                buffer = acquireBuffer(frameBytes)
+                            }
+                        } else if (readSize == 0) {
+                            // 空读 backoff，避免忙等
+                            Thread.sleep(10)
+                        }
                     }
+                } finally {
+                    recycleBuffer(buffer)
                 }
             }.also { it.start() }
 
-            Logger.i(TAG, "唤醒词录音已启动（采样率: ${WAKE_WORD_SAMPLE_RATE}Hz, 缓冲: ${WAKE_WORD_BUFFER_MS}ms）")
+            Logger.i(TAG, "唤醒词录音已启动（采样率: ${WAKE_WORD_SAMPLE_RATE}Hz, 缓冲: ${WAKE_WORD_BUFFER_MS}ms, 节能模式）")
             true
         } catch (e: SecurityException) {
             Logger.e(TAG, "唤醒词录音权限被拒绝: ${e.message}")
+            releaseWakeLockQuietly()
             false
         } catch (e: Exception) {
             Logger.e(TAG, "唤醒词录音启动失败: ${e.message}")
+            releaseWakeLockQuietly()
             false
         }
+    }
+
+    private fun releaseWakeLockQuietly() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
     }
 
     /**
@@ -301,6 +340,8 @@ class AudioService {
             wakeWordRecord?.release()
         } catch (_: Exception) {}
         wakeWordRecord = null
+        // 释放 PARTIAL_WAKE_LOCK
+        releaseWakeLockQuietly()
         Logger.i(TAG, "唤醒词检测已停止")
     }
 
@@ -325,24 +366,26 @@ class AudioService {
             // 不要用 VOICE_COMMUNICATION——它自带系统 AEC/NS 会与 AudioEnhancer 冲突（双重处理降质）
             val audioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION
 
-            audioRecord = AudioRecord(
-                audioSource,
-                recordSampleRate,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
+            val audioFormat = AudioFormat.Builder()
+                .setEncoding(AUDIO_FORMAT)
+                .setSampleRate(recordSampleRate)
+                .setChannelMask(CHANNEL_CONFIG)
+                .build()
+
+            audioRecord = AudioRecord.Builder()
+                .setAudioSource(audioSource)
+                .setAudioFormat(audioFormat)
+                .setBufferSizeInBytes(bufferSize)
+                .build()
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Logger.e(TAG, "AudioRecord初始化失败，尝试降级到MIC")
                 // 降级到 MIC（部分设备不支持 VOICE_COMMUNICATION）
-                audioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    recordSampleRate,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    bufferSize
-                )
+                audioRecord = AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build()
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                     Logger.e(TAG, "AudioRecord降级初始化也失败")
                     return false
@@ -440,13 +483,18 @@ class AudioService {
     private fun calculateRmsEnergy(pcmData: ByteArray): Double {
         if (pcmData.size < 2) return 0.0
         var sumSquares = 0.0
+        var count = 0
         val sampleCount = pcmData.size / 2
-        for (i in 0 until sampleCount) {
+        // 每 4 个样本取 1 个计算，降低功耗
+        var i = 0
+        while (i < sampleCount) {
             val sample = (pcmData[i * 2].toInt() and 0xFF) or
                         ((pcmData[i * 2 + 1].toInt() and 0xFF) shl 8)
             sumSquares += (sample * sample).toDouble()
+            count++
+            i += 4
         }
-        return kotlin.math.sqrt(sumSquares / sampleCount)
+        return kotlin.math.sqrt(sumSquares / count)
     }
 
     fun stopRecording() {

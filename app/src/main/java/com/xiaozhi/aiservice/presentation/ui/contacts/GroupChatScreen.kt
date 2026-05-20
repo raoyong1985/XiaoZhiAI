@@ -34,7 +34,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.widget.Toast
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
@@ -153,7 +152,6 @@ fun GroupChatScreen(
                     onCopy = { text ->
                         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("chat", text))
-                        coroutineScope.launch { snackbarHostState.showSnackbar("已复制", duration = SnackbarDuration.Short) }
                     }
                 )
             }

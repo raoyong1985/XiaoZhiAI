@@ -51,7 +51,6 @@ import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -131,7 +130,6 @@ fun ChatScreen(
 
     // Alert Snackbar 状态
     val snackbarHostState = remember { SnackbarHostState() }
-    val copyScope = rememberCoroutineScope()
     val ctx = LocalContext.current
     LaunchedEffect(uiState.alert) {
         uiState.alert?.let { alertText ->
@@ -225,7 +223,6 @@ fun ChatScreen(
                         onCopy = { text ->
                             val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             clipboard.setPrimaryClip(ClipData.newPlainText("chat", text))
-                            copyScope.launch { snackbarHostState.showSnackbar("已复制", duration = SnackbarDuration.Short) }
                         }
                     )
                 }
