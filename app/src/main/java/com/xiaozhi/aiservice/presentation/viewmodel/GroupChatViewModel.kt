@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
+import com.xiaozhi.aiservice.data.remote.BotConnectionPool
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
@@ -29,7 +30,7 @@ class GroupChatViewModel : ViewModel() {
     private val groupChatRepository = AppContainer.groupChatRepository
     private val contactsRepository = AppContainer.contactsRepository
 
-    private val botConnections = ConcurrentHashMap<String, XiaoZhiBackendService>()
+    private val botConnectionPool = BotConnectionPool(AppContainer.gson)
     private val playbackManager = AudioPlaybackManager()
     private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
@@ -105,12 +106,10 @@ class GroupChatViewModel : ViewModel() {
     fun connectGroup(groupId: String) {
         observeJob?.cancel()
         observeJob = null
-        botConnections.forEach { (_, service) -> service.disconnect() }
-        botConnections.clear()
+        botConnectionPool.disconnectAll()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
         playbackManager.releaseAll()
-        deadBotIds.clear()
         relayState = RelayState()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
@@ -128,11 +127,9 @@ class GroupChatViewModel : ViewModel() {
                             try {
                                 val contact = _contacts.value.find { it.id == botId }
                                 contact?.let { c ->
-                                    if (!botConnections.containsKey(botId)) {
-                                        val service = XiaoZhiBackendService(AppContainer.gson)
-                                        botConnections[botId] = service
+                                    if (botConnectionPool.get(botId) == null) {
+                                        val service = botConnectionPool.getOrConnect(botId, c)
                                         observeBotEvents(botId, groupId, c.name, service)
-                                        service.connect(c.serverUrl, c.otaUrl, c.deviceId, c.clientId)
                                     }
                                 }
                             } catch (e: Exception) {
@@ -155,11 +152,10 @@ class GroupChatViewModel : ViewModel() {
                 delay(15_000)
                 // 定期清理死 bot 列表（每 2 分钟一次）
                 val now = System.currentTimeMillis()
-                if (now - lastCleanup > 120_000 && deadBotIds.isNotEmpty()) {
+                if (now - lastCleanup > 120_000) {
                     lastCleanup = now
-                    val count = deadBotIds.size
-                    deadBotIds.clear()
-                    android.util.Log.i(TAG, "清理死 bot 列表: ${count}个已过期")
+                    botConnectionPool.clearDead()
+                    android.util.Log.i(TAG, "清理死 bot 列表")
                 }
 
                 val rs = relayState
@@ -201,9 +197,7 @@ class GroupChatViewModel : ViewModel() {
         if (relayState.botIds.isEmpty()) return
 
         currentGroupId = groupId
-        botConnections.forEach { (_, svc) ->
-            try { svc.sendAbort("user_interrupt") } catch (_: Exception) {}
-        }
+        botConnectionPool.abortAll("user_interrupt")
         playbackManager.releaseAll()
         // 不取消 botObserverJobs！监听器跨录音会话存活，
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
@@ -214,7 +208,7 @@ class GroupChatViewModel : ViewModel() {
         recentCandidates.clear()
 
         val firstBotId = relayState.botIds[0]
-        val service = botConnections[firstBotId] ?: return
+        val service = botConnectionPool.get(firstBotId) ?: return
 
         relayState = relayState.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0,
@@ -264,15 +258,13 @@ class GroupChatViewModel : ViewModel() {
         android.util.Log.i(TAG, "停止录音 userExplicitStop=$userExplicitStop")
 
         if (userExplicitStop) {
-            botConnections.forEach { (_, svc) ->
-                try { svc.sendAbort("user_stop") } catch (_: Exception) {}
-            }
+            botConnectionPool.abortAll("user_stop")
         }
 
         audioRecorder.stop()
         audioService.abandonAudioFocus()
 
-        try { botConnections[relayState.botIds.firstOrNull()]?.sendListenStopOnly() } catch (_: Exception) {}
+        try { botConnectionPool.get(relayState.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (_: Exception) {}
     }
 
     // ═══════════════════════════════════════════
@@ -478,13 +470,16 @@ class GroupChatViewModel : ViewModel() {
         val candidates = resolveSpeakerCandidates(prevIndex, previousReply, rs.botIds)
 
         val connected = candidates.filter { (_, id) ->
-            val svc = botConnections[id]
+            val svc = botConnectionPool.get(id)
             svc != null && (svc.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
-                || ensureBotConnected(svc, id))
+                || run {
+                    val contact = _contacts.value.find { it.id == id }
+                    contact != null && botConnectionPool.ensureConnected(id, contact)
+                })
         }
 
         for ((targetIndex, speakerId) in connected) {
-            val service = botConnections[speakerId] ?: continue
+            val service = botConnectionPool.get(speakerId) ?: continue
             relayState = relayState.moveToSpeaker(targetIndex)
 
             val audioOk = forwardAudioToBot(prevBotId, service)
@@ -567,7 +562,7 @@ class GroupChatViewModel : ViewModel() {
         if (botIds.isEmpty()) return emptyList()
 
         // 过滤死 bot，压缩索引 —— 返回 compacted 索引，避免指向死 bot
-        val aliveBotIds = botIds.filter { !deadBotIds.contains(it) }
+        val aliveBotIds = botIds.filter { !botConnectionPool.isDead(it) }
         if (aliveBotIds.isEmpty()) return emptyList()
 
         val rs = relayState
@@ -633,26 +628,8 @@ class GroupChatViewModel : ViewModel() {
     }
 
     // ── 连接保活 ──
-    private val deadBotIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // 使用 botConnectionPool 管理
 
-    private suspend fun ensureBotConnected(service: XiaoZhiBackendService, botId: String): Boolean {
-        if (deadBotIds.contains(botId)) return false  // 已确认死亡，跳过
-        if (service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) return true
-        // connectionState=Error 表示服务器要求激活(code 1005)或DNS解析失败
-        if (service.connectionState.value is XiaoZhiBackendService.ConnectionState.Error) {
-            android.util.Log.w(TAG, "bot[$botId] 连接失败(Error状态)，标记为死亡")
-            deadBotIds.add(botId)
-            return false
-        }
-        android.util.Log.w(TAG, "重新连接: $botId")
-        val contact = _contacts.value.find { it.id == botId } ?: return false
-        service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
-        return withTimeoutOrNull(5000) {
-            service.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }
-        } != null
-    }
-
-    // ── 音频排空 ──
     private suspend fun drainPreviousBotAudio(prevBotId: String?) {
         if (prevBotId == null) return
         withTimeoutOrNull(AUDIO_DRAIN_TIMEOUT_MS) {
@@ -788,8 +765,7 @@ class GroupChatViewModel : ViewModel() {
 
     suspend fun deleteGroup(groupId: String) {
         groupChatRepository.deleteGroup(groupId)
-        botConnections.forEach { (_, service) -> service.disconnect() }
-        botConnections.clear()
+        botConnectionPool.disconnectAll()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
         playbackManager.releaseAll()
@@ -819,15 +795,11 @@ class GroupChatViewModel : ViewModel() {
 
         if (relayState.botIds.isNotEmpty()) {
             val firstBotId = relayState.botIds[0]
-            val svc = botConnections[firstBotId]
+            val svc = botConnectionPool.get(firstBotId)
             if (svc != null) {
-                val connected = withTimeoutOrNull(5_000) {
-                    if (svc.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) return@withTimeoutOrNull true
-                    val contact = _contacts.value.find { it.id == firstBotId }
-                    if (contact != null) svc.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
-                    svc.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }; true
-                }
-                if (connected == true) svc.sendTextContent(content)
+                val contact = _contacts.value.find { it.id == firstBotId }
+                val connected = contact != null && botConnectionPool.ensureConnected(firstBotId, contact)
+                if (connected) svc.sendTextContent(content)
                 else android.util.Log.w(TAG, "sendMessage: 首bot连接失败")
             }
         }
@@ -874,12 +846,10 @@ class GroupChatViewModel : ViewModel() {
         stopVoiceInput()
         sttCollectorJob?.cancel()
         stuckRelayWatcher?.cancel()
-        botConnections.forEach { (_, service) -> service.disconnect() }
-        botConnections.clear()
+        botConnectionPool.disconnectAll()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
         playbackManager.releaseAll()
-        deadBotIds.clear()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
         recentReplyKeys.clear()
