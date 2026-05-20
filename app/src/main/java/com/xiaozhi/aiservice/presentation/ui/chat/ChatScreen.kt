@@ -2,7 +2,9 @@ package com.xiaozhi.aiservice.presentation.ui.chat
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,6 +33,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -48,7 +53,7 @@ import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
@@ -284,6 +289,7 @@ private fun ImageBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha:
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float) {
     Row(
@@ -292,6 +298,7 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
             .padding(vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
+        val ctx = LocalContext.current
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -306,6 +313,14 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
                 .background(
                     if (isFromMe) MaterialTheme.colorScheme.primary.copy(alpha = streamingAlpha)
                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (message.isStreaming) streamingAlpha else 1f)
+                )
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("chat", message.content))
+                        android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 )
                 .padding(12.dp)
         ) {

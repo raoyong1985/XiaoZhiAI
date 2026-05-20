@@ -2,7 +2,9 @@ package com.xiaozhi.aiservice.presentation.ui.contacts
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,9 +27,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
@@ -143,6 +150,7 @@ fun GroupChatScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
@@ -157,6 +165,7 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
+        val ctx = LocalContext.current
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -169,6 +178,14 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
                     )
                 )
                 .background(bubbleColor)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("chat", message.content))
+                        android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                )
                 .padding(12.dp)
         ) {
             Column {
