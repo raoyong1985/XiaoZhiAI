@@ -131,6 +131,8 @@ fun ChatScreen(
 
     // Alert Snackbar 状态
     val snackbarHostState = remember { SnackbarHostState() }
+    val copyScope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     LaunchedEffect(uiState.alert) {
         uiState.alert?.let { alertText ->
             snackbarHostState.showSnackbar(
@@ -218,7 +220,14 @@ fun ChatScreen(
                 item { Spacer(modifier = Modifier.height(8.dp)) }
 
                 items(uiState.messages, key = { it.id }) { message ->
-                    MessageBubble(message = message)
+                    MessageBubble(
+                        message = message,
+                        onCopy = { text ->
+                            val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("chat", text))
+                            copyScope.launch { snackbarHostState.showSnackbar("已复制", duration = SnackbarDuration.Short) }
+                        }
+                    )
                 }
 
                 item { Spacer(modifier = Modifier.height(8.dp)) }
@@ -243,7 +252,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, onCopy: ((String) -> Unit)? = null) {
     val isFromMe = message.direction == MessageDirection.SENT
 
     // 流式消息：透明度 0.5→1 呼吸动画
@@ -255,7 +264,7 @@ private fun MessageBubble(message: ChatMessage) {
 
     when (message.type) {
         MessageType.IMAGE -> ImageBubble(message, isFromMe, streamingAlpha)
-        else -> TextBubble(message, isFromMe, streamingAlpha)
+        else -> TextBubble(message, isFromMe, streamingAlpha, onCopy)
     }
 }
 
@@ -291,14 +300,13 @@ private fun ImageBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float) {
+private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float, onCopy: ((String) -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
-        val ctx = LocalContext.current
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -317,11 +325,7 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
-                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("chat", message.content))
-                        val toast = android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT)
-                        toast.setGravity(android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL, 0, 200)
-                        toast.show()
+                        onCopy?.invoke(message.content)
                     }
                 )
                 .padding(12.dp)

@@ -77,6 +77,8 @@ fun GroupChatScreen(
         }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val ctx = LocalContext.current
     var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -94,6 +96,7 @@ fun GroupChatScreen(
 
     Scaffold(
         modifier = Modifier.imePadding(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -144,7 +147,15 @@ fun GroupChatScreen(
         ) {
             items(messages, key = { it.id }) { message ->
                 val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
-                GroupMessageItem(message = message, botColorIndex = botIndex)
+                GroupMessageItem(
+                    message = message,
+                    botColorIndex = botIndex,
+                    onCopy = { text ->
+                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("chat", text))
+                        coroutineScope.launch { snackbarHostState.showSnackbar("已复制", duration = SnackbarDuration.Short) }
+                    }
+                )
             }
         }
     }
@@ -152,7 +163,7 @@ fun GroupChatScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
+fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
 
     val bubbleColor = when {
@@ -165,7 +176,6 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
-        val ctx = LocalContext.current
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -181,11 +191,7 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
-                        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("chat", message.content))
-                        val toast = android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT)
-                        toast.setGravity(android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL, 0, 200)
-                        toast.show()
+                        onCopy?.invoke(message.content)
                     }
                 )
                 .padding(12.dp)
