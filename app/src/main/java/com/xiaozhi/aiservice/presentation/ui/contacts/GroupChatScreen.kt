@@ -183,7 +183,9 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1) {
                     onLongClick = {
                         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("chat", message.content))
-                        android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                        val toast = android.widget.Toast.makeText(ctx, "已复制", android.widget.Toast.LENGTH_SHORT)
+                        toast.setGravity(android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL, 0, 200)
+                        toast.show()
                     }
                 )
                 .padding(12.dp)
