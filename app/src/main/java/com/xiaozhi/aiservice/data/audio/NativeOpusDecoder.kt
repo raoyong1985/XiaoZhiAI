@@ -97,6 +97,29 @@ class NativeOpusDecoder(
     private val packetsSinceRestart = AtomicInteger(0)
 
     /**
+     * 创建 AudioTrack（使用 Builder 模式，消除 deprecated 警告）
+     */
+    private fun createAudioTrack(bufferSize: Int): AudioTrack {
+        return AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(clientSampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(bufferSize)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+    }
+
+    /**
      * 强制排空播放缓冲：清空队列 + 暂停+flush+恢复
      * 不要完全停止 AudioTrack（OPPO/MTK 上 AudioTrack 重建可能导致无声）
      * 参考 ESP32 AudioService::ResetDecoder() — 清空所有队列并重置解码器
@@ -170,14 +193,7 @@ class NativeOpusDecoder(
             // 先请求音频焦点（OPPO/MTK 必须显式申请，否则第二个 AudioTrack 无声）
             requestAudioFocus()
 
-            audioTrack = AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                clientSampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,
-                AudioTrack.MODE_STREAM
-            )
+            audioTrack = createAudioTrack(bufferSize)
 
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
                 Logger.e(TAG, "AudioTrack init failed")
@@ -259,14 +275,7 @@ class NativeOpusDecoder(
             // 先请求音频焦点（OPPO/MTK 必须显式申请，否则第二个 AudioTrack 无声）
             requestAudioFocus()
 
-            val track = AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                clientSampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,
-                AudioTrack.MODE_STREAM
-            )
+            val track = createAudioTrack(bufferSize)
             if (track.state != AudioTrack.STATE_INITIALIZED) {
                 Logger.e(TAG, "restartPlayback: AudioTrack 初始化失败")
                 track.release()
