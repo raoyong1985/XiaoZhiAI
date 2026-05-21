@@ -11,6 +11,8 @@ import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.AiStateStr
+import com.xiaozhi.aiservice.data.settings.AudioSettings
+import com.xiaozhi.aiservice.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -516,6 +518,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 "mcp" -> handleMcp(json)
                 "abort" -> handleAbort(json)
                 "alert" -> handleAlert(json)
+                "iot" -> handleIot(json)
+                "server" -> handleServer(json)
             }
         } catch (e: Exception) {
             // ignore parse errors
@@ -540,6 +544,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
             Logger.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
             if (challenge.isNotEmpty()) sendActivation(challenge, challengeCode)
         }
+        // 连接建立后上报 IoT 设备能力
+        sendIotDescriptors()
     }
 
     private fun handleActivation(json: JsonObject) {
@@ -758,6 +764,84 @@ class XiaoZhiBackendService(private val gson: Gson) {
             ?: "收到通知"
         Logger.i(TAG, "收到Alert: $alertText")
         scope.launch { _alert.emit(alertText) }
+    }
+
+    /**
+     * 处理 IoT 消息（服务端推送的设备/工具描述符）
+     * 参考 xiaozhi-esp32-server core/handle/textHandler/iotMessageHandler.py
+     *
+     * 服务端下发 IoT 命令格式:
+     * {"type":"iot","commands":[{"name":"...","description":"..."}]}
+     */
+    private fun handleIot(json: JsonObject) {
+        val commands = json.getAsJsonArray("commands")
+        if (commands != null) {
+            Logger.i(TAG, "收到 ${commands.size()} 个 IoT 命令")
+            for (cmd in commands) {
+                val cmdObj = cmd.asJsonObject
+                val name = cmdObj.get("name")?.asString ?: ""
+                val desc = cmdObj.get("description")?.asString ?: ""
+                Logger.i(TAG, "IoT 命令: $name — $desc")
+                // TODO: 注册 MCP 工具供 LLM 调用 (当前通过 MCP protocol 已实现兼容)
+            }
+        }
+    }
+
+    /**
+     * 处理 Server 消息（服务端推送的配置更新/OTA 通知）
+     * 参考 xiaozhi-esp32-server core/handle/textHandler/serverMessageHandler.py
+     *
+     * 格式: {"type":"server","action":"ota_update","url":"..."}
+     */
+    private fun handleServer(json: JsonObject) {
+        val action = json.get("action")?.asString ?: ""
+        Logger.i(TAG, "收到 Server 消息: action=$action")
+        when (action) {
+            "ota_update" -> {
+                val url = json.get("url")?.asString ?: ""
+                Logger.i(TAG, "OTA 更新地址: $url")
+                scope.launch { _alert.emit("检测到新版本，请更新: $url") }
+            }
+            "config_update" -> {
+                Logger.i(TAG, "服务端配置已更新，可能需要重连")
+            }
+            else -> Logger.i(TAG, "Server 消息 (未处理): $action")
+        }
+    }
+
+    /**
+     * 上报 IoT 设备能力描述符到服务端
+     * 格式: {"type":"iot","descriptors":[...]}
+     * 参考 xiaozhi-esp32-server core/providers/tools/device_iot/iot_descriptor.py
+     */
+    fun sendIotDescriptors() {
+        val message = JsonObject().apply {
+            addProperty("session_id", sessionId)
+            addProperty("type", "iot")
+            val descriptors = JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("name", "volume")
+                    addProperty("type", "number")
+                    addProperty("description", "输出音量 0-100")
+                    addProperty("value", AudioSettings.getOutputVolume(AppContainer.context))
+                })
+                add(JsonObject().apply {
+                    addProperty("name", "aec")
+                    addProperty("type", "binary")
+                    addProperty("description", "声学回声消除")
+                    addProperty("value", AppContainer.audioService.isAecEnabled())
+                })
+                add(JsonObject().apply {
+                    addProperty("name", "device_name")
+                    addProperty("type", "string")
+                    addProperty("description", "设备名称")
+                    addProperty("value", android.os.Build.MODEL)
+                })
+            }
+            add("descriptors", descriptors)
+        }
+        sendTextMessage(message.toString())
+        Logger.i(TAG, "已上报 IoT 设备能力")
     }
 
     /**
