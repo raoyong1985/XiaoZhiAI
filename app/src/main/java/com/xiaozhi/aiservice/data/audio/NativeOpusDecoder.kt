@@ -27,7 +27,7 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val BUFFER_MULTIPLIER = 12
+        private const val BUFFER_MULTIPLIER = 24
         private const val MAX_QUEUE_SIZE = 200
 
         /** 播放线程空闲超时：无真实音频数据时，写少量静音帧保持 AudioTrack 活跃避免焦点丢失 */
@@ -226,11 +226,21 @@ class NativeOpusDecoder(
                             audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
-                            val written = audioTrack?.write(data, 0, data.size) ?: -1
+                            var written = audioTrack?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
-                            } else if (written < 0) {
-                                Logger.e(TAG, "AudioTrack write error: $written")
+                            }
+                            // 排空队列——一次性写入所有已缓存的音频包，最大化 AudioTrack 缓冲填充
+                            // 防止因解码/网络抖动导致 underrun
+                            while (isPlaying.get()) {
+                                val next = audioQueue.poll()
+                                if (next == null) break
+                                audioTrack?.play()
+                                written = audioTrack?.write(next, 0, next.size) ?: -1
+                                if (written > 0) {
+                                    totalBytesWritten.updateAndGet { it + written }
+                                }
+                                pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             }
                         } else {
                             // 空闲时写少量静音帧保持 AudioTrack 活跃，避免焦点丢失
@@ -309,11 +319,20 @@ class NativeOpusDecoder(
                             audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
-                            val written = track.write(data, 0, data.size) ?: -1
+                            var written = track.write(data, 0, data.size) ?: -1
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
-                            } else if (written < 0) {
-                                Logger.e(TAG, "AudioTrack write error: $written")
+                            }
+                            // 排空队列——一次性写入所有已缓存音频包，防止 underrun
+                            while (isPlaying.get()) {
+                                val next = audioQueue.poll()
+                                if (next == null) break
+                                audioTrack?.play()
+                                written = track.write(next, 0, next.size) ?: -1
+                                if (written > 0) {
+                                    totalBytesWritten.updateAndGet { it + written }
+                                }
+                                pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             }
                         } else {
                             if (System.currentTimeMillis() - lastAudioActivityMs.get() > PLAY_IDLE_TIMEOUT_MS) {
