@@ -90,43 +90,18 @@ class AudioPlaybackManager {
         return decoder.waitForQueueEmpty(timeoutMs)
     }
 
-    /**
-     * 淘汰超出上限的解码器（移除最旧的，保留最新的）。
-     * @param protectKey 受保护的 key，不会被淘汰
-     */
-    fun releaseExcess(maxKeep: Int, protectKey: String? = null) {
-        if (decoders.size <= maxKeep) return
-        val keys = decoders.keys.toList()
-        val candidates = if (protectKey != null) keys.filter { it != protectKey } else keys
-        val toRemove = candidates.take(candidates.size - maxKeep + (if (protectKey != null && decoders.containsKey(protectKey)) 1 else 0))
-        if (toRemove.isEmpty()) return
-        Logger.i(TAG, "淘汰 ${toRemove.size} 个解码器 (当前=${decoders.size}, 上限=$maxKeep)")
-        toRemove.forEach { release(it) }
-    }
-
-    /**
-     * 排空除 protectKey 外所有解码器的播放队列。
-     */
-    suspend fun drainAllExcept(protectKey: String, timeoutMs: Long = 2000) {
-        for ((key, decoder) in decoders) {
-            if (key == protectKey || decoder.isReleased) continue
-            decoder.waitForQueueEmpty(timeoutMs)
-        }
+    /** 释放除 protectKey 外所有解码器 */
+    fun releaseAllExcept(protectKey: String) {
+        val toRelease = decoders.keys.filter { it != protectKey }
+        toRelease.forEach { release(it) }
     }
 
     /** 当前解码器数量 */
     val size: Int get() = decoders.size
 
-    /** 释放除 protectKey 外所有解码器（OPPO/MTK 切换 bot 时强制停止旧 AudioTrack） */
-    fun releaseAllExcept(protectKey: String) {
-        val toRelease = decoders.keys.filter { it != protectKey }
-        toRelease.forEach { release(it) }
-        if (toRelease.isNotEmpty()) {
-            Logger.i(TAG, "已释放 ${toRelease.size} 个解码器（保留 $protectKey）")
-        }
-    }
-
-    /** 更新所有活跃解码器的音量 */
+    /**
+     * 更新所有活跃解码器的音量
+     */
     fun setVolume(level: Int) {
         val clamped = level.coerceIn(0, 100)
         decoders.values.forEach { decoder ->

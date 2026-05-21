@@ -76,10 +76,8 @@ class GroupChatViewModel : ViewModel() {
     companion object {
         private const val TAG = "GroupChatVM"
         private val GOODBYE_KEYWORDS = listOf("再见", "拜拜", "下次聊", "不打扰", "回头聊", "bye", "goodbye")
-        private const val AUDIO_DRAIN_TIMEOUT_MS = 3000L
-        private const val AUDIO_DRAIN_SILENCE_MS = 300L
-        /** 同时保留的最大解码器数，防止 AudioTrack 耗尽 */
-        private const val MAX_DECODERS = 6
+        private const val AUDIO_DRAIN_TIMEOUT_MS = 5000L
+        private const val AUDIO_DRAIN_SILENCE_MS = 2000L
         /** 音频转发缓冲单 bot 上限（防止内存持续增长） */
         private const val MAX_FORWARD_BUFFER_SIZE = 200
     }
@@ -686,24 +684,6 @@ class GroupChatViewModel : ViewModel() {
             android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
         }
         delay(200) // AudioTrack 硬件缓冲补偿
-    }
-
-    private suspend fun drainPreviousDecodersBeforeSwitch() {
-        val currentId = _relayState.value.currentBotId ?: return
-        // 先排空其他解码器队列（等最后一段自然播完），再强制停止 AudioTrack
-        // OPPO/MTK 上旧 AudioTrack 必须完全释放，否则新 bot 无声
-        playbackManager.drainAllExcept(currentId, 2000L)
-        playbackManager.releaseAllExcept(currentId)
-    }
-
-    private fun releaseOldDecoders() {
-        val currentId = _relayState.value.currentBotId
-        val beforeSize = playbackManager.size
-        playbackManager.releaseExcess(MAX_DECODERS, currentId)
-        val afterSize = playbackManager.size
-        if (afterSize < beforeSize) {
-            android.util.Log.w(TAG, "解码器超上限(${beforeSize}>$MAX_DECODERS)，淘汰 ${beforeSize - afterSize} 个")
-        }
     }
 
     // ── 音频转发 ──
