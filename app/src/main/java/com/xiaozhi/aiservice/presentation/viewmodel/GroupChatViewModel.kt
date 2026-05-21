@@ -313,16 +313,27 @@ class GroupChatViewModel : ViewModel() {
                 val serverRate = service.getServerSampleRate()
                 val serverCh = service.getServerChannels()
                 val volume = AudioSettings.getOutputVolume(AppContainer.context)
-                if (!playbackManager.contains(botId)) {
-                    drainPreviousDecodersBeforeSwitch()
+                // 群聊所有 bot 共享单个解码器（OPPO/MTK 多个 AudioTrack 同时存在会无声）
+                // 切换 bot 时释放旧解码器，用新参数创建共享解码器
+                val currentSourceId = "${groupId}_shared"
+                if (!playbackManager.contains(currentSourceId)) {
                     speakerMutex.withLock {
-                        if (!playbackManager.contains(botId)) {
-                            releaseOldDecoders()
-                            playbackManager.getOrCreate(botId, serverRate, serverCh, volume)
+                        if (!playbackManager.contains(currentSourceId)) {
+                            playbackManager.releaseAll()
+                            playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
+                        }
+                    }
+                } else {
+                    // 采样率变化时重建解码器（不同 bot 可能用不同采样率）
+                    val existing = playbackManager.get(currentSourceId)
+                    if (existing != null && existing.getServerSampleRate() != serverRate) {
+                        speakerMutex.withLock {
+                            playbackManager.release(currentSourceId)
+                            playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
                         }
                     }
                 }
-                playbackManager.decodeAndPlay(botId, serverRate, serverCh, audioData, volume)
+                playbackManager.decodeAndPlay(currentSourceId, serverRate, serverCh, audioData, volume)
                 val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
                 buf.add(audioData)
                 if (buf.size > MAX_FORWARD_BUFFER_SIZE) {

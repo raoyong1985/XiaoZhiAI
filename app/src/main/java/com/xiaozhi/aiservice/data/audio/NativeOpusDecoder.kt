@@ -140,6 +140,9 @@ class NativeOpusDecoder(
 
     fun getVolume(): Int = volumeScale
 
+    /** 获取解码器使用的服务器采样率 */
+    fun getServerSampleRate(): Int = serverSampleRate
+
     fun init() {
         try {
             decoderPtr = nativeCreateDecoder(serverSampleRate, channels)

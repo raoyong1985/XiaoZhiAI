@@ -76,10 +76,11 @@ class AudioPlaybackManager {
         decoders.clear()
     }
 
-    /**
-     * 判断源是否存在。
-     */
+    /** 判断源是否存在。 */
     fun contains(sourceId: String): Boolean = decoders.containsKey(sourceId)
+
+    /** 获取指定源的解码器，不存在返回 null */
+    fun get(sourceId: String): NativeOpusDecoder? = decoders[sourceId]
 
     /**
      * 等待指定源的音频队列排空。
