@@ -25,10 +25,15 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val MAX_QUEUE_SIZE = 200
         private const val BUFFER_MULTIPLIER = 6
-        /** 播放线程空闲超时：无音频数据持续此时间后自动停止播放线程释放音频硬件 */
-        private const val PLAY_IDLE_TIMEOUT_MS = 5000L
+        private const val MAX_QUEUE_SIZE = 200
+
+        /** 播放线程空闲超时：无真实音频数据时，写少量静音帧保持 AudioTrack 活跃避免焦点丢失 */
+        private const val PLAY_IDLE_TIMEOUT_MS = 10_000L
+        /** 空闲时写静音的间隔（每 N ms 写一次静音帧，保持 AudioTrack 活跃） */
+        private const val IDLE_SILENCE_INTERVAL_MS = 1000L
+        private const val SILENCE_FRAME_SIZE = 512
+        private val silenceFrame = ByteArray(SILENCE_FRAME_SIZE)
     }
 
     private var decoderPtr: Long = 0
@@ -158,12 +163,11 @@ class NativeOpusDecoder(
                                 Logger.e(TAG, "AudioTrack write error: $written")
                             }
                         } else {
-                            // 空闲超时检测：无音频数据持续 PLAY_IDLE_TIMEOUT_MS 则自动停止播放线程
-                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > PLAY_IDLE_TIMEOUT_MS) {
-                                Logger.i(TAG, "播放空闲超时(${PLAY_IDLE_TIMEOUT_MS}ms)，停止播放线程以省电")
-                                break
+                            // 空闲时写少量静音帧保持 AudioTrack 活跃，避免焦点丢失
+                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > IDLE_SILENCE_INTERVAL_MS) {
+                                try { audioTrack?.write(silenceFrame, 0, SILENCE_FRAME_SIZE) } catch (_: Exception) {}
+                                lastAudioActivityMs.set(System.currentTimeMillis())
                             }
-                            // ✅ 不写静音帧到 AudioTrack！让出CPU让系统进入深度休眠
                             Thread.sleep(50)
                         }
                     } catch (e: InterruptedException) {
