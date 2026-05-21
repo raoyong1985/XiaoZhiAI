@@ -61,7 +61,7 @@ fun GroupChatScreen(
     val group = groups.find { it.id == groupId }
     val messages by viewModel.getGroupMessages(groupId).collectAsState(initial = emptyList())
     val isRecording by viewModel.isRecording.collectAsState()
-    val inputMode = group?.inputMode ?: 1
+    val inputMode = group?.inputMode ?: 0  // 默认语音输入
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var inputText by remember { mutableStateOf("") }

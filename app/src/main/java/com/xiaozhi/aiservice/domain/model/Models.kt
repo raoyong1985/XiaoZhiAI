@@ -135,7 +135,7 @@ data class GroupChat(
     val id: String = "",                       // 群聊唯一标识（UUID）
     val name: String = "",                     // 群聊名称
     val botIds: List<String> = emptyList(),    // 群内智能体ID列表
-    val inputMode: Int = 1,                    // 0=语音, 1=文字
+    val inputMode: Int = 0,                    // 0=语音, 1=文字
     val createdAt: Long = System.currentTimeMillis()
 )
 
