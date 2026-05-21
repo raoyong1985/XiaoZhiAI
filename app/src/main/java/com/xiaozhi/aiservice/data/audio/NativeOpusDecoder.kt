@@ -154,6 +154,8 @@ class NativeOpusDecoder(
                     try {
                         val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
+                            // OPPO/MTK 设备上 AudioTrack 可能因无焦点暂停，每次写入前确保 play()
+                            audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             val written = audioTrack?.write(data, 0, data.size) ?: -1
@@ -238,6 +240,8 @@ class NativeOpusDecoder(
                     try {
                         val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
+                            // OPPO/MTK 设备上 AudioTrack 可能因无焦点暂停，每次写入前确保 play()
+                            audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             val written = track.write(data, 0, data.size) ?: -1
