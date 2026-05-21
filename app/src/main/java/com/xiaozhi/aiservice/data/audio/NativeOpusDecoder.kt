@@ -206,9 +206,10 @@ class NativeOpusDecoder(
             audioTrack?.play()
             isPlaying.set(true)
 
-            // 写入少量静音预填充 AudioTrack 缓冲，防止部分设备不出声
+            // 写入静音预填充 AudioTrack 缓冲（≈1s @16kHz），给首个音频包足够缓冲余量
+            // 防止 OPPO/MTK 上因首个包写入太慢导致 AudioTrack underrun
             try {
-                val prime = ByteArray(4096)  // 256ms @16kHz
+                val prime = ByteArray(32000)  // 1s @16kHz mono 16-bit
                 audioTrack?.write(prime, 0, prime.size)
             } catch (_: Exception) {}
 
@@ -304,8 +305,8 @@ class NativeOpusDecoder(
             track.play()
             isPlaying.set(true)
 
-            // 预填充静音（防止部分设备不出声）
-            try { track.write(ByteArray(4096), 0, 4096) } catch (_: Exception) {}
+            // 预填充静音（≈1s @16kHz），防止首个音频包到达前 AudioTrack 空缓冲 underrun
+            try { track.write(ByteArray(32000), 0, 32000) } catch (_: Exception) {}
 
             // 重建播放线程
             playThread = Thread {
