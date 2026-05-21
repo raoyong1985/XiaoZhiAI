@@ -116,6 +116,15 @@ class AudioPlaybackManager {
     /** 当前解码器数量 */
     val size: Int get() = decoders.size
 
+    /** 释放除 protectKey 外所有解码器（OPPO/MTK 切换 bot 时强制停止旧 AudioTrack） */
+    fun releaseAllExcept(protectKey: String) {
+        val toRelease = decoders.keys.filter { it != protectKey }
+        toRelease.forEach { release(it) }
+        if (toRelease.isNotEmpty()) {
+            Logger.i(TAG, "已释放 ${toRelease.size} 个解码器（保留 $protectKey）")
+        }
+    }
+
     /** 更新所有活跃解码器的音量 */
     fun setVolume(level: Int) {
         val clamped = level.coerceIn(0, 100)

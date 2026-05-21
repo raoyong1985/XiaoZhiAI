@@ -85,33 +85,39 @@ class NativeOpusDecoder(
     private val packetsSinceRestart = AtomicInteger(0)
 
     /**
-     * 强制 flush AudioTrack：清空队列 + 暂停+flush+恢复
-     * 参考 ESP32 AudioService::ResetDecoder() — 清空所有队列并重置解码器
-     * 用于 SPEAKING→LISTENING 切换时，立即停止残留音频播放
+     * 强制排空播放缓冲并完全停止 AudioTrack（OPPO/MTK 必须彻底释放，否则新 AudioTrack 无声）
+     * OPPO/MTK 上多个 AudioTrack 同时写静音会抢占音频路由导致新 bot 无声
+     * 参考 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
      */
     fun flushAudio() {
-        Logger.i(TAG, "flushAudio: 强制排空播放缓冲")
-        // 清空 Opus 解码队列（参考 ESP32 ResetDecoder: audio_decode_queue_.clear()）
+        Logger.i(TAG, "flushAudio: 强制排空播放缓冲 + 停止 AudioTrack")
+        // 清空 Opus 解码队列
         audioQueue.clear()
         pendingDecodePackets.set(0)
 
-        // flush AudioTrack 硬件缓冲（参考 ESP32 ResetDecoder 清空 audio_playback_queue_）
+        // 完全停止 AudioTrack（OPPO/MTK 必须彻底释放，否则新 AudioTrack 无声）
+        isPlaying.set(false)
         try {
             audioTrack?.let { track ->
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    track.pause()
-                    track.flush()
-                    track.play()
-                    Logger.i(TAG, "flushAudio: AudioTrack 已暂停→flush→恢复")
-                }
+                try { track.pause() } catch (_: Exception) {}
+                try { track.flush() } catch (_: Exception) {}
+                try { track.stop() } catch (_: Exception) {}
+                try { track.release() } catch (_: Exception) {}
             }
+            audioTrack = null
         } catch (e: Exception) {
-            Logger.w(TAG, "flushAudio: AudioTrack flush 异常: ${e.message}")
+            Logger.w(TAG, "flushAudio: AudioTrack 停止异常: ${e.message}")
         }
 
-        // 重置写入计数字段（参考 ESP32 ResetDecoder: timestamp_queue_.clear()）
+        // 等待播放线程退出
+        val thread = playThread
+        if (thread != null && thread.isAlive) {
+            try { thread.interrupt(); thread.join(2000) } catch (_: Exception) {}
+            playThread = null
+        }
+
         totalBytesWritten.set(0L)
-        Logger.i(TAG, "flushAudio 完成")
+        Logger.i(TAG, "flushAudio 完成（AudioTrack 已释放）")
     }
 
     // 音量缩放因子：volumeScale / 100，范围 0-100

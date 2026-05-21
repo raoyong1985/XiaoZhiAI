@@ -679,7 +679,10 @@ class GroupChatViewModel : ViewModel() {
 
     private suspend fun drainPreviousDecodersBeforeSwitch() {
         val currentId = _relayState.value.currentBotId ?: return
+        // 先排空其他解码器队列（等最后一段自然播完），再强制停止 AudioTrack
+        // OPPO/MTK 上旧 AudioTrack 必须完全释放，否则新 bot 无声
         playbackManager.drainAllExcept(currentId, 2000L)
+        playbackManager.releaseAllExcept(currentId)
     }
 
     private fun releaseOldDecoders() {
