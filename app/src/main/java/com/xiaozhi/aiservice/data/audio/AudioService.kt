@@ -73,9 +73,16 @@ class AudioService {
     private var wakeWordRecord: AudioRecord? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // Silero VAD（神经网络语音活动检测，替代 RMS 能量阈值）
+    val sileroVad = SileroVAD()
+
     fun init(context: Context) {
         appContext = context
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        // 异步初始化 Silero VAD（ONNX 模型加载约 50-100ms）
+        Thread {
+            sileroVad.init(context)
+        }.apply { start() }
     }
 
     /**
@@ -405,6 +412,8 @@ class AudioService {
 
             isRecording.set(true)
             audioRecord?.startRecording()
+            // 重置 Silero VAD 状态（内部 state/context/window 清零）
+            sileroVad.reset()
 
             val buffer = ByteArray(bufferSize)
             var silenceStartTime = 0L
@@ -428,12 +437,16 @@ class AudioService {
                         recycleBuffer(pcmData)
                     }
 
-                    // VAD 检测（参考 ESP32 afe_audio_processor VAD_MODE_0）
+                    // VAD 检测（优先使用 SileroVAD，否则降级到 RMS 能量阈值）
                     if (enableVAD) {
-                        val rmsEnergy = calculateRmsEnergy(pcmData)
                         val now = System.currentTimeMillis()
+                        val hasVoice = if (sileroVad.isInitialized()) {
+                            sileroVad.isVoice(pcmData)
+                        } else {
+                            calculateRmsEnergy(pcmData) > SILENCE_RMS_THRESHOLD
+                        }
 
-                        if (rmsEnergy > SILENCE_RMS_THRESHOLD) {
+                        if (hasVoice) {
                             consecutiveSpeechBuffers++
                             consecutiveSilenceBuffers = 0
                             if (consecutiveSpeechBuffers >= SPEECH_CONSECUTIVE_BUFFERS) {
@@ -454,7 +467,7 @@ class AudioService {
                                 if (consecutiveSilenceBuffers >= SILENCE_CONSECUTIVE_BUFFERS &&
                                     now - silenceStartTime >= SILENCE_TIMEOUT_MS &&
                                     speechDuration >= MIN_SPEECH_DURATION_MS) {
-                                    Logger.i(TAG, "VAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（RMS=$rmsEnergy, 语音持续${speechDuration}ms）")
+                                    Logger.i(TAG, "SileroVAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（语音持续${speechDuration}ms）")
                                     onSilenceDetected?.invoke()
                                     break
                                 }
