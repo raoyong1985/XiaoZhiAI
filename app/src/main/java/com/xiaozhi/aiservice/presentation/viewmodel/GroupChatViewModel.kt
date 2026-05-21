@@ -304,7 +304,11 @@ class GroupChatViewModel : ViewModel() {
                 botLastAudioTime[botId] = System.currentTimeMillis()
                 val rs = _relayState.value
                 val idx = rs.botIds.indexOf(botId)
-                if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) return@collect
+                if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) {
+                    android.util.Log.w(TAG, "[$botName] 音频被ws过滤(idx=$idx, ws=${rs.waitingSpeakerIndex}), ${audioData.size}B")
+                    return@collect
+                }
+                android.util.Log.i(TAG, "[$botName] 收到音频 ${audioData.size}B idx=$idx ws=${rs.waitingSpeakerIndex}")
 
                 val serverRate = service.getServerSampleRate()
                 val serverCh = service.getServerChannels()

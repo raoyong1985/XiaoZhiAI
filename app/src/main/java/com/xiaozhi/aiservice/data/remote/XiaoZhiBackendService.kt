@@ -772,12 +772,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
             Logger.w(TAG, "收到空二进制消息")
             return
         }
+        Logger.i(TAG, "收到二进制音频: ${data.size}B session=$sessionId")
         // 有音频数据到达，取消空闲防抖
         idleDebounceJob?.cancel()
         // 标记本轮TTS已有二进制音频（用于base64去重）
         binaryAudioInSession = true
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
+        Logger.i(TAG, "发射音频到Flow: ${opusPayload.size}B (原${data.size}B)")
         scope.launch {
             _audioData.emit(opusPayload)
         }

@@ -11,8 +11,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 57
-        versionName "1.1.08"
+        versionCode 58
+        versionName "1.1.09"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
