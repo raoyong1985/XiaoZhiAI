@@ -696,11 +696,14 @@ class GroupChatViewModel : ViewModel() {
         android.util.Log.i(TAG, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
         try {
             service.sendListenStart("auto")
-            cachedOpus.forEachIndexed { i, packet ->
-                service.sendAudio(packet)
+            // 攒批发送：每 5 包合并后一次发，减少 WebSocket 消息数
+            val batchSize = 5
+            cachedOpus.chunked(batchSize).forEachIndexed { batchIdx, batch ->
+                batch.forEach { packet -> service.sendAudio(packet) }
+                // 前 2 批给宽松延迟，后面每 4 批给 10ms
                 when {
-                    i < 10 -> delay(60)
-                    i % 20 == 0 -> delay(10)
+                    batchIdx < 2 -> delay(80)
+                    batchIdx % 4 == 0 -> delay(10)
                 }
             }
             delay(500)
