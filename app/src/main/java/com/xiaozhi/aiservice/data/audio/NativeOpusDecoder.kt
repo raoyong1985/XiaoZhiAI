@@ -38,9 +38,31 @@ class NativeOpusDecoder(
         private val silenceFrame = ByteArray(SILENCE_FRAME_SIZE)
 
         private var audioManager: AudioManager? = null
+        private var focusRequest: AudioFocusRequest? = null
 
         fun initAudioManager(context: Context) {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            // 预创建 AudioFocusRequest（复用同一个，避免自引用编译问题）
+            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { focusChange ->
+                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                        focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                        Logger.w(TAG, "AudioFocus lost($focusChange)，重新申请")
+                        // 焦点丢失时重新申请，防止 OPPO 系统路由切换后无声
+                        focusRequest?.let {
+                            audioManager?.abandonAudioFocusRequest(it)
+                            audioManager?.requestAudioFocus(it)
+                        }
+                    }
+                }
+                .build()
         }
 
         /**
@@ -49,17 +71,7 @@ class NativeOpusDecoder(
          */
         private fun requestAudioFocus() {
             try {
-                val afr = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
-                    .setAcceptsDelayedFocusGain(true)
-                    .setOnAudioFocusChangeListener { }
-                    .build()
-                audioManager?.requestAudioFocus(afr)
+                focusRequest?.let { audioManager?.requestAudioFocus(it) }
                 Logger.i(TAG, "AudioFocus requested (AUDIOFOCUS_GAIN)")
             } catch (e: Exception) {
                 Logger.w(TAG, "requestAudioFocus failed: ${e.message}")
