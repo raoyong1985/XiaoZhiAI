@@ -7,7 +7,6 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import com.xiaozhi.aiservice.di.AppContainer
 
 fun registerNetworkTools() {
@@ -105,58 +104,5 @@ fun registerNetworkTools() {
             addProperty("query", query)
             addProperty("count", results.size)
         }
-    }
-
-    MCPToolRegistry.registerTool(
-        name = "get_news",
-        description = "获取最新新闻头条，支持指定类别",
-        inputSchema = jsonSchema(
-            "category" to jsonStringProp("新闻类别：top/general/world/business/technology/science/sports/entertainment，默认 top"),
-            "country" to jsonStringProp("国家代码：cn/us/jp/etc，默认 cn"),
-            "max_results" to jsonNumberProp("最多返回条数，默认 5"),
-        )
-    ) { args ->
-        val category = (args["category"] as? String)?.lowercase()?.takeIf { it.isNotBlank() } ?: "top"
-        val country = (args["country"] as? String)?.lowercase()?.takeIf { it.isNotBlank() } ?: "cn"
-        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 20) ?: 5
-        val catParam = if (category == "top") "" else "&category=$category"
-        val newsApiKey = DeviceSettings.getNewsApiKey(AppContainer.context)
-        val url = if (newsApiKey.isNotBlank()) {
-            "https://newsapi.org/v2/top-headlines?country=$country$catParam&pageSize=$maxResults&apiKey=$newsApiKey"
-        } else ""
-        try {
-            var text = if (url.isNotEmpty()) httpGet(url, timeoutMs = 6000) else ""
-            var json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-            var articles = json?.getAsJsonArray("articles")
-            if (articles == null || articles.size() == 0) {
-                text = httpGet("https://tenapi.cn/v2/topnews?type=hot", timeoutMs = 5000)
-                json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-                articles = json?.getAsJsonArray("data")
-                if (articles != null) {
-                    val arr = JsonArray()
-                    for (i in 0 until minOf(articles.size(), maxResults)) {
-                        val a = articles[i].asJsonObject
-                        arr.add(JsonObject().apply {
-                            addProperty("title", a.get("title")?.asString ?: "")
-                            addProperty("desc", a.get("desc")?.asString ?: a.get("content")?.asString ?: "")
-                        })
-                    }
-                    return@registerTool JsonObject().apply { add("articles", arr); addProperty("count", arr.size()) }
-                }
-            }
-            if (articles != null) {
-                val arr = JsonArray()
-                for (i in 0 until minOf(articles.size(), maxResults)) {
-                    val a = articles[i].asJsonObject
-                    arr.add(JsonObject().apply {
-                        addProperty("title", a.get("title")?.asString ?: "")
-                        addProperty("description", a.get("description")?.asString ?: "")
-                        addProperty("source", a.getAsJsonObject("source")?.get("name")?.asString ?: "")
-                        addProperty("url", a.get("url")?.asString ?: "")
-                    })
-                }
-                JsonObject().apply { add("articles", arr); addProperty("count", arr.size()) }
-            } else throw Exception("未获取到新闻")
-        } catch (e: Exception) { throw Exception("获取新闻失败: ${e.message}") }
     }
 }

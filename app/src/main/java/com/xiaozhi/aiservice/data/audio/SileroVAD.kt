@@ -25,12 +25,12 @@ import java.util.Arrays
  *   5. 3 帧滑动窗口去抖动
  */
 class SileroVAD(
-    /** 语音概率高阈值：超过此值判定为语音 */
-    private val threshold: Float = 0.5f,
-    /** 语音概率低阈值：低于此值判定为静音 */
-    private val thresholdLow: Float = 0.2f,
-    /** 连续语音帧数（滑动窗口大小）用于去抖动 */
-    private val frameWindowThreshold: Int = 3
+    /** 语音概率高阈值：超过此值判定为语音，值越高越不灵敏 */
+    private val threshold: Float = 0.7f,
+    /** 语音概率低阈值：低于此值判定为静音，值越高越不易保持语音 */
+    private val thresholdLow: Float = 0.4f,
+    /** 连续语音帧数（滑动窗口大小）用于去抖动，值越大越稳定但响应越慢 */
+    private val frameWindowThreshold: Int = 4
 ) {
     companion object {
         private const val TAG = "SileroVAD"
@@ -61,6 +61,10 @@ class SileroVAD(
      */
     fun init(context: Context) {
         try {
+            // 显式加载 ONNX Runtime JNI 库（部分设备 auto-load 不生效）
+            System.loadLibrary("onnxruntime4j_jni")
+            Logger.i(TAG, "onnxruntime4j_jni loaded")
+
             val opts = OrtSession.SessionOptions()
             opts.setIntraOpNumThreads(1)
             opts.setInterOpNumThreads(1)

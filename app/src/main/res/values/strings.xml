@@ -1,32 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">小智AI</string>
-    <string name="device_list">设备列表</string>
-    <string name="chat">对话</string>
-    <string name="settings">设置</string>
-    <string name="connect">连接</string>
-    <string name="disconnect">断开</string>
-    <string name="online">在线</string>
-    <string name="offline">离线</string>
-    <string name="busy">忙碌中</string>
-    <string name="connecting">连接中...</string>
-    <string name="send">发送</string>
-    <string name="hold_to_speak">按住说话</string>
-    <string name="release_to_send">松开发送</string>
-    <string name="input_hint">输入消息...</string>
-    <string name="no_devices">未发现设备</string>
-    <string name="scanning">扫描中...</string>
-    <string name="server_address">服务器地址</string>
-    <string name="device_name">设备名称</string>
-    <string name="theme">主题</string>
-    <string name="about">关于</string>
-    <string name="version">版本</string>
-    <string name="clear_history">清空聊天记录</string>
-    <string name="voice_message">语音消息</string>
-    <string name="message_sending">发送中...</string>
-    <string name="message_sent">已发送</string>
-    <string name="message_failed">发送失败</string>
-    <string name="typing">对方正在输入...</string>
-    <string name="permission_required">需要权限</string>
-    <string name="microphone_permission">需要麦克风权限才能语音通话</string>
 </resources>

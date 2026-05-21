@@ -125,6 +125,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
     private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
     private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
+    private var localCommandSettleJob: kotlinx.coroutines.Job? = null  // 本地命令冷却：等服务器pending响应排空
 
     /**
      * 连接服务器
@@ -309,6 +310,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
         reconnectJob = null
         idleDebounceJob?.cancel()
         idleDebounceJob = null
+        localCommandSettleJob?.cancel()
+        localCommandSettleJob = null
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         isConnected = false
@@ -367,6 +370,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 addProperty("frame_duration", 60)
             })
         }
+        Logger.i(TAG, "发送hello")
         sendTextMessage(hello.toString())
     }
 
@@ -567,6 +571,74 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 timestamp = System.currentTimeMillis()
             )
             scope.launch { _chatMessages.emit(message) }
+
+            // 本地命令拦截：匹配则拦截，不发给服务器LLM
+            scope.launch {
+                // 先快速判断是否可能匹配（不执行工具，只检查关键词）
+                val clean = textContent.trim().lowercase()
+                var matchedRule: LocalCommandRouter.CmdRule? = null
+                for (rule in LocalCommandRouter.commands) {
+                    for (kw in rule.keywords) {
+                        if (clean.contains(kw.lowercase())) {
+                            matchedRule = rule
+                            break
+                        }
+                    }
+                    if (matchedRule != null) break
+                }
+
+                if (matchedRule != null) {
+                    Logger.i(TAG, "本地命令拦截: ${matchedRule.toolName}")
+                    // 发送abort到服务器（不调sendAbort，避免立即切aiState=IDLE触发监听重启）
+                    val abortMsg = com.google.gson.JsonObject().apply {
+                        addProperty("session_id", sessionId)
+                        addProperty("type", "abort")
+                        addProperty("reason", "本地执行: ${matchedRule.toolName}")
+                    }
+                    sendTextMessage(abortMsg.toString())
+
+                    // 启动冷却计时器：等服务器pending响应排空后再切IDLE，防止回声循环
+                    localCommandSettleJob?.cancel()
+                    localCommandSettleJob = scope.launch {
+                        delay(3500)
+                        _aiState.value = AiStateStr.IDLE
+                        localCommandSettleJob = null
+                    }
+
+                    // 执行工具
+                    kotlinx.coroutines.delay(100)
+                    val result = LocalCommandRouter.matchAndExecute(textContent)
+                    if (result != null) {
+                        // 让服务器TTS播报反馈——把反馈文字发给服务器
+                        val feedbackText = if (result.success) result.responseText
+                            else "执行${result.toolName}失败了: ${result.rawResult}"
+                        val detectMsg = com.google.gson.JsonObject().apply {
+                            addProperty("session_id", sessionId)
+                            addProperty("type", "listen")
+                            addProperty("state", "detect")
+                            addProperty("text", feedbackText)
+                            addProperty("from_local", true)
+                        }
+                        Logger.i(TAG, "发送反馈文字到服务器TTS: $feedbackText")
+                        sendTextMessage(detectMsg.toString())
+                        // 显示到聊天
+                        if (result.success && result.rawResult is JsonObject) {
+                            val toolResult = result.rawResult as JsonObject
+                            if (toolResult.size() > 1) {
+                                val chatMsg = ChatMessage(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    content = toolResult.toString(),
+                                    type = MessageType.TEXT,
+                                    direction = MessageDirection.RECEIVED,
+                                    status = MessageStatus.SENT,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                scope.launch { _chatMessages.emit(chatMsg) }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -601,8 +673,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
             }
             "stop" -> {
                 idleDebounceJob?.cancel()
-                Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
-                _aiState.value = AiStateStr.IDLE
+                // 本地命令冷却期间，不设置IDLE（防止监听立即重启导致回声循环）
+                if (localCommandSettleJob?.isActive == true) {
+                    Logger.i(TAG, "tts stop ignored（本地命令冷却中，等${if (localCommandSettleJob?.isCompleted != false) 0 else 3500}ms后自动切idle）")
+                } else {
+                    Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
+                    _aiState.value = AiStateStr.IDLE
+                }
             }
             "sentence_start" -> {
                 idleDebounceJob?.cancel()

@@ -18,10 +18,11 @@ fun registerXiaozhiTools() {
         val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100)
             ?: throw Exception("level 必须为 0-100 的整数")
         AudioSettings.setOutputVolume(AppContainer.context, level)
-        // 立即应用到当前活跃的解码器
-        AppContainer.audioService.let { _ ->
-            // 获取当前连接并更新 decoder 音量
-            // 注意：需要在连接活跃时才能获取到 decoder，这里只保存设置
+        // 立即应用到所有活跃解码器（私聊 + 群聊各 bot）
+        AppContainer.connectionRepository.let { repo ->
+            if (repo is com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl) {
+                repo.setVolume(level)
+            }
         }
         JsonObject().apply {
             addProperty("success", true)

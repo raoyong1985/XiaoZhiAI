@@ -327,7 +327,7 @@ object CalendarHelper {
         val calPerm = checkPermissionWithGuide(
             Manifest.permission.READ_CALENDAR, permissionName = "日历"
         )
-        if (calPerm != null) throw Exception("权限不足")  // getEvents 需同步返回，这里保持 throw 兼容
+        if (calPerm != null) return emptyList()  // 权限由调用方检查，此处静默返回空列表
 
         val dateFmt = dateOnlyFmt.get()!!
         val dateTimeFormat = dateTimeFmt.get()!!

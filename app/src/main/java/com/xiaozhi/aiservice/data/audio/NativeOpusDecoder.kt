@@ -57,6 +57,7 @@ class NativeOpusDecoder(
                             .build()
                     )
                     .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { }
                     .build()
                 audioManager?.requestAudioFocus(afr)
                 Logger.i(TAG, "AudioFocus requested (AUDIOFOCUS_GAIN)")
@@ -80,6 +81,8 @@ class NativeOpusDecoder(
     private val pendingDecodePackets = AtomicInteger(0)
     /** 最后一次成功的音频播放时间戳，用于空闲超时检测 */
     private val lastAudioActivityMs = AtomicLong(System.currentTimeMillis())
+    // 每次 restartPlayback 后重置，用于调试首次解码
+    private val packetsSinceRestart = AtomicInteger(0)
 
     /**
      * 强制 flush AudioTrack：清空队列 + 暂停+flush+恢复
@@ -259,6 +262,7 @@ class NativeOpusDecoder(
             audioTrack = track
             audioQueue.clear()
             pendingDecodePackets.set(0)
+            packetsSinceRestart.set(0)
             totalBytesWritten.set(0L)
             lastAudioActivityMs.set(System.currentTimeMillis())
 
@@ -314,10 +318,13 @@ class NativeOpusDecoder(
         if (decoderPtr == 0L) return
 
         // 惰性重启：播放线程因空闲超时停止后，有新音频到达时自动恢复
-        if (!isPlaying.get()) {
+        // 使用 compareAndSet 确保只重启一次，避免并发竞态（多个音频包同时触发 restartPlayback）
+        if (isPlaying.compareAndSet(false, true)) {
             Logger.i(TAG, "播放线程已停止，新音频到达，自动重启播放")
             restartPlayback()
             if (!isPlaying.get()) return  // 重启失败
+        } else if (!isPlaying.get()) {
+            return  // 有其他线程正在重启，跳过本包
         }
 
         try {
@@ -331,6 +338,10 @@ class NativeOpusDecoder(
                 val resampleUs = (System.nanoTime() - t0) / 1000
                 if (resampleUs > 5000) {
                     Logger.w(TAG, "resample slow: ${resampleUs}us (samples=$samples)")
+                }
+                // 记录解码次数（用于调试：每次重启后第一个包打日志）
+                if (packetsSinceRestart.incrementAndGet() <= 1) {
+                    Logger.i(TAG, "decodePacket 解码成功 (samples=$samples, resample=${resampleUs}us, queueSize=${audioQueue.size})")
                 }
 
                 val pcmLimiter = applyLimiter(pcmResampled)

@@ -115,4 +115,13 @@ class AudioPlaybackManager {
 
     /** 当前解码器数量 */
     val size: Int get() = decoders.size
+
+    /** 更新所有活跃解码器的音量 */
+    fun setVolume(level: Int) {
+        val clamped = level.coerceIn(0, 100)
+        decoders.values.forEach { decoder ->
+            if (!decoder.isReleased) decoder.setVolume(clamped)
+        }
+        Logger.i(TAG, "音量已同步到所有解码器: $clamped%")
+    }
 }

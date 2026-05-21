@@ -224,7 +224,15 @@ fun registerIntentTools() {
     ) { args ->
         val duration = (args["duration_ms"] as? Number)?.toLong() ?: 500L
         val pattern = (args["pattern"] as? String)?.lowercase() ?: "once"
-        val vibrator = AppContainer.context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        val ctx = AppContainer.context
+
+        // 检查震动权限
+        val vibratePerm = checkPermissionWithGuide(
+            Manifest.permission.VIBRATE, permissionName = "震动"
+        )
+        if (vibratePerm != null) return@registerTool vibratePerm
+
+        val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
             ?: throw Exception("此设备不支持震动")
         val patternArr = when (pattern) {
             "short" -> longArrayOf(0, 100)
@@ -295,7 +303,18 @@ fun registerIntentTools() {
             if (level != null) {
                 val v = level.toInt().coerceIn(0, 100)
                 val sysVal = (v * 255 / 100).coerceIn(0, 255)
-                android.provider.Settings.System.putInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, sysVal)
+                if (android.provider.Settings.System.canWrite(ctx)) {
+                    android.provider.Settings.System.putInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, sysVal)
+                } else if (ensureWriteSettingsOrGuide()) {
+                    android.provider.Settings.System.putInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, sysVal)
+                } else {
+                    return@registerTool JsonObject().apply {
+                        addProperty("success", false)
+                        addProperty("error", "permission_denied")
+                        addProperty("permission", "修改系统设置")
+                        addProperty("message", "需要「修改系统设置」权限才能调节亮度，已打开设置页面，请手动开启后重试")
+                    }
+                }
                 JsonObject().apply { addProperty("success", true); addProperty("previous", current * 100 / 255); addProperty("current", v) }
             } else {
                 JsonObject().apply { addProperty("success", true); addProperty("current", current * 100 / 255); addProperty("note", "不传 level 参数只读取亮度，传 level=N 可设置亮度") }
@@ -389,105 +408,6 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
-        name = "play_music",
-        description = "播放音乐或音频，支持指定音乐应用或系统默认播放器",
-        inputSchema = jsonSchema(
-            "name" to jsonStringProp("歌曲名或音频名称（可选）"),
-            "artist" to jsonStringProp("歌手名（可选）"),
-            "app" to jsonStringProp("音乐应用：auto/qqmusic/netease/spotify/system，默认 auto"),
-            "action" to jsonStringProp("操作：play/pause/next/previous/resume，默认 play"),
-        )
-    ) { args ->
-        val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
-        val artist = (args["artist"] as? String)?.takeIf { it.isNotBlank() } ?: ""
-        val app = (args["app"] as? String)?.lowercase() ?: "auto"
-        val action = (args["action"] as? String)?.lowercase() ?: "play"
-        val ctx = AppContainer.context
-
-        when (action) {
-            "pause" -> return@registerTool JsonObject().apply {
-                addProperty("success", true); addProperty("action", "pause")
-                val intent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                    putExtra(Intent.EXTRA_KEY_EVENT,
-                        android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
-                }
-                ctx.sendBroadcast(intent)
-            }
-            "resume" -> return@registerTool JsonObject().apply {
-                addProperty("success", true); addProperty("action", "resume")
-                val intent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                    putExtra(Intent.EXTRA_KEY_EVENT,
-                        android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
-                }
-                ctx.sendBroadcast(intent)
-            }
-            "next" -> return@registerTool JsonObject().apply {
-                addProperty("success", true); addProperty("action", "next")
-                Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                    putExtra(Intent.EXTRA_KEY_EVENT,
-                        android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
-                }.let { ctx.sendBroadcast(it) }
-            }
-            "previous" -> return@registerTool JsonObject().apply {
-                addProperty("success", true); addProperty("action", "previous")
-                Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                    putExtra(Intent.EXTRA_KEY_EVENT,
-                        android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
-                }.let { ctx.sendBroadcast(it) }
-            }
-            else -> {
-                val searchQuery = if (name.isNotEmpty() && artist.isNotEmpty()) "$name $artist"
-                    else if (name.isNotEmpty()) name
-                    else ""
-
-                val pkgOverride = when (app) {
-                    "qqmusic" -> "com.tencent.qqmusic"
-                    "netease" -> "com.netease.cloudmusic"
-                    "spotify" -> "com.spotify.music"
-                    else -> null
-                }
-
-                // Try specified app first, then fallback
-                val candidates = listOfNotNull(pkgOverride) + listOf(
-                    "com.tencent.qqmusic", "com.netease.cloudmusic", "com.spotify.music",
-                    "com.google.android.apps.youtube.music", "com.android.music", "com.miui.player"
-                )
-
-                val found = candidates.firstOrNull { pkg ->
-                    try { ctx.packageManager.getLaunchIntentForPackage(pkg) != null }
-                    catch (_: Exception) { false }
-                }
-
-                if (found != null) {
-                    val intent = ctx.packageManager.getLaunchIntentForPackage(found)!!
-                    if (searchQuery.isNotEmpty()) {
-                        try {
-                            Intent(Intent.ACTION_SEARCH).apply {
-                                setPackage(found); putExtra("query", searchQuery)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }.let { ctx.startActivity(it) }
-                            return@registerTool JsonObject().apply {
-                                addProperty("success", true); addProperty("action", "play")
-                                addProperty("app", found); addProperty("search", searchQuery)
-                            }
-                        } catch (_: Exception) { }
-                    }
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    ctx.startActivity(intent)
-                    return@registerTool JsonObject().apply {
-                        addProperty("success", true); addProperty("action", "play")
-                        addProperty("app", found)
-                        if (searchQuery.isNotEmpty()) addProperty("search", searchQuery)
-                    }
-                }
-                return@registerTool JsonObject().apply {
-                    addProperty("success", false)
-                    addProperty("message", "未找到音乐应用，请先安装 QQ音乐、网易云音乐或 Spotify")
-                }
-            }
-        }
-    }
 
     MCPToolRegistry.registerTool(
         name = "make_call",
@@ -618,6 +538,13 @@ fun registerIntentTools() {
     ) { args ->
         val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
         val ctx = AppContainer.context
+
+        // 检查相机权限（手电筒使用相机闪光灯需要 CAMERA 权限）
+        val flashlightPerm = checkPermissionWithGuide(
+            Manifest.permission.CAMERA, permissionName = "相机"
+        )
+        if (flashlightPerm != null) return@registerTool flashlightPerm
+
         val cameraManager = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
             ?: throw Exception("此设备不支持相机/闪光灯")
 
@@ -696,43 +623,27 @@ fun registerIntentTools() {
                     JsonObject().apply {
                         addProperty("success", false)
                         addProperty("message", "截图需要系统授权，请使用系统截图快捷键（音量减+电源键）")
-                        addProperty("note", "可通过 MCP 调用开放系统截图界面")
+                        addProperty("guide", "Android 11+ 截图可通过同时按住音量减键和电源键实现。如需编程截图，需在应用中集成 MediaProjection API 并请求用户授权屏幕录制权限。")
                     }
                 } else {
                     JsonObject().apply {
                         addProperty("success", false)
                         addProperty("message", "此设备不支持截图 API")
+                        addProperty("guide", "请使用系统截图快捷键（音量减+电源键）进行截图")
                     }
                 }
             } catch (e: Exception) {
                 JsonObject().apply {
                     addProperty("success", false)
                     addProperty("message", "截图失败: ${e.message}")
+                    addProperty("guide", "请使用系统截图快捷键（音量减+电源键）")
                 }
             }
         } else {
-            // Try using /system/bin/screenshot on older Android or root
-            try {
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c",
-                    "screencap -p /sdcard/DCIM/Screenshots/xiaozhi_${System.currentTimeMillis()}.png"
-                ))
-                process.waitFor()
-                if (process.exitValue() == 0) {
-                    JsonObject().apply {
-                        addProperty("success", true)
-                        addProperty("message", "截图已保存到 DCIM/Screenshots 目录")
-                    }
-                } else {
-                    JsonObject().apply {
-                        addProperty("success", false)
-                        addProperty("message", "截图失败，请使用系统截图快捷键（音量减+电源键）")
-                    }
-                }
-            } catch (_: Exception) {
-                JsonObject().apply {
-                    addProperty("success", false)
-                    addProperty("message", "截图需要系统授权，请使用系统截图快捷键（音量减+电源键）")
-                }
+            JsonObject().apply {
+                addProperty("success", false)
+                addProperty("message", "此设备不支持自动截图")
+                addProperty("guide", "请使用系统截图快捷键（音量减+电源键）手动截图")
             }
         }
     }
@@ -836,33 +747,6 @@ fun registerIntentTools() {
     }
 
     MCPToolRegistry.registerTool(
-        name = "joke",
-        description = "讲一个随机笑话，支持中文或英文",
-        inputSchema = jsonSchema(
-            "lang" to jsonStringProp("语言：zh/en，默认 zh"),
-        )
-    ) { args ->
-        val lang = (args["lang"] as? String)?.lowercase()?.takeIf { it == "en" } ?: "zh"
-        try {
-            if (lang == "en") {
-                val text = httpGet("https://v2.jokeapi.dev/joke/Any?type=single&safe-mode", timeoutMs = 5000)
-                val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-                val joke = json?.get("joke")?.asString
-                if (joke != null) return@registerTool JsonObject().apply { addProperty("joke", joke); addProperty("lang", "en") }
-            }
-            val text = httpGet("https://tenapi.cn/v2/joke", timeoutMs = 5000)
-            val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-            val joke = json?.get("data")?.asJsonObject?.get("content")?.asString
-                ?: json?.get("joke")?.asString
-                ?: json?.get("data")?.asString
-                ?: "程序员问老婆：我写的代码哪里有问题？老婆：你的问题就是写代码的时候想着我。"
-            JsonObject().apply { addProperty("joke", joke); addProperty("lang", "zh") }
-        } catch (e: Exception) {
-            JsonObject().apply { addProperty("joke", "为什么 AI 不会讲笑话？因为它的幽默感被404了。"); addProperty("note", "在线获取失败，使用默认笑话") }
-        }
-    }
-
-    MCPToolRegistry.registerTool(
         name = "get_calendar",
         description = "获取日历中的事件列表，默认查询今天的事件，支持指定日期范围",
         inputSchema = jsonSchema(
@@ -871,6 +755,12 @@ fun registerIntentTools() {
             "max_results" to jsonNumberProp("最多返回事件数量，默认 20")
         )
     ) { args ->
+        // 先检查日历权限
+        val calPerm = checkPermissionWithGuide(
+            Manifest.permission.READ_CALENDAR, permissionName = "日历"
+        )
+        if (calPerm != null) return@registerTool calPerm
+
         val startDate = args["start_date"] as? String
         val endDate = args["end_date"] as? String
         val maxResults = (args["max_results"] as? Number)?.toInt() ?: 20

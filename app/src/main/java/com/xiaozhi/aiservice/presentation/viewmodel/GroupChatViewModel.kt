@@ -167,8 +167,8 @@ class GroupChatViewModel : ViewModel() {
                 val lastAudio = botLastAudioTime[waitingBotId] ?: 0L
                 val silenceDuration = System.currentTimeMillis() - lastAudio
                 
-                if (silenceDuration > 20_000) {
-                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s，清除等待状态并重启接龙")
+                if (silenceDuration > 30_000) {
+                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超30s），清除等待状态并重启接龙")
                     _relayState.update { it.clearWaiting() }
                     triggerNextSpeaker("")
                 }
@@ -497,11 +497,22 @@ class GroupChatViewModel : ViewModel() {
         for ((targetIndex, speakerId) in connected) {
             val service = botConnectionPool.get(speakerId) ?: continue
             _relayState.update { it.moveToSpeaker(targetIndex) }
+            botLastAudioTime[speakerId] = System.currentTimeMillis()  // 重置看门狗计时
 
-            val audioOk = forwardAudioToBot(prevBotId, service)
+            val audioBuf = audioForwardBuffer[prevBotId]
+            val isLongAudio = audioBuf != null && audioBuf.size > 200  // >200包≈10秒以上，跳过音频转发
+            val audioOk = if (isLongAudio) {
+                android.util.Log.i(TAG, "超长语音(${audioBuf!!.size}包)，跳过音频转发直接文字兜底")
+                false
+            } else {
+                forwardAudioToBot(prevBotId, service)
+            }
             if (audioOk) {
-                android.util.Log.i(TAG, "等待 $speakerId 开始说话 (10s超时)")
-                val startConfirmed = withTimeoutOrNull(10_000) {
+                val forwardAudioSize = audioForwardBuffer[prevBotId]?.sumOf { it.size } ?: 0
+                val estimatedAudioMs = (forwardAudioSize / (32000.0 / 50.0 * 2)).toLong().coerceIn(0, 60000)
+                val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
+                android.util.Log.i(TAG, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
+                val startConfirmed = withTimeoutOrNull(timeoutMs) {
                     service.aiState.first { it == "speaking" }
                 }
                 if (startConfirmed != null) {
@@ -547,7 +558,7 @@ class GroupChatViewModel : ViewModel() {
                     if (previousReply.isNotBlank()) {
                         _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
                     }
-                    val startConfirmed = withTimeoutOrNull(10_000) {
+                    val startConfirmed = withTimeoutOrNull(30_000) {
                         service.aiState.first { it == "speaking" }
                     }
                     if (startConfirmed != null) {

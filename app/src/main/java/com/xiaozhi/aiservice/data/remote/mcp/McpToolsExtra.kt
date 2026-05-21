@@ -8,12 +8,13 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
@@ -78,14 +79,24 @@ fun registerExtraTools() {
     ) { args ->
         val mode = (args["mode"] as? String)?.lowercase() ?: throw Exception("mode 不能为空")
         val ctx = AppContainer.context
+
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
 
-        when (mode) {
-            "normal" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
-            "silent" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
-            "vibrate" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_VIBRATE
-            else -> throw Exception("不支持的 mode: $mode，支持 normal/silent/vibrate")
+        try {
+            when (mode) {
+                "normal" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+                "silent" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_SILENT
+                "vibrate" -> audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_VIBRATE
+                else -> throw Exception("不支持的 mode: $mode，支持 normal/silent/vibrate")
+            }
+        } catch (e: SecurityException) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", false)
+                addProperty("error", "permission_denied")
+                addProperty("permission", "勿扰模式权限")
+                addProperty("message", "Android 8+ 需要「勿扰模式权限」才能修改响铃模式，请在 设置 → 应用 → 小智AI → 通知管理 中开启后重试")
+            }
         }
         JsonObject().apply {
             addProperty("success", true)
@@ -109,46 +120,56 @@ fun registerExtraTools() {
     ) { args ->
         val ctx = AppContainer.context
         val duration = (args["duration_seconds"] as? Number)?.toInt()?.coerceIn(1, 60) ?: 15
+
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
 
         // 保存原始模式
         val originalMode = audioManager.ringerMode
 
-        // 强制响铃+震动
-        audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
+        try {
+            // 强制响铃+震动
+            audioManager.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
 
-        // 获取最大铃声音量并播放
-        val maxVol = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_RING)
-        audioManager.setStreamVolume(android.media.AudioManager.STREAM_RING, maxVol, 0)
+            // 获取最大铃声音量并播放
+            val maxVol = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_RING)
+            audioManager.setStreamVolume(android.media.AudioManager.STREAM_RING, maxVol, 0)
 
-        // 震动
-        val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-        if (vibrator != null) {
-            if (Build.VERSION.SDK_INT >= 26) {
-                vibrator.vibrate(
-                    android.os.VibrationEffect.createWaveform(
-                        longArrayOf(0, 500, 500, 500), 0
+            // 震动
+            val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            if (vibrator != null) {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    vibrator.vibrate(
+                        android.os.VibrationEffect.createWaveform(
+                            longArrayOf(0, 500, 500, 500), 0
+                        )
                     )
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(longArrayOf(0, 500, 500, 500), 0)
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 500, 500, 500), 0)
+                }
             }
-        }
 
-        // 自动恢复
-        GlobalScope.launch {
-            delay(duration * 1000L)
-            try {
-                audioManager.ringerMode = originalMode
-                vibrator?.cancel()
-                audioManager.setStreamVolume(
-                    android.media.AudioManager.STREAM_RING,
-                    audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_RING) / 3,
-                    0
-                )
-            } catch (_: Exception) {}
+            // 自动恢复
+            GlobalScope.launch {
+                delay(duration * 1000L)
+                try {
+                    audioManager.ringerMode = originalMode
+                    vibrator?.cancel()
+                    audioManager.setStreamVolume(
+                        android.media.AudioManager.STREAM_RING,
+                        audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_RING) / 3,
+                        0
+                    )
+                } catch (_: Exception) {}
+            }
+        } catch (e: SecurityException) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", false)
+                addProperty("error", "permission_denied")
+                addProperty("permission", "勿扰模式权限")
+                addProperty("message", "Android 8+ 需要「勿扰模式权限」才能响铃，请在 设置 → 应用 → 小智AI → 通知管理 中开启后重试")
+            }
         }
 
         JsonObject().apply {
@@ -172,6 +193,14 @@ fun registerExtraTools() {
             ?: throw Exception("此设备不支持 WiFi")
 
         if (!wifiManager.isWifiEnabled) throw Exception("WiFi 已关闭，请先打开 WiFi")
+
+        // Android 8.1+ 扫描 WiFi 需要 ACCESS_FINE_LOCATION 权限
+        if (Build.VERSION.SDK_INT >= 27) {
+            val locPerm = checkPermissionWithGuide(
+                Manifest.permission.ACCESS_FINE_LOCATION, permissionName = "位置信息"
+            )
+            if (locPerm != null) return@registerTool locPerm
+        }
 
         // 触发扫描
         val scanSuccess = wifiManager.startScan()

@@ -516,4 +516,9 @@ class ConnectionRepositoryImpl(
         playbackManager.flushSource("main")
         Logger.i(TAG, "forceFlushPlayback 完成")
     }
+
+    /** 更新私聊解码器音量（由 set_xiaozhi_volume MCP 工具调用） */
+    fun setVolume(level: Int) {
+        playbackManager.setVolume(level)
+    }
 }
