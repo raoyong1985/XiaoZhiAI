@@ -76,6 +76,9 @@ class SileroVAD(
             session = env?.createSession(modelBytes, opts)
             initialized = true
             Logger.i(TAG, "SileroVAD 初始化完成")
+        } catch (e: UnsatisfiedLinkError) {
+            Logger.e(TAG, "SileroVAD JNI 库加载失败: ${e.message}")
+            initialized = false
         } catch (e: Exception) {
             Logger.e(TAG, "SileroVAD 初始化失败: ${e.message}")
             initialized = false

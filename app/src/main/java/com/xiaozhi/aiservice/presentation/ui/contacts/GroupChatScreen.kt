@@ -206,7 +206,7 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((S
                 }
                 Text(
                     text = message.content,
-                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else Color(0xFF333333),
+                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 15.sp
                 )
             }
