@@ -429,6 +429,11 @@ class GroupChatViewModel : ViewModel() {
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
                                     android.util.Log.i(TAG, "[$botName] triggering next, fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
+                                } else if (rs.waitingSpeakerIndex < 0 && rs.botIds.size > 1 && rs.forwardRound >= 0) {
+                                    // ws=-1 但还有活跃 bot → 自动继续下一轮（接龙之前失败或轮次结束）
+                                    replyToForward = replyText.also { replyText = "" }
+                                    shouldTrigger = true
+                                    android.util.Log.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
                                 } else {
                                     // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
                                     replyText = ""
