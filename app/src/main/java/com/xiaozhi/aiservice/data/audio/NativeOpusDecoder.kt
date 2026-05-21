@@ -1,7 +1,9 @@
 package com.xiaozhi.aiservice.data.audio
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioTrack
 import com.xiaozhi.aiservice.utils.Logger
@@ -34,6 +36,34 @@ class NativeOpusDecoder(
         private const val IDLE_SILENCE_INTERVAL_MS = 1000L
         private const val SILENCE_FRAME_SIZE = 512
         private val silenceFrame = ByteArray(SILENCE_FRAME_SIZE)
+
+        private var audioManager: AudioManager? = null
+
+        fun initAudioManager(context: Context) {
+            audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        }
+
+        /**
+         * 请求音频焦点，OPPO/MTK 设备上必须显式申请焦点才有声音
+         * 使用 AUDIOFOCUS_GAIN（完全获取焦点，其他音频暂停）
+         */
+        private fun requestAudioFocus() {
+            try {
+                val afr = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAcceptsDelayedFocusGain(true)
+                    .build()
+                audioManager?.requestAudioFocus(afr)
+                Logger.i(TAG, "AudioFocus requested (AUDIOFOCUS_GAIN)")
+            } catch (e: Exception) {
+                Logger.w(TAG, "requestAudioFocus failed: ${e.message}")
+            }
+        }
     }
 
     private var decoderPtr: Long = 0
@@ -117,6 +147,9 @@ class NativeOpusDecoder(
             )
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
             Logger.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
+
+            // 先请求音频焦点（OPPO/MTK 必须显式申请，否则第二个 AudioTrack 无声）
+            requestAudioFocus()
 
             audioTrack = AudioTrack(
                 AudioManager.STREAM_MUSIC,
@@ -203,6 +236,9 @@ class NativeOpusDecoder(
                 AudioFormat.ENCODING_PCM_16BIT
             )
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
+
+            // 先请求音频焦点（OPPO/MTK 必须显式申请，否则第二个 AudioTrack 无声）
+            requestAudioFocus()
 
             val track = AudioTrack(
                 AudioManager.STREAM_MUSIC,
