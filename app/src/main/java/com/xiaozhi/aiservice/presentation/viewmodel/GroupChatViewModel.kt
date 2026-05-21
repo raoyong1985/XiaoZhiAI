@@ -77,7 +77,7 @@ class GroupChatViewModel : ViewModel() {
         private const val TAG = "GroupChatVM"
         private val GOODBYE_KEYWORDS = listOf("再见", "拜拜", "下次聊", "不打扰", "回头聊", "bye", "goodbye")
         private const val AUDIO_DRAIN_TIMEOUT_MS = 5000L
-        private const val AUDIO_DRAIN_SILENCE_MS = 2000L
+        private const val AUDIO_DRAIN_SILENCE_MS = 1000L
         /** 音频转发缓冲单 bot 上限（防止内存持续增长） */
         private const val MAX_FORWARD_BUFFER_SIZE = 200
     }
@@ -679,11 +679,10 @@ class GroupChatViewModel : ViewModel() {
                 delay(100)
             }
         }
-        delay(500) // in-flight 包
-        if (!playbackManager.waitForQueueEmpty(prevBotId, 2000L)) {
-            android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
-        }
-        delay(200) // AudioTrack 硬件缓冲补偿
+    delay(200) // in-flight 包
+    if (!playbackManager.waitForQueueEmpty(prevBotId, 2000L)) {
+        android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
+    }
     }
 
     // ── 音频转发 ──
@@ -711,11 +710,11 @@ class GroupChatViewModel : ViewModel() {
                 batch.forEach { packet -> service.sendAudio(packet) }
                 // 前 2 批给宽松延迟，后面每 4 批给 10ms
                 when {
-                    batchIdx < 2 -> delay(80)
+                    batchIdx < 2 -> delay(40)
                     batchIdx % 4 == 0 -> delay(10)
                 }
             }
-            delay(500)
+            delay(200)
             service.sendListenStopOnly()
             // 转发完成后再次检查连接，防止转发过程中断线
             return service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
