@@ -236,12 +236,6 @@ class ConnectionRepositoryImpl(
         }
 
         scope.launch {
-            backendService.textMessage.collect { text ->
-                Logger.i(TAG, "收到文本消息: ${text.take(100)}")
-            }
-        }
-
-        scope.launch {
             backendService.audioData.collect { audioData ->
                 // 去除 aiState 竞态检查：音频数据只会在服务器发送时到达
                 // 移除 _aiState != SPEAKING 检查解决竞态条件（音频包与状态切换同时到达时被丢弃）
@@ -506,15 +500,6 @@ class ConnectionRepositoryImpl(
         } else {
             Logger.i(TAG, "drainAndFlushPlayback 完成（无数据跳过）")
         }
-    }
-
-    /**
-     * 强制停止播放（用户主动打断/切换联系人用）
-     * 参考 ESP32 ResetDecoder: audio_decode_queue_.clear() + audio_playback_queue_.clear()
-     */
-    private fun forceFlushPlayback() {
-        playbackManager.flushSource("main")
-        Logger.i(TAG, "forceFlushPlayback 完成")
     }
 
     /** 更新私聊解码器音量（由 set_xiaozhi_volume MCP 工具调用） */

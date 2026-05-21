@@ -27,7 +27,7 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val BUFFER_MULTIPLIER = 6
+        private const val BUFFER_MULTIPLIER = 12
         private const val MAX_QUEUE_SIZE = 200
 
         /** 播放线程空闲超时：无真实音频数据时，写少量静音帧保持 AudioTrack 活跃避免焦点丢失 */

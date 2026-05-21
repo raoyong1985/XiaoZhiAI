@@ -21,17 +21,8 @@ data class RelayState(
     /** spokenInThisRound 重置计数器，超过 botIds.size×2 时强制重置 */
     val spokenRoundCounter: Int = 0,
     /** 用户的原始查询文本 */
-    val originalUserQuery: String = "",
-    /** 当前正在累积的 TTS 回复文本 */
-    val replyText: String = ""
+    val originalUserQuery: String = ""
 ) {
-    /** 获取当前 bot ID */
-    val currentBotId: String? get() = botIds.getOrNull(currentSpeakerIndex)
-    /** 获取预期 bot ID */
-    val waitingBotId: String? get() = botIds.getOrNull(waitingSpeakerIndex)
-    /** 是否有 bot 在接龙中 */
-    val isActive: Boolean get() = waitingSpeakerIndex >= 0 && botIds.size > 1
-
     /** 递增 sessionId */
     fun nextSession(): RelayState = copy(sessionId = sessionId + 1)
 
@@ -39,20 +30,6 @@ data class RelayState(
     fun markSpoken(index: Int): RelayState = copy(
         spokenInThisRound = spokenInThisRound + index,
         spokenRoundCounter = spokenRoundCounter + 1
-    )
-
-    /** 重置一轮（所有 bot 都发言或超轮次时调用） */
-    fun resetSpokenRound(spokenCount: Int = botIds.size * 2): RelayState {
-        val shouldReset = spokenInThisRound.size >= botIds.filterIndexed { i, _ -> i != currentSpeakerIndex }.size
-                || spokenRoundCounter >= maxOf(spokenCount, 4)
-        return if (shouldReset) copy(spokenInThisRound = emptySet(), spokenRoundCounter = 0)
-        else this
-    }
-
-    /** 重置为初始状态 */
-    fun reset(): RelayState = RelayState(
-        botIds = botIds,
-        sessionId = sessionId + 1
     )
 
     /** 切换到下一个 speaker */

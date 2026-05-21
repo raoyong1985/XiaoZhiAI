@@ -5,7 +5,6 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonNull
-import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageStatus
@@ -118,7 +117,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var serverChannels = 1            // 服务器返回的声道数
     private var accessToken = ""           // 保存accessToken用于重连
     private var wsToken = ""              // WebSocket token (OTA注册返回)
-    private var pendingActivationChallenge = "" // 待发送的激活challenge
     private var reconnectAttempt = 0       // 重连次数
     private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
     private var isDisconnecting = false  // 用户主动断开，不再自动重连
@@ -205,7 +203,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     // 保存激活challenge（如果有）
                     if (json.has("activation")) {
                         val activation = json.getAsJsonObject("activation")
-                        pendingActivationChallenge = activation?.get("challenge")?.asString ?: ""
                         val code = activation?.get("code")?.asString ?: ""
                         Logger.i(TAG, "设备需要激活，验证码: $code")
                         // 显示验证码到聊天界面
@@ -317,7 +314,6 @@ class XiaoZhiBackendService(private val gson: Gson) {
         isConnected = false
         reconnectAttempt = 0  // 重置重连计数
         wsToken = ""
-        pendingActivationChallenge = ""
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiStateStr.IDLE
         // 注意：不 cancel supervisorJob，scope 保持活跃以支持重连
@@ -340,7 +336,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
         // 指数退避: 1s, 2s, 4s, 8s, 16s, 32s, 最多2分钟
         val delay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(7))).coerceAtMost(120000L)
-        Logger.i(TAG, "计划 ${reconnectAttempt}s 后重连 (延迟: ${delay}ms)")
+        Logger.i(TAG, "计划第 $reconnectAttempt 次重连 (延迟: ${delay}ms)")
 
         // 取消上一次重连协程（如果有），避免 disconnect 后残留
         reconnectJob?.cancel()
@@ -465,7 +461,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * state="text" 服务器不会响应
      */
     fun sendTextContent(text: String) {
-        Logger.e(TAG, ">>>>>>>>>>>>>>>>>>>> sendTextContent: isConnected=$isConnected text=${text.take(30)}")
+        Logger.i(TAG, "sendTextContent: isConnected=$isConnected text=${text.take(30)}")
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -590,7 +586,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 if (matchedRule != null) {
                     Logger.i(TAG, "本地命令拦截: ${matchedRule.toolName}")
                     // 发送abort到服务器（不调sendAbort，避免立即切aiState=IDLE触发监听重启）
-                    val abortMsg = com.google.gson.JsonObject().apply {
+                    val abortMsg = JsonObject().apply {
                         addProperty("session_id", sessionId)
                         addProperty("type", "abort")
                         addProperty("reason", "本地执行: ${matchedRule.toolName}")
@@ -606,13 +602,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     }
 
                     // 执行工具
-                    kotlinx.coroutines.delay(100)
+                    delay(100)
                     val result = LocalCommandRouter.matchAndExecute(textContent)
                     if (result != null) {
                         // 让服务器TTS播报反馈——把反馈文字发给服务器
                         val feedbackText = if (result.success) result.responseText
                             else "执行${result.toolName}失败了: ${result.rawResult}"
-                        val detectMsg = com.google.gson.JsonObject().apply {
+                        val detectMsg = JsonObject().apply {
                             addProperty("session_id", sessionId)
                             addProperty("type", "listen")
                             addProperty("state", "detect")
@@ -667,7 +663,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             "start" -> {
                 idleDebounceJob?.cancel()
                 binaryAudioInSession = false
-                Logger.e(TAG, "!!!! tts start received, setting aiState=speaking")
+                Logger.i(TAG, "tts start received, setting aiState=speaking")
                 _aiState.value = AiStateStr.SPEAKING
                 _ttsText.value = ""
             }
@@ -675,9 +671,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 idleDebounceJob?.cancel()
                 // 本地命令冷却期间，不设置IDLE（防止监听立即重启导致回声循环）
                 if (localCommandSettleJob?.isActive == true) {
-                    Logger.i(TAG, "tts stop ignored（本地命令冷却中，等${if (localCommandSettleJob?.isCompleted != false) 0 else 3500}ms后自动切idle）")
+                    Logger.i(TAG, "tts stop ignored（本地命令冷却中，等3500ms后自动切idle）")
                 } else {
-                    Logger.e(TAG, "!!!! tts stop received, setting aiState=idle")
+                    Logger.i(TAG, "tts stop received, setting aiState=idle")
                     _aiState.value = AiStateStr.IDLE
                 }
             }
@@ -933,14 +929,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
             Logger.w(TAG, "收到空二进制消息")
             return
         }
-        Logger.i(TAG, "收到二进制音频: ${data.size}B session=$sessionId")
+        Logger.d(TAG, "收到二进制音频: ${data.size}B session=$sessionId")
         // 有音频数据到达，取消空闲防抖
         idleDebounceJob?.cancel()
         // 标记本轮TTS已有二进制音频（用于base64去重）
         binaryAudioInSession = true
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
-        Logger.i(TAG, "发射音频到Flow: ${opusPayload.size}B (原${data.size}B)")
+        Logger.d(TAG, "发射音频到Flow: ${opusPayload.size}B (原${data.size}B)")
         scope.launch {
             _audioData.emit(opusPayload)
         }
