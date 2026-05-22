@@ -134,9 +134,8 @@ class ConnectionRepositoryImpl(
                         _deviceState.value = DeviceState.SPEAKING
                         audioRecorder.stop()
                         weStartedRecording = false
-                        // 参考 ESP32 HandleStateChangedEvent(Speaking): ResetDecoder()
-                        // 清空播放缓冲，防止 VAD auto-stop 与 TTS start 重叠时的残留音频
-                        playbackManager.flushSource("main")
+                        // 不 flush 解码器——AUTO 模式进入 SPEAKING 时前一轮音频已播完，
+                        // 解码队列已空，flush AudioTrack 会清空硬件缓冲导致首包延迟输出
                         // 不发送 abort，服务器知道我们在 listening 状态
                         _aiState.value = newAiState
                         return@withLock
@@ -271,14 +270,10 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.audioData.collect { audioData ->
+                // 音频数据仅由服务器在 SPEAKING 状态发送，且 WebSocket 单线程保证
+                // tts {state:start} 先于二进制音频帧到达，不要加 _aiState 检查——协程间 StateFlow
+                // 收集有调度延迟，会导致首几包被丢弃，引起语音延迟
                 if (audioData.isEmpty()) return@collect
-                // 参考 ESP32 OnIncomingAudio: 仅在 SPEAKING 状态播放音频
-                // 服务器保证 tts {state:start} 先于二进制音频帧到达，但协程间 StateFlow 收集有延迟
-                // 如果状态切换（tts stop→idle）与残余音频包同时到达，非 SPEAKING 状态播放会引入杂音
-                if (_aiState.value != AiState.SPEAKING) {
-                    Logger.w(TAG, "audioData 在非 SPEAKING 状态到达（${_aiState.value}），丢弃 ${audioData.size}B")
-                    return@collect
-                }
                 val t0 = System.nanoTime()
                 val serverRate = backendService.getServerSampleRate()
                 val serverCh = backendService.getServerChannels()

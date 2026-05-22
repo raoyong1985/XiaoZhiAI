@@ -132,6 +132,7 @@ class NativeOpusDecoder(
         pendingDecodePackets.set(0)
 
         // flush AudioTrack 硬件缓冲（仅暂停+清空，不释放 AudioTrack）
+        // 注意：不写入预填静音——写入静音会排在实际音频前输出，引入额外延迟
         try {
             audioTrack?.let { track ->
                 if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
@@ -147,6 +148,7 @@ class NativeOpusDecoder(
 
         // 重置写入计数字段（参考 ESP32 ResetDecoder: timestamp_queue_.clear()）
         totalBytesWritten.set(0L)
+        lastAudioActivityMs.set(System.currentTimeMillis())
         Logger.i(TAG, "flushAudio 完成")
     }
 
