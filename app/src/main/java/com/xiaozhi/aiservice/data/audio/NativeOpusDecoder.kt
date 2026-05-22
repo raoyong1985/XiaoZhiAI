@@ -27,15 +27,18 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val BUFFER_MULTIPLIER = 32
+        // BUFFER_MULTIPLIER: 参考 ESP32 tiny I2S 缓冲设计
+        // ESP32 I2S 缓冲仅 128-512 样本（4-16ms）。安卓需稍大缓冲防 OPPO/MTK underrun，
+        // 但 32x 的 3.84s 缓冲引入了巨大播放延迟。用 8x ≈ 1s 平衡延迟与稳定性。
+        // 群聊 bot 切换间隙可能长达数秒无新音频，AudioFlinger 在 6s 超时后会移除
+        // 因 underrun 被禁用的 track；8x 缓冲 + take() 阻塞写入可保证数据流畅。
+        private const val BUFFER_MULTIPLIER = 8
         private const val MAX_QUEUE_SIZE = 200
-
-        /** 播放线程空闲超时：无真实音频数据时，写少量静音帧保持 AudioTrack 活跃避免焦点丢失 */
-        private const val PLAY_IDLE_TIMEOUT_MS = 30_000L
-        /** 空闲时写静音的间隔（每 N ms 写一次静音帧，保持 AudioTrack 活跃） */
-        private const val IDLE_SILENCE_INTERVAL_MS = 500L
-        private const val SILENCE_FRAME_SIZE = 2048
-        private val silenceFrame = ByteArray(SILENCE_FRAME_SIZE)
+        // 播放线程: poll(500ms) 等待音频数据，超时写少量静音帧保活
+        // 参考 ESP32 AudioOutputTask: condition_variable::wait() 直到音频队列非空
+        // 但 Android AudioFlinger 约 3-4s 后会将空闲 track 因 underrun 超时移除，
+        // 需要空闲静音防 AudioTrack 被禁用。每 1.5s 写 1KB 静音 ≈ 32ms @16kHz，
+        // 远少于原 500ms/2KB 的激进写入（30s 空闲 ≈ 160ms vs 原 120KB 静音）
 
         private var audioManager: AudioManager? = null
         private var focusRequest: AudioFocusRequest? = null
@@ -208,24 +211,20 @@ class NativeOpusDecoder(
             audioTrack?.play()
             isPlaying.set(true)
 
-            // 写入静音预填充 AudioTrack 缓冲（≈1s @16kHz），给首个音频包足够缓冲余量
-            // 防止 OPPO/MTK 上因首个包写入太慢导致 AudioTrack underrun
-            try {
-                val prime = ByteArray(32000)  // 1s @16kHz mono 16-bit
-                audioTrack?.write(prime, 0, prime.size)
-            } catch (_: Exception) {}
+            // OPPO/MTK AudioTrack 空缓冲启动可能无声，100ms 静音预填唤醒硬件
+            try { audioTrack?.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
 
             Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
             playThread = Thread {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 Logger.i(TAG, "Play thread started")
-                lastAudioActivityMs.set(System.currentTimeMillis())
+                // 不写空闲保活静音——静音排在实际音频前输出会引入延迟+可能被麦克风采集为噪声。
+                // AudioFlinger 移除空闲 track 后，新音频到达时系统自动 restartIfDisabled 恢复。
                 while (isPlaying.get()) {
                     try {
-                        val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
+                        val data = audioQueue.poll(500, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            // OPPO/MTK 设备上 AudioTrack 可能因无焦点暂停，每次写入前确保 play()
                             audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
@@ -233,8 +232,6 @@ class NativeOpusDecoder(
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                             }
-                            // 排空队列——一次性写入所有已缓存的音频包，最大化 AudioTrack 缓冲填充
-                            // 防止因解码/网络抖动导致 underrun
                             while (isPlaying.get()) {
                                 val next = audioQueue.poll()
                                 if (next == null) break
@@ -245,13 +242,6 @@ class NativeOpusDecoder(
                                 }
                                 pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             }
-                        } else {
-                            // 空闲时写少量静音帧保持 AudioTrack 活跃，避免焦点丢失
-                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > IDLE_SILENCE_INTERVAL_MS) {
-                                try { audioTrack?.write(silenceFrame, 0, SILENCE_FRAME_SIZE) } catch (_: Exception) {}
-                                lastAudioActivityMs.set(System.currentTimeMillis())
-                            }
-                            Thread.sleep(50)
                         }
                     } catch (e: InterruptedException) {
                         break
@@ -297,6 +287,9 @@ class NativeOpusDecoder(
 
             // 释放旧的 AudioTrack（如果有）
             try { audioTrack?.stop(); audioTrack?.release() } catch (_: Exception) {}
+            // 中断旧播放线程（take() 阻塞在 LinkedBlockingQueue，需要 interrupt 唤醒）
+            playThread?.interrupt()
+            playThread?.join(500)
             audioTrack = track
             audioQueue.clear()
             pendingDecodePackets.set(0)
@@ -307,8 +300,11 @@ class NativeOpusDecoder(
             track.play()
             isPlaying.set(true)
 
-            // 预填充静音（≈1s @16kHz），防止首个音频包到达前 AudioTrack 空缓冲 underrun
-            try { track.write(ByteArray(32000), 0, 32000) } catch (_: Exception) {}
+            // 参考 ESP32: AudioOutputTask 阻塞等音频数据，不写空闲静音
+            // 但 OPPO/MTK AudioTrack 需要少量预填充才能"唤醒"硬件输出，
+            // 否则空缓冲启动+首包太小（~2KB）可能导致 AudioTrack 不输出声音。
+            // 用 100ms 静音替代原 1s 预填充，平衡延迟与兼容性。
+            try { track.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
 
             // 重建播放线程
             playThread = Thread {
@@ -316,9 +312,8 @@ class NativeOpusDecoder(
                 Logger.i(TAG, "Play thread restarted")
                 while (isPlaying.get()) {
                     try {
-                        val data = audioQueue.poll(200, TimeUnit.MILLISECONDS)
+                        val data = audioQueue.poll(500, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            // OPPO/MTK 设备上 AudioTrack 可能因无焦点暂停，每次写入前确保 play()
                             audioTrack?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
@@ -326,7 +321,6 @@ class NativeOpusDecoder(
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                             }
-                            // 排空队列——一次性写入所有已缓存音频包，防止 underrun
                             while (isPlaying.get()) {
                                 val next = audioQueue.poll()
                                 if (next == null) break
@@ -337,12 +331,6 @@ class NativeOpusDecoder(
                                 }
                                 pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             }
-                        } else {
-                            if (System.currentTimeMillis() - lastAudioActivityMs.get() > PLAY_IDLE_TIMEOUT_MS) {
-                                Logger.i(TAG, "播放空闲超时，停止重启后的播放线程")
-                                break
-                            }
-                            Thread.sleep(50)
                         }
                     } catch (e: InterruptedException) {
                         break

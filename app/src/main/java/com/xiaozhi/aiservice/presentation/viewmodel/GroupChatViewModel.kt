@@ -383,6 +383,7 @@ class GroupChatViewModel : ViewModel() {
                         if (msg.direction == MessageDirection.RECEIVED && msg.content.isNotBlank()) {
                             if (isDuplicateReply(botId, msg.content)) {
                                 android.util.Log.w(TAG, "[$botName] 跳过重复消息: ${msg.content.take(30)}")
+                                replyText = ""  // 清空幽灵文本，避免重复消息被转发给下一个 bot
                                 continue
                             }
                             groupChatRepository.addMessage(groupId, GroupMessage(
