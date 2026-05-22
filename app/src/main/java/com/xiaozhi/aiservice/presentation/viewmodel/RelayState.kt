@@ -21,10 +21,18 @@ data class RelayState(
     /** spokenInThisRound 重置计数器，超过 botIds.size×2 时强制重置 */
     val spokenRoundCounter: Int = 0,
     /** 用户的原始查询文本 */
-    val originalUserQuery: String = ""
+    val originalUserQuery: String = "",
+    /** 最近 20 次转发记录 (fromBotId, toBotId)，用于检测重复轮转 */
+    val transitionHistory: List<Pair<String, String>> = emptyList()
 ) {
-    /** 递增 sessionId */
-    fun nextSession(): RelayState = copy(sessionId = sessionId + 1)
+    /** 递增 sessionId，同时清除旧轮次的状态（轮次记录、转发历史） */
+    fun nextSession(): RelayState = copy(
+        sessionId = sessionId + 1,
+        forwardRound = 0,
+        spokenInThisRound = emptySet(),
+        spokenRoundCounter = 0,
+        transitionHistory = emptyList()
+    )
 
     /** 标记 bot 已发言 */
     fun markSpoken(index: Int): RelayState = copy(
@@ -40,4 +48,9 @@ data class RelayState(
 
     /** 清除预期 speaker（接龙结束） */
     fun clearWaiting(): RelayState = copy(waitingSpeakerIndex = -1)
+
+    /** 记录一次转发，保留最近 20 条用于检测重复模式 */
+    fun recordTransition(fromId: String, toId: String): RelayState = copy(
+        transitionHistory = (transitionHistory + (fromId to toId)).takeLast(20)
+    )
 }

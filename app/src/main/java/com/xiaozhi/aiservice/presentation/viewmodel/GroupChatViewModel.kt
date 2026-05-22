@@ -535,7 +535,7 @@ class GroupChatViewModel : ViewModel() {
                     _relayState.update {
                         it.copy(
                             forwardRound = it.forwardRound + 1
-                        ).markSpoken(targetIndex)
+                        ).markSpoken(targetIndex).recordTransition(prevBotId ?: "", speakerId)
                     }
                     if (previousReply.isNotBlank()) {
                         _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
@@ -572,7 +572,7 @@ class GroupChatViewModel : ViewModel() {
                         service.aiState.first { it == "speaking" }
                     }
                     if (startConfirmed != null) {
-                        _relayState.update { it.markSpoken(targetIndex) }
+                        _relayState.update { it.markSpoken(targetIndex).recordTransition(prevBotId ?: "", speakerId) }
                         android.util.Log.i(TAG, "文字兜底转发成功")
                         return
                     }
@@ -621,6 +621,8 @@ class GroupChatViewModel : ViewModel() {
             .map { Candidate(it, aliveBotIds[it], 0f) }
         if (candidates.isEmpty()) return emptyList<Pair<Int, String>>() to rs
 
+        // ── 打分：@提及 +100、名字匹配 +30、未发言 +20、随机 0~15 ──
+        var hasSignal = false  // 是否有强信号（@提及或名字匹配）
         if (previousReply.isNotBlank()) {
             val mentionMatch = Regex("@([\\w\\u4e00-\\u9fff]+)").find(previousReply)
             if (mentionMatch != null) {
@@ -629,6 +631,7 @@ class GroupChatViewModel : ViewModel() {
                     val contact = _contacts.value.find { it.id == c.id }
                     if (contact != null && (contact.name == mentionedName || contact.id.startsWith(mentionedName))) {
                         c.score += 100f
+                        hasSignal = true
                     }
                 }
             }
@@ -636,6 +639,20 @@ class GroupChatViewModel : ViewModel() {
                 val contact = _contacts.value.find { it.id == c.id }
                 if (contact != null && contact.name.isNotBlank() && previousReply.contains(contact.name)) {
                     c.score += 30f
+                    hasSignal = true
+                }
+            }
+        }
+
+        // ── 重复轮转惩罚：同一组 (from→to) 出现太多次则降权 ──
+        val transitionPenalty = 20f
+        if (prevBotId != null) {
+            val recentTransitions = rs.transitionHistory
+            candidates.forEach { c ->
+                val count = recentTransitions.count { it.first == prevBotId && it.second == c.id }
+                if (count >= 2) {
+                    c.score -= transitionPenalty * count
+                    android.util.Log.w(TAG, "  惩罚 [$prevBotId→${c.id}] 出现${count}次, score=${c.score}")
                 }
             }
         }
@@ -643,6 +660,31 @@ class GroupChatViewModel : ViewModel() {
         candidates.forEach { c ->
             if (c.index !in compactedSpoken) c.score += 20f
         }
+
+        // ── 无强信号 + 得分扁平 → fallback 到 round_robin ──
+        // round_robin: 选列表中 prevBotId 的下一个存活 bot
+        val useRoundRobin = !hasSignal && prevBotId != null
+        if (useRoundRobin) {
+            val aliveIdx = aliveBotIds.indexOf(prevBotId)
+            if (aliveIdx >= 0) {
+                // 找 prevBotId 之后第一个不同的存活 bot
+                for (offset in 1..aliveBotIds.size) {
+                    val nextIdx = (aliveIdx + offset) % aliveBotIds.size
+                    val nextId = aliveBotIds[nextIdx]
+                    // 映射回原始 botIds 的索引
+                    val origIdx = botIds.indexOf(nextId)
+                    val result = listOf(origIdx to nextId)
+                    val newRs = rs.copy(
+                        botIds = aliveBotIds,
+                        spokenInThisRound = compactedSpoken,
+                        spokenRoundCounter = rs.spokenRoundCounter
+                    )
+                    android.util.Log.i(TAG, "选人: round_robin [$prevBotId→$nextId] (无强信号)")
+                    return result to newRs
+                }
+            }
+        }
+
         candidates.forEach { c -> c.score += (Math.random().toFloat() * 15f) }
 
         val sorted = candidates.sortedWith(compareByDescending<Candidate> { it.score }
