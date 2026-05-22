@@ -157,18 +157,30 @@ class GroupChatViewModel : ViewModel() {
                 }
 
                 val rs = _relayState.value
-                if (rs.waitingSpeakerIndex < 0) continue  // 没有正在等待的bot，跳过
                 if (_isRecording.value) continue           // 用户正在录音，跳过
-                
-                // 检查等待的bot是否已无响应超时
-                val waitingBotId = rs.botIds.getOrNull(rs.waitingSpeakerIndex) ?: continue
-                val lastAudio = botLastAudioTime[waitingBotId] ?: 0L
-                val silenceDuration = System.currentTimeMillis() - lastAudio
-                
-                if (silenceDuration > 30_000) {
-                    android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超30s），清除等待状态并重启接龙")
-                    _relayState.update { it.clearWaiting() }
-                    triggerNextSpeaker("")
+
+                if (rs.waitingSpeakerIndex >= 0) {
+                    // 模式1：有等待的bot——检查是否超时
+                    val waitingBotId = rs.botIds.getOrNull(rs.waitingSpeakerIndex) ?: continue
+                    val lastAudio = botLastAudioTime[waitingBotId] ?: 0L
+                    val silenceDuration = System.currentTimeMillis() - lastAudio
+                    if (silenceDuration > 30_000) {
+                        android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超30s），清除等待状态并重启接龙")
+                        _relayState.update { it.clearWaiting() }
+                        botConnectionPool.clearDead()
+                        triggerNextSpeaker("")
+                    }
+                } else if (rs.forwardRound >= 0 && rs.botIds.isNotEmpty()) {
+                    // 模式2：无等待bot但对话未结束——检查全局空闲（ws=-1 + 所有bot静默 > 30s）
+                    val anyAudioRecently = rs.botIds.any {
+                        val t = botLastAudioTime[it] ?: 0L
+                        t > 0 && System.currentTimeMillis() - t < 30_000
+                    }
+                    if (!anyAudioRecently) {
+                        android.util.Log.w(TAG, "接龙空闲恢复：所有bot静默 >30s，清理死bot并重启接龙")
+                        botConnectionPool.clearDead()
+                        triggerNextSpeaker("")
+                    }
                 }
             }
         }
@@ -196,7 +208,14 @@ class GroupChatViewModel : ViewModel() {
 
         currentGroupId = groupId
         botConnectionPool.abortAll("user_interrupt")
-        playbackManager.releaseAll()
+        // 不清除共享解码器——只排空队列，保持 AudioTrack 活过整个群聊会话
+        // 避免华为上反复创建/释放 AudioTrack 导致的无声问题
+        val sharedId = "${groupId}_shared"
+        if (playbackManager.contains(sharedId)) {
+            playbackManager.flushSource(sharedId)
+        } else {
+            playbackManager.releaseAll()
+        }
         // 不取消 botObserverJobs！监听器跨录音会话存活，
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
@@ -427,27 +446,29 @@ class GroupChatViewModel : ViewModel() {
 
                         if (state == "idle" && hasSpoken) {
                             hasSpoken = false
-                            val prevBotId = rs.botIds.getOrNull(rs.currentSpeakerIndex)
-                            drainPreviousBotAudio(prevBotId)
+                            // drain: botId 用于音频时间检测，groupId_shared 用于解码器队列排空
+                            drainPreviousBotAudio(botId, "${groupId}_shared")
 
                             var shouldTrigger = false
                             var replyToForward = ""
                             speakerMutex.withLock {
-                                if (speakerSession != rs.sessionId) {
-                                    android.util.Log.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${rs.sessionId}")
+                                // mutex 内重读 relayState，避免竞态（外边读的快照可能已过时）
+                                val currentRs = _relayState.value
+                                if (speakerSession != currentRs.sessionId) {
+                                    android.util.Log.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${currentRs.sessionId}")
                                     return@withLock
                                 }
-                                val botIndex = rs.botIds.indexOf(botId)
+                                val botIndex = currentRs.botIds.indexOf(botId)
                                 if (botIndex < 0) return@withLock
-                                if (botIndex == rs.waitingSpeakerIndex && rs.botIds.size > 1) {
+                                if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
-                                    android.util.Log.i(TAG, "[$botName] triggering next, fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
-                                } else if (rs.waitingSpeakerIndex < 0 && rs.botIds.size > 1 && rs.forwardRound >= 0) {
+                                    android.util.Log.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
+                                } else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
                                     // ws=-1 但还有活跃 bot → 自动继续下一轮（接龙之前失败或轮次结束）
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
-                                    android.util.Log.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${rs.forwardRound} reply='${replyToForward.take(60)}'")
+                                    android.util.Log.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
                                 } else {
                                     // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
                                     replyText = ""
@@ -586,6 +607,25 @@ class GroupChatViewModel : ViewModel() {
         }
 
         audioForwardBuffer.remove(prevBotId)
+
+        // 所有候选 bot 都不可用—尝试清死标记+重连每个候选一次
+        if (candidates.isNotEmpty() && _relayState.value.forwardRound >= 0) {
+            android.util.Log.w(TAG, "无可用bot转发，尝试重连所有候选")
+            botConnectionPool.clearDead()
+            for ((origIdx, speakerId) in candidates) {
+                val contact = _contacts.value.find { it.id == speakerId }
+                if (contact != null) {
+                    val reconnected = botConnectionPool.ensureConnected(speakerId, contact)
+                    if (reconnected) {
+                        android.util.Log.i(TAG, "重连成功 → $speakerId，继续转发")
+                        _relayState.update { it.moveToSpeaker(origIdx) }
+                        triggerNextSpeaker(previousReply)
+                        return
+                    }
+                }
+            }
+        }
+
         android.util.Log.w(TAG, "无可用bot转发，跳过本轮")
         _relayState.update { it.clearWaiting() }
         val firstAlive = _relayState.value.botIds.firstOrNull()
@@ -712,18 +752,18 @@ class GroupChatViewModel : ViewModel() {
     // ── 连接保活 ──
     // 使用 botConnectionPool 管理
 
-    private suspend fun drainPreviousBotAudio(prevBotId: String?) {
-        if (prevBotId == null) return
+    private suspend fun drainPreviousBotAudio(botId: String?, sourceId: String?) {
+        if (botId == null || sourceId == null) return
         withTimeoutOrNull(AUDIO_DRAIN_TIMEOUT_MS) {
             while (true) {
-                val lastTs = botLastAudioTime[prevBotId] ?: 0L
+                val lastTs = botLastAudioTime[botId] ?: 0L
                 if (lastTs <= 0) break
                 if (System.currentTimeMillis() - lastTs > AUDIO_DRAIN_SILENCE_MS) break
                 delay(100)
             }
         }
     delay(200) // in-flight 包
-    if (!playbackManager.waitForQueueEmpty(prevBotId, 2000L)) {
+    if (!playbackManager.waitForQueueEmpty(sourceId, 2000L)) {
         android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
     }
     }
