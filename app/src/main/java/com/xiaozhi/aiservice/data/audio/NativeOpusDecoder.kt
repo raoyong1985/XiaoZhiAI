@@ -27,14 +27,14 @@ class NativeOpusDecoder(
 ) {
     companion object {
         private const val TAG = "NativeOpusDecoder"
-        private const val BUFFER_MULTIPLIER = 24
+        private const val BUFFER_MULTIPLIER = 32
         private const val MAX_QUEUE_SIZE = 200
 
         /** 播放线程空闲超时：无真实音频数据时，写少量静音帧保持 AudioTrack 活跃避免焦点丢失 */
-        private const val PLAY_IDLE_TIMEOUT_MS = 10_000L
+        private const val PLAY_IDLE_TIMEOUT_MS = 30_000L
         /** 空闲时写静音的间隔（每 N ms 写一次静音帧，保持 AudioTrack 活跃） */
-        private const val IDLE_SILENCE_INTERVAL_MS = 1000L
-        private const val SILENCE_FRAME_SIZE = 512
+        private const val IDLE_SILENCE_INTERVAL_MS = 500L
+        private const val SILENCE_FRAME_SIZE = 2048
         private val silenceFrame = ByteArray(SILENCE_FRAME_SIZE)
 
         private var audioManager: AudioManager? = null
@@ -555,6 +555,27 @@ class NativeOpusDecoder(
             delay(20)
         }
         return false
+    }
+
+    /**
+     * 等待 AudioTrack 硬件缓冲自然排空。
+     * 不强制 flush，让已写入的音频播放完。
+     * 用于 drainAndFlushPlayback，在不切音尾的前提下阻止回声。
+     */
+    suspend fun waitForHardwareDrain(timeoutMs: Long = 5000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val remaining = getRemainingBytes()
+            if (remaining <= 0) return true
+            val estMs = remaining * 1000L / (clientSampleRate * 2 * channels)
+            // 剩很少了直接等完，省一次轮询
+            if (estMs < 30) {
+                delay(estMs + 20)
+                return getRemainingBytes() <= 0
+            }
+            delay(50)
+        }
+        return getRemainingBytes() <= 0
     }
 
     fun release() {

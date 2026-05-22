@@ -57,6 +57,9 @@ class ConnectionRepositoryImpl(
     private var lastSentText: String? = null
     private val lastSentTextLock = Any()
 
+    // AI 最后说的话（RECEIVED 消息），用于回声检测
+    private var lastTtsText: String = ""
+
     // 当前联系人ID，用于消息路由
     var currentContactId: String = ""
 
@@ -104,6 +107,16 @@ class ConnectionRepositoryImpl(
             }
         }
 
+        // 参考 ESP32 HandleStateChangedEvent(Idle): 统一在 IDLE 状态重启唤醒词
+        // 替代分散在各处的 startWakeWordMode() 调用，确保所有回到 IDLE 的路径都触发
+        scope.launch {
+            _deviceState.collect { state ->
+                if (state == DeviceState.IDLE) {
+                    startWakeWordMode()
+                }
+            }
+        }
+
         scope.launch {
             backendService.aiState.collect { state ->
                 stateMutex.withLock {
@@ -121,6 +134,9 @@ class ConnectionRepositoryImpl(
                         _deviceState.value = DeviceState.SPEAKING
                         audioRecorder.stop()
                         weStartedRecording = false
+                        // 参考 ESP32 HandleStateChangedEvent(Speaking): ResetDecoder()
+                        // 清空播放缓冲，防止 VAD auto-stop 与 TTS start 重叠时的残留音频
+                        playbackManager.flushSource("main")
                         // 不发送 abort，服务器知道我们在 listening 状态
                         _aiState.value = newAiState
                         return@withLock
@@ -130,10 +146,16 @@ class ConnectionRepositoryImpl(
                     // 注意：不发送 abort/listenStop，服务器已知自己在说话，abort 会打断 AI 回复
                     if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
                         Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声（保留 AI 回复）")
-                        _deviceState.value = DeviceState.SPEAKING
                         audioRecorder.stop()
                         audioService.abandonAudioFocus()
                         weStartedRecording = false
+                    }
+
+                    // 参考 ESP32 TransitionTo: 先设状态再执行操作
+                    // 统一在这里设 _deviceState，替代分散在各条件分支中设置
+                    // 确保文本模式（weStartedRecording=false）也能正确更新设备状态
+                    if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
+                        _deviceState.value = DeviceState.SPEAKING
                     }
 
                     // 更新状态
@@ -223,12 +245,24 @@ class ConnectionRepositoryImpl(
                 // STT回显的消息如果是自己刚发的，跳过（避免重复显示用户发送的消息）
                 // 注意：STT的direction可能是SENT（用户说话）或RECEIVED（AI说话），两种都要检查
                 if (message.type == MessageType.TEXT) {
+                    // 1. 用户文本发送回显去重
                     synchronized(lastSentTextLock) {
                         if (message.content == lastSentText) {
                             Logger.i(TAG, "跳过STT回显的消息（与最后发送的消息相同）")
                             lastSentText = null
                             return@collect
                         }
+                    }
+                    // 2. 回声检测：SENT 消息如果和 AI 刚说的话重叠，判定为扬声器回声
+                    if (message.direction == MessageDirection.SENT && lastTtsText.isNotEmpty()) {
+                        if (isEcho(message.content, lastTtsText)) {
+                            Logger.i(TAG, "检测到回声（\"${message.content.take(30)}\" ≈ \"${lastTtsText.take(30)}\"），跳过")
+                            return@collect
+                        }
+                    }
+                    // 3. 记录 AI 说的话（RECEIVED），用于下一轮回声检测
+                    if (message.direction == MessageDirection.RECEIVED) {
+                        lastTtsText = message.content
                     }
                 }
                 messageRepository.addReceivedMessage(currentContactId, message)
@@ -237,9 +271,14 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.audioData.collect { audioData ->
-                // 去除 aiState 竞态检查：音频数据只会在服务器发送时到达
-                // 移除 _aiState != SPEAKING 检查解决竞态条件（音频包与状态切换同时到达时被丢弃）
                 if (audioData.isEmpty()) return@collect
+                // 参考 ESP32 OnIncomingAudio: 仅在 SPEAKING 状态播放音频
+                // 服务器保证 tts {state:start} 先于二进制音频帧到达，但协程间 StateFlow 收集有延迟
+                // 如果状态切换（tts stop→idle）与残余音频包同时到达，非 SPEAKING 状态播放会引入杂音
+                if (_aiState.value != AiState.SPEAKING) {
+                    Logger.w(TAG, "audioData 在非 SPEAKING 状态到达（${_aiState.value}），丢弃 ${audioData.size}B")
+                    return@collect
+                }
                 val t0 = System.nanoTime()
                 val serverRate = backendService.getServerSampleRate()
                 val serverCh = backendService.getServerChannels()
@@ -489,17 +528,32 @@ class ConnectionRepositoryImpl(
     }
 
     private suspend fun drainAndFlushPlayback() {
-        var hadData = false
-        if (playbackManager.waitForQueueEmpty("main", 1000)) {
-            hadData = true
-        }
-        if (hadData) {
-            // 等硬件 AudioTrack 缓冲排空，防止麦克风采集到扬声器残留音频
-            delay(800)
-            Logger.i(TAG, "drainAndFlushPlayback 完成（等待 ${if (hadData) "800ms 硬件排空" else "无数据跳过"}）")
-        } else {
-            Logger.i(TAG, "drainAndFlushPlayback 完成（无数据跳过）")
-        }
+        // ESP32 WaitForPlaybackQueueEmpty: 等软件队列自然排空
+        val hadQueueData = playbackManager.waitForQueueEmpty("main", 1000)
+        // 等 AudioTrack 硬件缓冲排空（适度等待，文本回声滤波器兜底）
+        val hadHardware = playbackManager.waitForHardwareDrain("main", 1500)
+        Logger.i(TAG, "drainAndFlushPlayback 完成（软件队列${if (hadQueueData) "空" else "超时"}，硬件${if (hadHardware) "已排空" else "超时"}）")
+    }
+
+    /**
+     * 回声检测：判断 SENT 消息是否是扬声器播出的 AI 话语被麦克风采集回头。
+     *
+     * 策略：
+     * 1. 短文本（<4字）跳过——用户简短回复"好的""嗯"是正常交互，不是回声
+     * 2. 长文本用用户文字在 TTS 中的覆盖率判定（用户说的所有字都在 AI 话里 = 回声）
+     */
+    private fun isEcho(userText: String, ttsText: String): Boolean {
+        if (userText.isEmpty() || ttsText.isEmpty()) return false
+        // 短文本（1-3字）跳过回声过滤——用户简短应答是正常交互
+        val textChars = userText.filter { it.isLetter() }
+        if (textChars.length < 4) return false
+        val userChars = textChars.toSet()
+        val ttsChars = ttsText.filter { it.isLetter() }.toSet()
+        if (userChars.isEmpty()) return false
+        val overlap = userChars.intersect(ttsChars).size.toFloat()
+        // 用覆盖度：用户说的字有多少在 AI 的话里
+        val coverage = overlap / userChars.size
+        return coverage >= 0.75f  // ≥75% 的字重叠 = 回声
     }
 
     /** 更新私聊解码器音量（由 set_xiaozhi_volume MCP 工具调用） */

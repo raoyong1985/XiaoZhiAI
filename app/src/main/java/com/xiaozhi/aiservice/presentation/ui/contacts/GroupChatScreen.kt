@@ -94,7 +94,7 @@ fun GroupChatScreen(
     }
 
     Scaffold(
-        modifier = Modifier.imePadding(),
+        modifier = Modifier.imePadding().navigationBarsPadding(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -236,7 +236,7 @@ private fun GroupChatInputArea(
     )
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
         shadowElevation = 8.dp,
         color = MaterialTheme.colorScheme.surface
     ) {

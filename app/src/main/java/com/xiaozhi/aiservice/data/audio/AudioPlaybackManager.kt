@@ -90,6 +90,15 @@ class AudioPlaybackManager {
         return decoder.waitForQueueEmpty(timeoutMs)
     }
 
+    /**
+     * 等待指定源 AudioTrack 硬件缓冲自然排空（不 flush，等播完）。
+     * 对应 ESP32 WaitForPlaybackQueueEmpty() 语义。
+     */
+    suspend fun waitForHardwareDrain(sourceId: String, timeoutMs: Long = 5000): Boolean {
+        val decoder = decoders[sourceId] ?: return true
+        return decoder.waitForHardwareDrain(timeoutMs)
+    }
+
     /** 释放除 protectKey 外所有解码器 */
     fun releaseAllExcept(protectKey: String) {
         val toRelease = decoders.keys.filter { it != protectKey }

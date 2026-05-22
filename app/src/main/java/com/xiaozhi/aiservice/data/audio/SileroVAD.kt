@@ -9,28 +9,33 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
-import java.util.ArrayDeque
 import java.util.Arrays
 
 /**
  * Silero VAD（语音活动检测）Android 端实现
- * 移植自 xiaozhi-esp32-server 的 core/providers/vad/silero.py
+ * 移植自 snakers4/silero-vad VADIterator
  *
- * 使用 Silero VAD ONNX 模型检测语音，比 RMS 能量阈值准确得多
+ * 使用 Silero VAD v6 ONNX 模型检测语音，比 RMS 能量阈值准确得多
  * 核心逻辑：
  *   1. 接收 PCM 16bit 音频（16000Hz）
  *   2. 按 512 样本（32ms）分帧
  *   3. 每帧做 ONNX 推理 → 得到语音概率
- *   4. 双阈值判断（speech_prob >= 0.5 = 有声音，<= 0.2 = 无声音，之间保持之前状态）
- *   5. 3 帧滑动窗口去抖动
+ *   4. 双阈值判断 + temp_end 机制（官方 VADIterator 算法）
+ *      - speech_prob >= 0.5 → 语音，清除 temp_end
+ *      - speech_prob <= 0.35 → 非语音，记录 temp_end
+ *      - 中间区间保持前一个状态（hangover）
+ *   5. temp_end：语音中短暂停顿（<100ms）不切断
+ *   6. triggered 状态：非语音段不做去抖动，减少噪声误报
  */
 class SileroVAD(
-    /** 语音概率高阈值：超过此值判定为语音，值越高越不灵敏 */
-    private val threshold: Float = 0.7f,
-    /** 语音概率低阈值：低于此值判定为静音，值越高越不易保持语音 */
-    private val thresholdLow: Float = 0.4f,
-    /** 连续语音帧数（滑动窗口大小）用于去抖动，值越大越稳定但响应越慢 */
-    private val frameWindowThreshold: Int = 4
+    /** 语音概率高阈值：超过此值判定为语音 */
+    private val threshold: Float = 0.5f,
+    /** 语音概率低阈值：低于此值（且触发后）判定为静音 */
+    private val thresholdLow: Float = 0.35f,
+    /** 连续语音帧数（滑动窗口大小），用于去抖动 */
+    private val frameWindowThreshold: Int = 3,
+    /** 语音中容忍的静音样本数（100ms @ 16kHz = 1600 样本） */
+    private val minSilenceSamples: Int = 1600
 ) {
     companion object {
         private const val TAG = "SileroVAD"
@@ -47,11 +52,18 @@ class SileroVAD(
     private var session: OrtSession? = null
     private var initialized = false
 
-    // 每连接独立状态（服务器用 conn._vad_state，这里用成员变量）
+    // ONNX state（每帧推理需要保持）
     private val stateH = FloatArray(2 * 128)    // shape (2, 1, 128) flattened
-    private val context = FloatArray(CONTEXT_SIZE)   // 最后 64 个样本
-    private var lastIsVoice = false
-    private val voiceWindow = ArrayDeque<Boolean>()
+    private val context = FloatArray(CONTEXT_SIZE)   // 最后 128 个样本
+
+    // VADIterator 状态
+    private var triggered = false          // 当前是否在语音段中
+    private var tempEnd = -1L              // 静音开始的样本位置（-1 = 不在静音中）
+    private var currentSample = 0L         // 当前处理的样本总数
+    private var lastFrameIsVoice = false   // 上一帧的语音状态（hangover 用）
+
+    // 滑动窗口去抖动（仅 triggered 时有效）
+    private val voiceWindow = java.util.ArrayDeque<Boolean>()
 
     fun isInitialized(): Boolean = initialized
 
@@ -92,7 +104,10 @@ class SileroVAD(
     fun reset() {
         Arrays.fill(stateH, 0f)
         Arrays.fill(context, 0f)
-        lastIsVoice = false
+        triggered = false
+        tempEnd = -1L
+        currentSample = 0L
+        lastFrameIsVoice = false
         voiceWindow.clear()
     }
 
@@ -100,6 +115,12 @@ class SileroVAD(
      * 对 PCM 数据执行 VAD 检测
      * @param pcmData PCM 16bit 音频（小端序，16000Hz）
      * @return true = 检测到语音，false = 静音
+     *
+     * 算法（移植自官方 VADIterator）：
+     * 1. 按 512 样本分帧推理
+     * 2. 双阈值带 hangover 判断
+     * 3. temp_end：语音中短暂停顿不切断
+     * 4. triggered 状态：仅语音段填入滑动窗口
      */
     fun isVoice(pcmData: ByteArray): Boolean {
         if (!initialized || session == null || env == null) {
@@ -160,24 +181,70 @@ class SileroVAD(
                 srTensor.close()
                 result.close()
 
-                // 双阈值判断（参考 silero.py 双阈值逻辑）
-                val isVoice = when {
+                // === VADIterator 核心算法 ===
+
+                currentSample += FRAME_SIZE
+
+                // 1. 双阈值 hangover：中间区间保持前一帧状态
+                val frameIsVoice = when {
                     speechProb >= threshold -> true
                     speechProb <= thresholdLow -> false
-                    else -> lastIsVoice  // 中间区间保持前一个状态
+                    else -> lastFrameIsVoice
                 }
-                lastIsVoice = isVoice
+                lastFrameIsVoice = frameIsVoice
 
-                // 滑动窗口去抖动（3帧中有 frameWindowThreshold 帧为声音才判定为声音）
-                voiceWindow.addLast(isVoice)
-                if (voiceWindow.size > frameWindowThreshold) {
-                    voiceWindow.removeFirst()
+                // 2. 语音帧 → 清除 temp_end（结束静音计时）
+                if (frameIsVoice && tempEnd >= 0) {
+                    tempEnd = -1
+                }
+
+                // 3. 开始语音
+                if (frameIsVoice && !triggered) {
+                    triggered = true
+                    voiceWindow.clear()
+                }
+
+                // 4. 非语音且处于语音中 → 记录或检查 temp_end
+                if (!frameIsVoice && triggered) {
+                    if (tempEnd < 0) {
+                        tempEnd = currentSample  // 开始静音计时
+                    }
+
+                    val silenceDuration = currentSample - tempEnd
+                    if (silenceDuration >= minSilenceSamples) {
+                        // 静音太长了，结束语音段
+                        triggered = false
+                        tempEnd = -1
+                        voiceWindow.clear()
+                    }
+                }
+
+                // 5. 仅 triggered 时填入滑动窗口（非语音段不污染窗口）
+                if (triggered) {
+                    voiceWindow.addLast(true)
+                    if (voiceWindow.size > frameWindowThreshold) {
+                        voiceWindow.removeFirst()
+                    }
+                } else if (frameIsVoice) {
+                    // 边缘情况：未 triggered 但有语音（第一帧）
+                    voiceWindow.addLast(true)
+                    if (voiceWindow.size > frameWindowThreshold) {
+                        voiceWindow.removeFirst()
+                    }
+                } else {
+                    // 非 triggered 且非语音 → 不填窗口
+                    // 让窗口保持之前的决策或变空
+                    if (voiceWindow.isNotEmpty()) {
+                        voiceWindow.removeFirst()
+                    }
                 }
 
                 offset += FRAME_SIZE
             }
 
-            return voiceWindow.count { it } >= frameWindowThreshold
+            // 窗口非空且足够多 true → 语音
+            return voiceWindow.size >= frameWindowThreshold &&
+                   voiceWindow.count { it } >= frameWindowThreshold
 
         } catch (e: Exception) {
             Logger.w(TAG, "VAD 推理异常: ${e.message}")

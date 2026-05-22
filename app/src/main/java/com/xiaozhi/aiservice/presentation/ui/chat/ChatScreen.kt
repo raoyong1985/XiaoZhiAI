@@ -142,6 +142,22 @@ fun ChatScreen(
     }
 
     Scaffold(
+        modifier = Modifier.navigationBarsPadding(),
+        bottomBar = {
+            ChatInputArea(
+                isRecording = uiState.isRecording,
+                aiState = uiState.aiState,
+                connectionState = uiState.connectionState,
+                inputMode = inputMode,
+                onSendText = { text ->
+                    viewModel.sendTextMessage(text)
+                    keyboardController?.hide()
+                },
+                onStartRecording = { viewModel.startListening() },
+                onStopRecording = { viewModel.stopListening() },
+                onTryReconnect = { viewModel.tryReconnect() }
+            )
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -201,16 +217,10 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .imePadding()
-        ) {
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             LazyColumn(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 state = listState,
                 reverseLayout = false
@@ -229,21 +239,6 @@ fun ChatScreen(
 
                 item { Spacer(modifier = Modifier.height(8.dp)) }
             }
-
-            // 输入区域
-            ChatInputArea(
-                isRecording = uiState.isRecording,
-                aiState = uiState.aiState,
-                connectionState = uiState.connectionState,
-                inputMode = inputMode,
-                onSendText = { text ->
-                    viewModel.sendTextMessage(text)
-                    keyboardController?.hide()
-                },
-                onStartRecording = { viewModel.startListening() },
-                onStopRecording = { viewModel.stopListening() },
-                onTryReconnect = { viewModel.tryReconnect() }
-            )
         }
     }
 }
