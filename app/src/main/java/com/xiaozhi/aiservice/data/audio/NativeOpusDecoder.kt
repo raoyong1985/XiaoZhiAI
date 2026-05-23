@@ -218,8 +218,9 @@ class NativeOpusDecoder(
             playThread = Thread {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 Logger.i(TAG, "Play thread started")
-                // 保活静音缓冲，每 3s 写 500B ≈ 15ms @16kHz，占空比 0.5%，
+                // 保活静音缓冲，每 1s 写 500B ≈ 15ms @16kHz，占空比 0.5%，
                 // 防止 AudioFlinger 因 underrun 超时移除 AudioTrack
+                // OPPO/MTK underrun 超时约 1-2s，3s 间隔来不及
                 val keepAliveSilence = ByteArray(500)
                 var keepAliveTimer = 0L
                 while (isPlaying.get()) {
@@ -248,7 +249,7 @@ class NativeOpusDecoder(
                         } else {
                             // poll 超时：空闲时每 3s 写 500B 保活，防 AudioFlinger 杀 track
                             val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs > keepAliveTimer + 3000) {
+                            if (idleMs > keepAliveTimer + 1000) {
                                 keepAliveTimer = idleMs
                                 try { audioTrack?.write(keepAliveSilence, 0, keepAliveSilence.size) } catch (_: Exception) {}
                             }
@@ -343,7 +344,7 @@ class NativeOpusDecoder(
                             }
                         } else {
                             val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs > keepAliveTimer + 3000) {
+                            if (idleMs > keepAliveTimer + 1000) {
                                 keepAliveTimer = idleMs
                                 try { audioTrack?.write(keepAliveSilence, 0, keepAliveSilence.size) } catch (_: Exception) {}
                             }
@@ -431,35 +432,20 @@ class NativeOpusDecoder(
         val outputLength = (inputSamples.toDouble() * outputRate / inputRate).toInt()
         val output = ShortArray(outputLength)
 
-        // Catmull-Rom Hermite 立方插值，比线性插值更平滑、频谱保持更好
-        // 参考: https://en.wikipedia.org/wiki/Cubic_Hermite_spline
+        // 线性插值：简单安全，不会像 Catmull-Rom 那样过冲产生可听失真
+        // Catmull-Rom 在 24k→16k 的 1.5x 采样步进下，遇到语音爆破音/摩擦音
+        // 会产生远超原始范围的样本值，soft limiter 硬切后听起来像胡言乱语
         for (i in 0 until outputLength) {
             val srcIndex = i * inputRate.toDouble() / outputRate
             val srcIndexInt = srcIndex.toInt()
             val frac = srcIndex - srcIndexInt
 
-            if (srcIndexInt <= 0) {
-                // 左边界：线性插值
-                val s0 = input[0].toInt()
-                val s1 = if (srcIndexInt + 1 < inputSamples) input[1].toInt() else s0
-                output[i] = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767).toShort()
-            } else if (srcIndexInt >= inputSamples - 2) {
-                // 右边界：线性插值
-                val s0 = input[inputSamples - 2].toInt()
-                val s1 = input[inputSamples - 1].toInt()
-                output[i] = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767).toShort()
+            if (srcIndexInt >= inputSamples - 1) {
+                output[i] = input[inputSamples - 1]
             } else {
-                // Hermite 立方插值
-                val m1 = input[srcIndexInt - 1].toInt()
-                val a = input[srcIndexInt].toInt()
-                val b = input[srcIndexInt + 1].toInt()
-                val m2 = input[srcIndexInt + 2].toInt()
-                val c0 = a
-                val c1 = 0.5f * (b - m1)
-                val c2 = m1 - 2.5f * a + 2f * b - 0.5f * m2
-                val c3 = 0.5f * (m2 - m1) + 1.5f * (a - b)
-                val resampled = ((c3 * frac + c2) * frac + c1) * frac + c0
-                output[i] = resampled.toInt().coerceIn(-32768, 32767).toShort()
+                val s0 = input[srcIndexInt].toInt()
+                val s1 = input[srcIndexInt + 1].toInt()
+                output[i] = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767).toShort()
             }
         }
 
