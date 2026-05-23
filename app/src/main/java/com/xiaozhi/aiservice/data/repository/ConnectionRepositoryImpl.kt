@@ -305,7 +305,7 @@ class ConnectionRepositoryImpl(
             weStartedRecording = false
             isAutoMode = false
             textInputActive = false
-            lastSentText = null
+            synchronized(lastSentTextLock) { lastSentText = null }
             lastTtsText = ""
             pendingTextResponse?.complete(Unit)
             pendingTextResponse = null

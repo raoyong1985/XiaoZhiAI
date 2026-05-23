@@ -108,7 +108,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     val streamingEnd: SharedFlow<String> = _streamingEnd.asSharedFlow()
 
     @Volatile private var isConnected = false
-    private var serverUrl = ""
+    @Volatile private var serverUrl = ""
     private var otaUrl = ""
     private var deviceId = ""
     private var clientId = ""
@@ -119,7 +119,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var wsToken = ""
     @Volatile private var reconnectAttempt = 0
     private val baseReconnectDelay = 1000L
-    private var isDisconnecting = false  // 用户主动断开，不再自动重连
+    @Volatile private var isDisconnecting = false  // 用户主动断开，不再自动重连
     @Volatile
     private var isReconnecting = false   // 防止 onClosing+onClosed 双重重连
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
@@ -322,6 +322,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
         _aiState.value = AiStateStr.IDLE
         // 注意：不 cancel supervisorJob，scope 保持活跃以支持重连
         // 各协程通过 isDisconnecting 标志 + cancel() 协作取消
+    }
+
+    /**
+     * 完全销毁（Service 生命周期结束），取消全部协程
+     */
+    fun destroy() {
+        disconnect()
+        supervisorJob.cancel()
     }
 
     /**
