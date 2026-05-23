@@ -107,18 +107,18 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private val _streamingEnd = MutableSharedFlow<String>(replay = 0)
     val streamingEnd: SharedFlow<String> = _streamingEnd.asSharedFlow()
 
-    private var isConnected = false
+    @Volatile private var isConnected = false
     private var serverUrl = ""
     private var otaUrl = ""
     private var deviceId = ""
     private var clientId = ""
-    private var sessionId = ""
-    private var serverSampleRate = 16000  // 服务器返回的采样率
-    private var serverChannels = 1            // 服务器返回的声道数
-    private var accessToken = ""           // 保存accessToken用于重连
-    private var wsToken = ""              // WebSocket token (OTA注册返回)
-    private var reconnectAttempt = 0       // 重连次数
-    private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
+    @Volatile private var sessionId = ""
+    private var serverSampleRate = 16000
+    private var serverChannels = 1
+    private var accessToken = ""
+    private var wsToken = ""
+    @Volatile private var reconnectAttempt = 0
+    private val baseReconnectDelay = 1000L
     private var isDisconnecting = false  // 用户主动断开，不再自动重连
     @Volatile
     private var isReconnecting = false   // 防止 onClosing+onClosed 双重重连
@@ -528,7 +528,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 "server" -> handleServer(json)
             }
         } catch (e: Exception) {
-            // ignore parse errors
+            Logger.e(TAG, "处理文本消息失败: ${e.message}")
         }
     }
 

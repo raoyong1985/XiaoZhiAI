@@ -72,6 +72,7 @@ class ConnectionRepositoryImpl(
     // 文本输入激活中：发送文本后不自动重启语音监听
     private var textInputActive = false
     // 等待文本消息回复（参考对方 Completer 模式）
+    @Volatile
     private var pendingTextResponse: CompletableDeferred<Unit>? = null
     // 唤醒词已启用
     private var wakeWordEnabled = false
@@ -270,9 +271,7 @@ class ConnectionRepositoryImpl(
 
         scope.launch {
             backendService.audioData.collect { audioData ->
-                // 音频数据仅由服务器在 SPEAKING 状态发送，且 WebSocket 单线程保证
-                // tts {state:start} 先于二进制音频帧到达，不要加 _aiState 检查——协程间 StateFlow
-                // 收集有调度延迟，会导致首几包被丢弃，引起语音延迟
+                try {
                 if (audioData.isEmpty()) return@collect
                 val t0 = System.nanoTime()
                 val serverRate = backendService.getServerSampleRate()
@@ -282,6 +281,9 @@ class ConnectionRepositoryImpl(
                 val dt = (System.nanoTime() - t0) / 1000
                 if (dt > 5000) {
                     Logger.w(TAG, "audioData→decodePacket 耗时: ${dt}us, 包大小=${audioData.size}B")
+                }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "audioData 处理异常: ${e.message}")
                 }
             }
         }
@@ -299,6 +301,14 @@ class ConnectionRepositoryImpl(
             playbackManager.releaseAll()
             _connectionState.value = ConnectionState.Disconnected
             _aiState.value = AiState.IDLE
+            // 重置全部状态变量（防止旧会话泄漏到新连接）
+            weStartedRecording = false
+            isAutoMode = false
+            textInputActive = false
+            lastSentText = null
+            lastTtsText = ""
+            pendingTextResponse?.complete(Unit)
+            pendingTextResponse = null
         }
 
         currentContactId = contactId

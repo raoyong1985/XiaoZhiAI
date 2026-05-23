@@ -132,7 +132,7 @@ class GroupChatViewModel : ViewModel() {
                                     }
                                 }
                             } catch (e: Exception) {
-                                android.util.Log.w(TAG, "连接bot[$botId]失败: ${e.message}")
+                                android.util.Log.w(TAG, "连接bot[$botId]失败", e)
                             }
                         }
                     }.forEach { it.await() }
@@ -283,6 +283,7 @@ class GroupChatViewModel : ViewModel() {
 
         audioRecorder.stop()
         audioService.abandonAudioFocus()
+        sttCollectorJob?.cancel()
 
         try { botConnectionPool.get(_relayState.value.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (_: Exception) {}
     }
