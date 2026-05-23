@@ -120,6 +120,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
     private var reconnectAttempt = 0       // 重连次数
     private val baseReconnectDelay = 1000L  // 基础重连延迟(ms)，断线后1s开始重连
     private var isDisconnecting = false  // 用户主动断开，不再自动重连
+    @Volatile
+    private var isReconnecting = false   // 防止 onClosing+onClosed 双重重连
     private var streamingMessageId = ""     // 当前流式消息ID，sentence_end时用于去重
     private var reconnectJob: kotlinx.coroutines.Job? = null  // 重连协程，disconnect时取消
     private var idleDebounceJob: kotlinx.coroutines.Job? = null  // 防抖：sentence_end后无后续消息则切idle
@@ -249,6 +251,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
+                isReconnecting = false
                 reconnectAttempt = 0
                 _connectionState.value = ConnectionState.Connected
                 Logger.i(TAG, "WebSocket已连接! 发送hello...")
@@ -303,6 +306,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
 
     fun disconnect() {
         isDisconnecting = true
+        isReconnecting = false
         reconnectJob?.cancel()
         reconnectJob = null
         idleDebounceJob?.cancel()
@@ -325,6 +329,8 @@ class XiaoZhiBackendService(private val gson: Gson) {
      */
     private fun scheduleReconnect() {
         if (isDisconnecting) return
+        if (isReconnecting) return  // 防止 onClosing+onClosed 双重调度
+        isReconnecting = true
         if (serverUrl.isEmpty()) return
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
             Logger.e(TAG, "重连已达到最大次数($MAX_RECONNECT_ATTEMPTS)，停止重连")

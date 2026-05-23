@@ -63,7 +63,8 @@ class GroupChatViewModel : ViewModel() {
 
     private val speakerMutex = Mutex()
 
-    // 防死循环
+    // 防死循环（synchronized 保护：多协程并发写）
+    private val deadloopLock = Any()
     private val recentHints = mutableListOf<String>()
     private val recentCandidates = mutableListOf<String>()
     private var deadloopCount = 0
@@ -168,7 +169,7 @@ class GroupChatViewModel : ViewModel() {
                         android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超30s），清除等待状态并重启接龙")
                         _relayState.update { it.clearWaiting() }
                         botConnectionPool.clearDead()
-                        triggerNextSpeaker("")
+                        viewModelScope.launch { triggerNextSpeaker("") }
                     }
                 } else if (rs.forwardRound >= 0 && rs.botIds.isNotEmpty()) {
                     // 模式2：无等待bot但对话未结束——检查全局空闲（ws=-1 + 所有bot静默 > 30s）
@@ -179,7 +180,7 @@ class GroupChatViewModel : ViewModel() {
                     if (!anyAudioRecently) {
                         android.util.Log.w(TAG, "接龙空闲恢复：所有bot静默 >30s，清理死bot并重启接龙")
                         botConnectionPool.clearDead()
-                        triggerNextSpeaker("")
+                        viewModelScope.launch { triggerNextSpeaker("") }
                     }
                 }
             }
@@ -220,9 +221,11 @@ class GroupChatViewModel : ViewModel() {
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
-        deadloopCount = 0
-        recentHints.clear()
-        recentCandidates.clear()
+        synchronized(deadloopLock) {
+            deadloopCount = 0
+            recentHints.clear()
+            recentCandidates.clear()
+        }
 
         val firstBotId = _relayState.value.botIds[0]
         val service = botConnectionPool.get(firstBotId) ?: return
@@ -817,6 +820,7 @@ class GroupChatViewModel : ViewModel() {
 
     // ── 死循环检测 ──
     private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
+        synchronized(deadloopLock) {
         var isDead = false
         if (hint.isNotBlank()) {
             recentHints.add(hint)
@@ -837,6 +841,7 @@ class GroupChatViewModel : ViewModel() {
             }
         } else deadloopCount = 0
         return false
+        }
     }
 
     // ── 消息截断 ──
@@ -899,8 +904,10 @@ class GroupChatViewModel : ViewModel() {
         ) }
         audioForwardBuffer.clear()
         recentReplyKeys.clear()
-        recentHints.clear()
-        recentCandidates.clear()
+        synchronized(deadloopLock) {
+            recentHints.clear()
+            recentCandidates.clear()
+        }
 
         if (_relayState.value.botIds.isNotEmpty()) {
             val firstBotId = _relayState.value.botIds[0]
