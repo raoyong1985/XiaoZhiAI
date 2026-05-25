@@ -18,6 +18,7 @@ import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.usecase.relay.AudioForwardHandler
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
+import com.xiaozhi.aiservice.domain.usecase.relay.RelayEngine
 import com.xiaozhi.aiservice.domain.usecase.relay.SpeakerScorer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -145,12 +146,6 @@ class GroupChatViewModel : ViewModel() {
     /** speakerMutex：保护 speaker 切换操作，避免并发触发两次触发下一 bot */
     private val speakerMutex = Mutex()
 
-    // ── 接龙互斥锁：防止 watchdog 与正常路径并发调用 triggerNextSpeaker ──
-    // triggerNextSpeaker 是 suspend 函数，forwardAudioToBot 会挂起，
-    // 此时看门狗可能检测到「假卡死」并发起第二次转发，导致重复
-    private var isRelaying = false
-    private val relayLock = Any()
-
     // 防死循环（Thread-safe：DeadloopDetector 内部使用 synchronized）
     private val deadloopDetector = DeadloopDetector()
     private val audioForwardHandler = AudioForwardHandler(
@@ -161,6 +156,12 @@ class GroupChatViewModel : ViewModel() {
     private val speakerScorer = SpeakerScorer(
         { botConnectionPool.isDead(it) },
         { _contacts.value }
+    )
+    private val relayEngine = RelayEngine(
+        botConnectionPool, audioForwardBuffer, _relayState,
+        { _contacts.value }, { _isRecording.value }, botLastAudioTime,
+        playbackManager, speakerMutex, audioForwardHandler, speakerScorer, deadloopDetector,
+        tag = TAG
     )
     /** 用于音频过滤的 grace 窗口：bot 进入 speaking 状态后 N 毫秒内允许音频通过 */
     private val botSpeakingTime = ConcurrentHashMap<String, Long>()
@@ -721,221 +722,7 @@ class GroupChatViewModel : ViewModel() {
      * @param previousReply 上一位 bot 的回复文本（空字符串表示用户语音触发）
      */
     private suspend fun triggerNextSpeaker(previousReply: String = "") {
-        // ── 互斥锁：防止 watchdog 和正常路径并发调用 ──
-        // triggerNextSpeaker 是 suspend 函数，forwardAudioToBot 会挂起，
-        // 此时看门狗可能检测到「假卡死」（botLastAudioTime=0→silenceDuration>30s）
-        // 并发起第二次转发，导致 bot 收到重复输入
-        synchronized(relayLock) {
-            if (isRelaying) {
-                android.util.Log.w(TAG, "triggerNextSpeaker 已在执行中，跳过并发调用")
-                return
-            }
-            isRelaying = true
-        }
-        try {
-            innerTriggerNextSpeaker(previousReply)
-        } finally {
-            synchronized(relayLock) { isRelaying = false }
-        }
-    }
-
-    private suspend fun innerTriggerNextSpeaker(previousReply: String = "") {
-        val rs = _relayState.value
-        if (rs.botIds.size <= 1) {
-            _relayState.update { it.clearWaiting() }
-            return
-        }
-        if (_isRecording.value) {
-            android.util.Log.w(TAG, "用户正在录音，跳过转发")
-            _relayState.update { it.clearWaiting() }
-            return
-        }
-        // 结束语检测：如果 bot 说了"再见"等，自然结束接龙
-        // 使用正则整词匹配（不是 contains，防止"下次聊点别的"误触发）
-        // 匹配规则：关键词必须在句子末尾 8 个字符内出现，避免句子中间误杀
-        if (previousReply.isNotBlank()) {
-            val tail = previousReply.takeLast(35) // 只看末尾 35 个字符
-            val isGoodbye = RelayConfig.GOODBYE_KEYWORDS.any { keyword ->
-                // 关键词在末尾出现，且后面没有中文字符跟随
-                val idx = tail.indexOf(keyword)
-                idx >= 0 && (idx + keyword.length >= tail.length || 
-                    tail.substring(idx + keyword.length).none { it in '一'..'龥' })
-            }
-            if (isGoodbye) {
-                android.util.Log.i(TAG, "检测到结束语，停止接龙: '${previousReply.take(20)}'")
-                _relayState.update { it.clearWaiting() }
-                return
-            }
-        }
-
-        val prevIndex = rs.currentSpeakerIndex
-        val prevBotId = rs.botIds.getOrNull(prevIndex)
-
-        // 轮次限制
-        val maxRounds = if (RelayConfig.MAX_FORWARD_ROUND > 0) RelayConfig.MAX_FORWARD_ROUND else rs.botIds.size - 1
-        if (rs.forwardRound >= maxRounds) {
-            android.util.Log.i(TAG, "接龙已达最大轮次($maxRounds)，停止转发")
-            _relayState.update { it.clearWaiting() }
-            return
-        }
-
-        // 原子地读取状态、计算候选、写入更新（避免读-计算-写之间的竞态）
-        var candidates: List<Pair<Int, String>> = emptyList()
-        _relayState.update { current ->
-            val (result, newState) = resolveSpeakerCandidates(prevIndex, previousReply, current.botIds, current)
-            candidates = result
-            newState
-        }
-
-        // 过滤出已连接的候选 bot
-        val connected = candidates.filter { (_, id) ->
-            val svc = botConnectionPool.get(id)
-            svc != null && (svc.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
-                || run {
-                    val contact = _contacts.value.find { it.id == id }
-                    contact != null && botConnectionPool.ensureConnected(id, contact)
-                })
-        }
-
-        // ── 终止前一个 bot 的 TTS，防止两个 bot 同时说话 ──
-        // 旧的 server session 可能还在往外吐音频，abort 告诉服务器停下
-        if (prevBotId != null && prevBotId != connected.firstOrNull()?.second) {
-            val prevSvc = botConnectionPool.get(prevBotId)
-            if (prevSvc != null) {
-                android.util.Log.i(TAG, "终止前 speaker[$prevBotId] 的 TTS")
-                prevSvc.sendAbort("relay_switch")
-            }
-        }
-
-        // ── 遍历候选 bot，尝试转发 ──
-        for ((targetIndex, speakerId) in connected) {
-            val service = botConnectionPool.get(speakerId) ?: continue
-            _relayState.update { it.moveToSpeaker(targetIndex) }
-            botLastAudioTime[speakerId] = System.currentTimeMillis()  // 重置看门狗计时
-
-            // ── 音频转发（主路径）：发送原始 Opus 音频，通用（任何服务器都支持） ──
-            // 接收 bot 的 ASR 转写后生成回复，不携带说话人标识。
-            val audioBuf = audioForwardBuffer[prevBotId]
-            val isLongAudio = audioBuf != null && audioBuf.size > 200
-            val audioOk = if (isLongAudio) {
-                android.util.Log.i(TAG, "超长语音(${audioBuf!!.size}包)，跳过音频转发")
-                false
-            } else {
-                forwardAudioToBot(prevBotId, service)
-            }
-
-            if (audioOk) {
-                val forwardAudioSize = audioForwardBuffer[prevBotId]?.sumOf { it.size } ?: 0
-                val estimatedAudioMs = (forwardAudioSize / (32000.0 / 50.0 * 2)).toLong().coerceIn(0, 60000)
-                val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
-                android.util.Log.i(TAG, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
-
-                val startConfirmed = withTimeoutOrNull(timeoutMs) {
-                    service.aiState.first { it == "speaking" }
-                }
-                if (startConfirmed != null) {
-                    val hint = if (previousReply.isNotBlank()) _relayState.value.originalUserQuery.take(8) else ""
-                    if (checkDeadloop(hint, speakerId)) {
-                        android.util.Log.i(TAG, "死循环终止，跳过转发")
-                        _relayState.update { it.clearWaiting() }
-                        return
-                    }
-                    _relayState.update {
-                        it.copy(
-                            forwardRound = it.forwardRound + 1
-                        ).markSpoken(targetIndex).recordTransition(prevBotId ?: "", speakerId)
-                    }
-                    if (previousReply.isNotBlank()) {
-                        _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
-                    }
-                    audioForwardBuffer.remove(prevBotId)
-                    android.util.Log.i(TAG, "音频转发成功 → $speakerId fwd=${_relayState.value.forwardRound}")
-                    return
-                }
-                android.util.Log.w(TAG, "音频转发超时($speakerId 10s未响应)，尝试下一候选")
-                _relayState.update { it.clearWaiting() }
-            }
-
-            // ── 文本转发（备用路径）：音频转发失败时兜底 ──
-            // 根据服务器类型选择格式：
-            //   本地服务器 → JSON 格式（带说话人标识，需服务器方能解析）
-            //   官方服务器 → 短文本（≤8字），官方 detect 模式限制长文本
-            val isLocal = service.isLocalServer()
-            val textToSend = if (isLocal) {
-                buildForwardMessage(previousReply, prevBotId)  // JSON 格式
-            } else {
-                if (previousReply.isNotBlank()) truncateReply(previousReply, 8) else ""  // 8字短文本
-            }
-            if (checkDeadloop(textToSend, speakerId)) {
-                android.util.Log.i(TAG, "死循环终止，跳过本轮转发")
-                _relayState.update { it.clearWaiting() }
-                return
-            }
-            if (textToSend.isNotBlank()) {
-                if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-                    android.util.Log.w(TAG, "文本转发失败: $speakerId WebSocket未连接")
-                    _relayState.update { it.clearWaiting() }
-                    continue
-                }
-                audioForwardBuffer.remove(prevBotId)
-                val logText = if (isLocal) textToSend.let { "JSON(${it.length}字)" } else "短文本(${textToSend.length}字)"
-                android.util.Log.i(TAG, "文本转发 $logText → $speakerId: '${textToSend.take(60)}'")
-                try {
-                    service.sendTextContent(textToSend)
-                    if (previousReply.isNotBlank()) {
-                        _relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
-                    }
-                    val startConfirmed = withTimeoutOrNull(30_000) {
-                        service.aiState.first { it == "speaking" }
-                    }
-                    if (startConfirmed != null) {
-                        _relayState.update {
-                            it.copy(forwardRound = it.forwardRound + 1)
-                                .markSpoken(targetIndex)
-                                .recordTransition(prevBotId ?: "", speakerId)
-                        }
-                        android.util.Log.i(TAG, "文本转发成功 → $speakerId fwd=${_relayState.value.forwardRound}")
-                        return
-                    }
-                    android.util.Log.w(TAG, "文本转发超时($speakerId 30s未响应)，尝试下一候选")
-                    _relayState.update { it.clearWaiting() }
-                } catch (e: Exception) {
-                    android.util.Log.w(TAG, "文本转发异常: ${e.message}")
-                    _relayState.update { it.clearWaiting() }
-                }
-            }
-        }
-
-        audioForwardBuffer.remove(prevBotId)
-
-        // ── 所有候选 bot 都不可用 → 清死标记 + 重连每个候选一次 ──
-        if (candidates.isNotEmpty() && _relayState.value.forwardRound >= 0) {
-            android.util.Log.w(TAG, "无可用bot转发，尝试重连所有候选")
-            botConnectionPool.clearDead()
-            for ((origIdx, speakerId) in candidates) {
-                val contact = _contacts.value.find { it.id == speakerId }
-                if (contact != null) {
-                    val reconnected = botConnectionPool.ensureConnected(speakerId, contact)
-                    if (reconnected) {
-                        android.util.Log.i(TAG, "重连成功 → $speakerId，继续转发")
-                        _relayState.update { it.moveToSpeaker(origIdx) }
-                        triggerNextSpeaker(previousReply)
-                        return
-                    }
-                }
-            }
-        }
-
-        android.util.Log.w(TAG, "无可用bot转发，跳过本轮")
-        _relayState.update { it.clearWaiting() }
-        val firstAlive = _relayState.value.botIds.firstOrNull()
-        if (firstAlive != null) {
-            _relayState.update {
-                it.copy(
-                    currentSpeakerIndex = it.botIds.indexOf(firstAlive).coerceAtLeast(0)
-                )
-            }
-        }
+        relayEngine.triggerNextSpeaker(previousReply)
     }
 
     // ── 智能 speaker 选择 ──
@@ -978,19 +765,7 @@ class GroupChatViewModel : ViewModel() {
      * 2. 等待解码器队列排空
      */
     private suspend fun drainPreviousBotAudio(botId: String?, sourceId: String?) {
-        if (botId == null || sourceId == null) return
-        withTimeoutOrNull(RelayConfig.AUDIO_DRAIN_TIMEOUT_MS) {
-            while (true) {
-                val lastTs = botLastAudioTime[botId] ?: 0L
-                if (lastTs <= 0) break
-                if (System.currentTimeMillis() - lastTs > RelayConfig.AUDIO_DRAIN_SILENCE_MS) break
-                delay(100)
-            }
-        }
-        delay(200) // 等待 in-flight 包
-        if (!playbackManager.waitForQueueEmpty(sourceId, 2000L)) {
-            android.util.Log.w(TAG, "drainPreviousBotAudio 超时")
-        }
+        relayEngine.drainPreviousBotAudio(botId, sourceId)
     }
 
     // ── 音频转发 ──
