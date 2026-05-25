@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 import kotlin.math.abs
 import java.util.concurrent.locks.ReentrantLock
@@ -85,11 +86,15 @@ class NativeOpusDecoder(
     }
 
     private var decoderPtr: Long = 0
-    private var audioTrack: AudioTrack? = null
+    private val audioTrackRef = AtomicReference<AudioTrack?>(null)
     private val isPlaying = AtomicBoolean(false)
-    val isReleased: Boolean get() = decoderPtr == 0L && audioTrack == null
+    val isReleased: Boolean get() = decoderPtr == 0L && audioTrackRef.get() == null
     private val audioQueue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE_SIZE)
     private var playThread: Thread? = null
+
+    @Volatile
+    private var released = false
+    private val isRestarting = AtomicBoolean(false)
 
     private val totalBytesWritten = AtomicLong(0L)
 
@@ -143,7 +148,7 @@ class NativeOpusDecoder(
             // flush AudioTrack 硬件缓冲（仅暂停+清空，不释放 AudioTrack）
             // 注意：不写入预填静音——写入静音会排在实际音频前输出，引入额外延迟
             try {
-                audioTrack?.let { track ->
+                audioTrackRef.get()?.let { track: AudioTrack ->
                     if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                         track.pause()
                         track.flush()
@@ -185,8 +190,7 @@ class NativeOpusDecoder(
             try { track.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
             track.play()
             // 原子替换：旧的 AudioTrack 被替换后，后续 write() 写入新 track
-            val old = audioTrack
-            audioTrack = track
+            val old = audioTrackRef.getAndSet(track)
             try { old?.stop(); old?.release() } catch (_: Exception) {}
             totalBytesWritten.set(0L)
             // 清空队列需持 decodeLock（防止与 decodePacket 竞态）
@@ -241,12 +245,12 @@ class NativeOpusDecoder(
             // 先请求音频焦点（OPPO/MTK 必须显式申请，否则第二个 AudioTrack 无声）
             requestAudioFocus()
 
-            audioTrack = createAudioTrack(bufferSize)
+            audioTrackRef.set(createAudioTrack(bufferSize))
 
-            if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
+            if (audioTrackRef.get()?.state != AudioTrack.STATE_INITIALIZED) {
                 Logger.e(TAG, "AudioTrack init failed")
-                audioTrack?.release()
-                audioTrack = null
+                audioTrackRef.get()?.release()
+                audioTrackRef.set(null)
                 isPlaying.set(false)
                 return
             }
@@ -254,8 +258,8 @@ class NativeOpusDecoder(
             Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
 
             // 先写预填静音再 play()，防止空缓冲启动导致立即 underrun（华为等设备不恢复）
-            try { audioTrack?.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
-            audioTrack?.play()
+            try { audioTrackRef.get()?.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
+            audioTrackRef.get()?.play()
             isPlaying.set(true)
 
             playThread = Thread {
@@ -278,11 +282,11 @@ class NativeOpusDecoder(
                         }
                         val data = audioQueue.poll(500, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            audioTrack?.play()
+                            audioTrackRef.get()?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
-                            var written = audioTrack?.write(data, 0, data.size) ?: -1
+                            var written = audioTrackRef.get()?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                                 consecutiveWriteFails = 0
@@ -292,8 +296,8 @@ class NativeOpusDecoder(
                             while (isPlaying.get()) {
                                 val next = audioQueue.poll()
                                 if (next == null) break
-                                audioTrack?.play()
-                                written = audioTrack?.write(next, 0, next.size) ?: -1
+                                audioTrackRef.get()?.play()
+                                written = audioTrackRef.get()?.write(next, 0, next.size) ?: -1
                                 if (written > 0) {
                                     totalBytesWritten.updateAndGet { it + written }
                                     consecutiveWriteFails = 0
@@ -309,7 +313,7 @@ class NativeOpusDecoder(
                             if (idleMs >= keepAliveTimer + 400) {
                                 keepAliveTimer = System.currentTimeMillis()
                                 try {
-                                    audioTrack?.write(keepAliveSilence, 0, keepAliveSilence.size)
+                                    audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
                                     consecutiveWriteFails++
@@ -340,6 +344,11 @@ class NativeOpusDecoder(
      * 对应 ESP32 ResumeVoicePlayback() 语义
      */
     private fun restartPlayback() {
+        if (released) return
+        if (!isRestarting.compareAndSet(false, true)) {
+            Logger.w(TAG, "restartPlayback 已在执行中，跳过")
+            return
+        }
         try {
             val minBuffer = AudioTrack.getMinBufferSize(
                 clientSampleRate,
@@ -359,7 +368,7 @@ class NativeOpusDecoder(
             }
 
             // 释放旧的 AudioTrack（如果有）
-            try { audioTrack?.stop(); audioTrack?.release() } catch (_: Exception) {}
+            try { audioTrackRef.get()?.stop(); audioTrackRef.get()?.release() } catch (_: Exception) {}
             // 中断旧播放线程（take() 阻塞在 LinkedBlockingQueue，需要 interrupt 唤醒）
             // 先设 isPlaying=false 确保旧线程退出，join 更可靠
             isPlaying.set(false)
@@ -367,7 +376,7 @@ class NativeOpusDecoder(
             playThread?.join(1000)
             // join 超时后旧线程可能还活着，但 isPlaying=false 且 AudioTrack 已释放，
             // 旧线程的下一次 write() 会抛异常由 catch 处理退出
-            audioTrack = track
+            audioTrackRef.set(track)
             // 清空队列需持 decodeLock（防止与 decodePacket 竞态）
             decodeLock.withLock { audioQueue.clear() }
             pendingDecodePackets.set(0)
@@ -399,7 +408,7 @@ class NativeOpusDecoder(
                         }
                         val data = audioQueue.poll(500, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            audioTrack?.play()
+                            audioTrackRef.get()?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
@@ -410,7 +419,7 @@ class NativeOpusDecoder(
                             while (isPlaying.get()) {
                                 val next = audioQueue.poll()
                                 if (next == null) break
-                                audioTrack?.play()
+                                audioTrackRef.get()?.play()
                                 written = track.write(next, 0, next.size) ?: -1
                                 if (written > 0) {
                                     totalBytesWritten.updateAndGet { it + written }
@@ -423,7 +432,7 @@ class NativeOpusDecoder(
                             if (idleMs >= keepAliveTimer + 400) {
                                 keepAliveTimer = System.currentTimeMillis()
                                 try {
-                                    audioTrack?.write(keepAliveSilence, 0, keepAliveSilence.size)
+                                    audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
                                     consecutiveWriteFails++
@@ -444,10 +453,13 @@ class NativeOpusDecoder(
         } catch (e: Exception) {
             Logger.e(TAG, "restartPlayback 失败: ${e.message}")
             isPlaying.set(false)
+        } finally {
+            isRestarting.set(false)
         }
     }
 
     fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
+        if (released) return
         if (decoderPtr == 0L) return
 
         // 惰性重启：在 decodeLock 外执行。restartPlayback 调 stop()+release()
@@ -580,10 +592,10 @@ class NativeOpusDecoder(
      * 全部计入，因为 playbackHeadPosition 包含所有已播放字节
      */
     fun getRemainingBytes(): Long {
-        val track = audioTrack ?: return 0L
+        val track = audioTrackRef.get() ?: return 0L
+        val playedFrames = track.playbackHeadPosition.toLong()
+        val playedBytes = playedFrames * 2L * channels
         return try {
-            val playedFrames = track.playbackHeadPosition.toLong()
-            val playedBytes = playedFrames * 2L * channels
             (totalBytesWritten.get() - playedBytes).coerceAtLeast(0L)
         } catch (e: Exception) {
             0L
@@ -652,11 +664,12 @@ class NativeOpusDecoder(
 
     fun release() {
         decodeLock.withLock {
+            released = true
             isPlaying.set(false)
             playThread?.interrupt()
             try {
-                audioTrack?.stop()
-                audioTrack?.release()
+                audioTrackRef.get()?.stop()
+                audioTrackRef.get()?.release()
                 if (decoderPtr != 0L) {
                     nativeDestroyDecoder(decoderPtr)
                     decoderPtr = 0L

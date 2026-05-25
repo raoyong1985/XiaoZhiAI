@@ -11,6 +11,7 @@ import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -36,9 +37,10 @@ class RelayEngine(
     private val deadloopDetector: DeadloopDetector,
     private val relayValidator: RelayValidator = RelayValidator(),
     private val logger: PlatformLogger = PlatformLogger.EMPTY,
-    private val tag: String = "RelayEngine"
+    private val tag: String = "RelayEngine",
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) {
-    private val relayLock = Any()
+    private val relayMutex = Mutex()
     private var isRelaying = false
 
     // 委派方法: checkAndClearOnDeadloop (保持与原行为一致)
@@ -56,7 +58,7 @@ class RelayEngine(
      * 当前 bot 说完(idle)后调用此方法，决定下一个由谁说话并转发音频/文字。
      */
     suspend fun triggerNextSpeaker(previousReply: String = "") {
-        synchronized(relayLock) {
+        relayMutex.withLock {
             if (isRelaying) {
                 logger.w(tag, "triggerNextSpeaker 已在执行中，跳过并发调用")
                 return
@@ -66,7 +68,7 @@ class RelayEngine(
         try {
             innerTriggerNextSpeaker(previousReply)
         } finally {
-            synchronized(relayLock) { isRelaying = false }
+            relayMutex.withLock { isRelaying = false }
         }
     }
 
@@ -127,7 +129,7 @@ class RelayEngine(
         // 遍历候选 bot 尝试转发
         for ((targetIndex, speakerId) in connected) {
             val service = botConnectionPool.get(speakerId) ?: continue
-            relayState.update { it.moveToSpeaker(targetIndex) }
+            relayState.update { it.copy(waitingSpeakerIndex = targetIndex) }
             botLastAudioTime[speakerId] = System.currentTimeMillis()
 
             val audioBuf = audioForwardBuffer[prevBotId]
@@ -139,7 +141,7 @@ class RelayEngine(
                 audioForwardHandler.forwardAudioToBot(prevBotId, service)
             }
 
-            if (audioOk) {
+                if (audioOk) {
                 val estimatedAudioMs = relayValidator.estimateAudioMs(audioForwardBuffer[prevBotId])
                 val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
                 logger.i(tag, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
@@ -155,14 +157,17 @@ class RelayEngine(
                         return
                     }
                     relayState.update {
-                        it.copy(forwardRound = it.forwardRound + 1)
+                        it.copy(
+                            currentSpeakerIndex = targetIndex,
+                            forwardRound = it.forwardRound + 1
+                        )
                             .markSpoken(targetIndex)
                             .recordTransition(prevBotId ?: "", speakerId)
                     }
                     if (previousReply.isNotBlank()) {
                         relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
                     }
-                    audioForwardBuffer.remove(prevBotId)
+                    if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
                     logger.i(tag, "音频转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
                     return
                 }
@@ -188,7 +193,7 @@ class RelayEngine(
                     relayState.update { it.clearWaiting() }
                     continue
                 }
-                audioForwardBuffer.remove(prevBotId)
+                if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
                 val logText = if (isLocal) "JSON(${textToSend.length}字)" else "短文本(${textToSend.length}字)"
                 logger.i(tag, "文本转发 $logText → $speakerId: '${textToSend.take(60)}'")
                 try {
@@ -201,7 +206,10 @@ class RelayEngine(
                     }
                     if (startConfirmed != null) {
                         relayState.update {
-                            it.copy(forwardRound = it.forwardRound + 1)
+                            it.copy(
+                                currentSpeakerIndex = targetIndex,
+                                forwardRound = it.forwardRound + 1
+                            )
                                 .markSpoken(targetIndex)
                                 .recordTransition(prevBotId ?: "", speakerId)
                         }
@@ -217,7 +225,7 @@ class RelayEngine(
             }
         }
 
-        audioForwardBuffer.remove(prevBotId)
+        if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
 
         // 所有候选不可用 → 重连重试
         if (candidates.isNotEmpty() && relayState.value.forwardRound >= 0) {
@@ -228,9 +236,12 @@ class RelayEngine(
                 if (contact != null) {
                     val reconnected = botConnectionPool.ensureConnected(speakerId, contact)
                     if (reconnected) {
-                        logger.i(tag, "重连成功 → $speakerId，继续转发")
-                        relayState.update { it.moveToSpeaker(origIdx) }
-                        triggerNextSpeaker(previousReply)
+                        logger.i(tag, "重连成功 → $speakerId，延迟继续转发")
+                        relayState.update { it.copy(waitingSpeakerIndex = origIdx) }
+                        scope.launch {
+                            delay(100)
+                            triggerNextSpeaker(previousReply)
+                        }
                         return
                     }
                 }
