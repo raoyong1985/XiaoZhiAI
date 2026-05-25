@@ -18,6 +18,7 @@ import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.usecase.relay.AudioForwardHandler
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
+import com.xiaozhi.aiservice.domain.usecase.relay.SpeakerScorer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -155,6 +156,10 @@ class GroupChatViewModel : ViewModel() {
     private val audioForwardHandler = AudioForwardHandler(
         audioForwardBuffer,
         { _isRecording.value },
+        { _contacts.value }
+    )
+    private val speakerScorer = SpeakerScorer(
+        { botConnectionPool.isDead(it) },
         { _contacts.value }
     )
     /** 用于音频过滤的 grace 窗口：bot 进入 speaking 状态后 N 毫秒内允许音频通过 */
@@ -958,114 +963,7 @@ class GroupChatViewModel : ViewModel() {
     private fun resolveSpeakerCandidates(
         prevIndex: Int, previousReply: String, botIds: List<String>, rs: RelayState
     ): Pair<List<Pair<Int, String>>, RelayState> {
-        if (botIds.isEmpty()) return emptyList<Pair<Int, String>>() to rs
-
-        // 过滤死 bot，压缩索引 —— 返回 compacted 索引，避免指向死 bot
-        val aliveBotIds = botIds.filter { !botConnectionPool.isDead(it) }
-        if (aliveBotIds.isEmpty()) return emptyList<Pair<Int, String>>() to rs
-
-        // 重映射 prevIndex 和 spokenInThisRound 到压缩后的索引
-        val prevBotId = botIds.getOrNull(prevIndex)
-        val compactedPrevIndex = if (prevBotId != null) aliveBotIds.indexOf(prevBotId) else -1
-        val compactedSpoken = rs.spokenInThisRound.mapNotNull { i ->
-            botIds.getOrNull(i)?.let { aliveBotIds.indexOf(it) }
-        }.filter { it >= 0 }.toSet()
-
-        data class Candidate(val index: Int, val id: String, var score: Float)
-        val candidates = aliveBotIds.indices
-            .filter { it != compactedPrevIndex }
-            .map { Candidate(it, aliveBotIds[it], 0f) }
-        if (candidates.isEmpty()) return emptyList<Pair<Int, String>>() to rs
-
-        // ── 打分 ──
-        var hasSignal = false  // 是否有强信号（@提及或名字匹配）
-        if (previousReply.isNotBlank()) {
-            // @提及 +100
-            val mentionMatch = Regex("@([\\w\\u4e00-\\u9fff]+)").find(previousReply)
-            if (mentionMatch != null) {
-                val mentionedName = mentionMatch.groupValues[1]
-                candidates.forEach { c ->
-                    val contact = _contacts.value.find { it.id == c.id }
-                    if (contact != null && (contact.name == mentionedName || contact.id.startsWith(mentionedName))) {
-                        c.score += 100f
-                        hasSignal = true
-                    }
-                }
-            }
-            // 名字匹配 +30
-            candidates.forEach { c ->
-                val contact = _contacts.value.find { it.id == c.id }
-                if (contact != null && contact.name.isNotBlank() && previousReply.contains(contact.name)) {
-                    c.score += 30f
-                    hasSignal = true
-                }
-            }
-        }
-
-        // ── 重复轮转惩罚：同一组 (from→to) 出现太多次则降权 ──
-        val transitionPenalty = 20f
-        if (prevBotId != null) {
-            val recentTransitions = rs.transitionHistory
-            candidates.forEach { c ->
-                val count = recentTransitions.count { it.first == prevBotId && it.second == c.id }
-                if (count >= 2) {
-                    c.score -= transitionPenalty * count
-                    android.util.Log.w(TAG, "  惩罚 [$prevBotId→${c.id}] 出现${count}次, score=${c.score}")
-                }
-            }
-        }
-
-        // 未发言 +20
-        candidates.forEach { c ->
-            if (c.index !in compactedSpoken) c.score += 20f
-        }
-
-        // ── 无强信号 + 得分扁平 → fallback 到 round_robin ──
-        // round_robin: 选列表中 prevBotId 的下一个存活 bot
-        val useRoundRobin = !hasSignal && prevBotId != null
-        if (useRoundRobin) {
-            val aliveIdx = aliveBotIds.indexOf(prevBotId)
-            if (aliveIdx >= 0) {
-                for (offset in 1..aliveBotIds.size) {
-                    val nextIdx = (aliveIdx + offset) % aliveBotIds.size
-                    val nextId = aliveBotIds[nextIdx]
-                    val origIdx = botIds.indexOf(nextId)
-                    val result = listOf(origIdx to nextId)
-                    val newRs = rs.copy(
-                        botIds = aliveBotIds,
-                        spokenInThisRound = compactedSpoken,
-                        spokenRoundCounter = rs.spokenRoundCounter
-                    )
-                    android.util.Log.i(TAG, "选人: round_robin [$prevBotId→$nextId] (无强信号)")
-                    return result to newRs
-                }
-            }
-        }
-
-        // 随机抖动 +0~15
-        candidates.forEach { c -> c.score += (Math.random().toFloat() * 15f) }
-
-        // 排序：分数降序 → 随机二级排序
-        val sorted = candidates.sortedWith(compareByDescending<Candidate> { it.score }
-            .thenBy { Math.random() })
-
-        // 压缩索引后的 spokenInThisRound 重置逻辑
-        val allSpoken = sorted.all { it.index in compactedSpoken }
-        val forceReset = rs.spokenRoundCounter >= maxOf(aliveBotIds.size * 2, 4)
-        val newRs = if (allSpoken || forceReset) {
-            rs.copy(
-                botIds = aliveBotIds,
-                spokenInThisRound = emptySet(),
-                spokenRoundCounter = 0
-            )
-        } else {
-            rs.copy(
-                botIds = aliveBotIds,
-                spokenInThisRound = compactedSpoken
-            )
-        }
-
-        return sorted.map { it.index to it.id } to newRs
+        return speakerScorer.resolveCandidates(prevIndex, previousReply, botIds, rs)
     }
 
     // ── 连接保活 ──
