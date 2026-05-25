@@ -15,6 +15,7 @@ import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -148,13 +149,8 @@ class GroupChatViewModel : ViewModel() {
     private var isRelaying = false
     private val relayLock = Any()
 
-    // 防死循环（synchronized 保护：多协程并发写）
-    private val deadloopLock = Any()
-    private val recentHints = mutableListOf<String>()
-    private val recentCandidates = mutableListOf<String>()
-    private var deadloopCount = 0
-    private val MAX_DEADLOOP = 5
-
+    // 防死循环（Thread-safe：DeadloopDetector 内部使用 synchronized）
+    private val deadloopDetector = DeadloopDetector()
     /** 用于音频过滤的 grace 窗口：bot 进入 speaking 状态后 N 毫秒内允许音频通过 */
     private val botSpeakingTime = ConcurrentHashMap<String, Long>()
 
@@ -344,11 +340,7 @@ class GroupChatViewModel : ViewModel() {
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
-        synchronized(deadloopLock) {
-            deadloopCount = 0
-            recentHints.clear()
-            recentCandidates.clear()
-        }
+        deadloopDetector.reset()
 
         val firstBotId = _relayState.value.botIds[0]
         val service = botConnectionPool.get(firstBotId) ?: return
@@ -1206,31 +1198,9 @@ class GroupChatViewModel : ViewModel() {
      * @return true=检测到死循环，应终止本轮转发
      */
     private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
-        synchronized(deadloopLock) {
-            var isDead = false
-            if (hint.isNotBlank()) {
-                recentHints.add(hint)
-                if (recentHints.size > MAX_DEADLOOP) recentHints.removeAt(0)
-                // 要求 hint 全部相同（distinct == 1）才触发，排除"好的"+"嗯"交替的误杀
-                if (recentHints.size >= MAX_DEADLOOP && recentHints.distinct().size == 1) isDead = true
-            }
-            if (speakerId != null) {
-                recentCandidates.add(speakerId)
-                if (recentCandidates.size > MAX_DEADLOOP) recentCandidates.removeAt(0)
-                // 同一 bot 连续被选为候选 ≥5 次
-                if (recentCandidates.size >= MAX_DEADLOOP && recentCandidates.distinct().size == 1) isDead = true
-            }
-            if (isDead) {
-                deadloopCount++
-                // 触发条件连续出现 ≥8 次才终止（原 5 次，调高减少误杀）
-                if (deadloopCount >= 8) {
-                    deadloopCount = 0; recentHints.clear(); recentCandidates.clear()
-                    _relayState.update { it.clearWaiting() }
-                    return true
-                }
-            } else deadloopCount = 0
-            return false
-        }
+        val isDead = deadloopDetector.check(hint, speakerId)
+        if (isDead) _relayState.update { it.clearWaiting() }
+        return isDead
     }
 
     // ── 消息截断 ──
@@ -1321,10 +1291,7 @@ class GroupChatViewModel : ViewModel() {
         ) }
         audioForwardBuffer.clear()
         recentReplyKeys.clear()
-        synchronized(deadloopLock) {
-            recentHints.clear()
-            recentCandidates.clear()
-        }
+        deadloopDetector.reset()
 
         if (_relayState.value.botIds.isNotEmpty()) {
             val firstBotId = _relayState.value.botIds[0]
