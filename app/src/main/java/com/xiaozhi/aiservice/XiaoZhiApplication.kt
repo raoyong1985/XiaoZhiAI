@@ -4,7 +4,9 @@ import android.app.Application
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.remote.LocalCommandRouter
 import com.xiaozhi.aiservice.di.AppContainer
+import dagger.hilt.android.HiltAndroidApp
 
+@HiltAndroidApp
 class XiaoZhiApplication : Application() {
     override fun onCreate() {
         super.onCreate()

@@ -29,7 +29,9 @@ import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatListScreen
 import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatScreen
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     companion object {

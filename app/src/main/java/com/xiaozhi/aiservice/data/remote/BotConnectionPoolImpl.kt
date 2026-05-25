@@ -1,37 +1,25 @@
 package com.xiaozhi.aiservice.data.remote
 
 import com.xiaozhi.aiservice.domain.model.BotContact
+import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
 
 private const val TAG = "BotConnectionPool"
 
 /**
- * Bot WebSocket 连接池
+ * Bot WebSocket 连接池实现
  *
  * 管理群聊场景下多个智能体（bot）的 WebSocket 长连接。
- *
- * ┌─────────────────────────────────────────────────┐
- * │  核心职责                                        │
- * │  • 创建/缓存 XiaoZhiBackendService 实例（每个     │
- * │    bot 一个独立 WebSocket 连接）                 │
- * │  • 连接/断开/自动重连                           │
- * │  • 死 bot 标记与清理（连接失败后不再尝试）       │
- * │  • 批量操作（全部断连、全部发送 abort）          │
- * └─────────────────────────────────────────────────┘
- *
- * 不负责：
- * - 接龙逻辑（speaker 选择、轮转）→ GroupChatViewModel
- * - 音频播放 → AudioPlaybackManager
- * - UI 状态管理 → GroupChatViewModel
- *
- * 线程安全：所有内部状态使用 ConcurrentHashMap，
- * 无需额外同步，适合多协程并发访问。
  */
-class BotConnectionPool(private val gson: Gson) {
+
+@Singleton
+class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotConnectionPoolRepository {
 
     /** botId → XiaoZhiBackendService（WebSocket 连接实例） */
     private val connections = ConcurrentHashMap<String, XiaoZhiBackendService>()
@@ -56,7 +44,7 @@ class BotConnectionPool(private val gson: Gson) {
      * @param contact 包含 serverUrl/otaUrl/deviceId/clientId 的连接配置
      * @return XiaoZhiBackendService 实例（可能尚未完全 connected）
      */
-    fun getOrConnect(botId: String, contact: BotContact): XiaoZhiBackendService {
+    override fun getOrConnect(botId: String, contact: BotContact): XiaoZhiBackendService {
         return connections.getOrPut(botId) {
             XiaoZhiBackendService(gson).also { service ->
                 service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
@@ -66,13 +54,13 @@ class BotConnectionPool(private val gson: Gson) {
     }
 
     /** 获取已有连接（不存在返回 null，不触发新建） */
-    fun get(botId: String): XiaoZhiBackendService? = connections[botId]
+    override fun get(botId: String): XiaoZhiBackendService? = connections[botId]
 
     /** 所有连接实例的快照（只读） */
-    val all: Map<String, XiaoZhiBackendService> get() = connections.toMap()
+    override val all: Map<String, XiaoZhiBackendService> get() = connections.toMap()
 
     /** 当前连接数 */
-    val size: Int get() = connections.size
+    override val size: Int get() = connections.size
 
     /**
      * 确保 bot 已连接，未连接/断线时尝试自动重连
@@ -85,7 +73,7 @@ class BotConnectionPool(private val gson: Gson) {
      *
      * @return 重连后是否处于 Connected 状态
      */
-    suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
+    override suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
         if (deadBotIds.contains(botId)) return false
         val service = connections[botId]
         if (service != null && service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) {
@@ -116,12 +104,12 @@ class BotConnectionPool(private val gson: Gson) {
     }
 
     /** 清除所有死亡标记（看门狗每 2 分钟调用一次） */
-    fun clearDead() {
+    override fun clearDead() {
         deadBotIds.clear()
     }
 
     /** 查询 bot 是否已被标记为死亡 */
-    fun isDead(botId: String): Boolean = deadBotIds.contains(botId)
+    override fun isDead(botId: String): Boolean = deadBotIds.contains(botId)
 
     // ── 批量操作 ──
 
@@ -131,19 +119,19 @@ class BotConnectionPool(private val gson: Gson) {
      * 触发场景：用户开始录音（中断所有 bot 的回复）、用户主动停止
      * 每个 bot 独立 try-catch，某个 bot 失败不影响其他 bot
      */
-    fun abortAll(reason: String) {
+    override fun abortAll(reason: String) {
         connections.values.forEach { svc ->
             try { svc.sendAbort(reason) } catch (_: Exception) {}
         }
     }
 
     /** 断开指定 bot 的连接并清理缓存 */
-    fun disconnect(botId: String) {
+    override fun disconnect(botId: String) {
         connections.remove(botId)?.disconnect()
     }
 
     /** 断开所有 bot 连接，清理全部状态 */
-    fun disconnectAll() {
+    override fun disconnectAll() {
         connections.values.forEach { it.disconnect() }
         connections.clear()
         deadBotIds.clear()

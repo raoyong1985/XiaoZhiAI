@@ -2,9 +2,9 @@ package com.xiaozhi.aiservice.domain.usecase.relay
 
 import android.util.Log
 import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
-import com.xiaozhi.aiservice.data.remote.BotConnectionPool
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.BotContact
+import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.presentation.viewmodel.RelayState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 线程安全：relayLock 防止 watchdog 与正常路径并发触发
  */
 class RelayEngine(
-    private val botConnectionPool: BotConnectionPool,
+    private val botConnectionPool: BotConnectionPoolRepository,
     private val audioForwardBuffer: ConcurrentHashMap<String, MutableList<ByteArray>>,
     private val relayState: MutableStateFlow<RelayState>,
     private val getContacts: () -> List<BotContact>,

@@ -6,7 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
-import com.xiaozhi.aiservice.data.remote.BotConnectionPool
+import com.xiaozhi.aiservice.data.remote.BotConnectionPoolImpl
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
@@ -75,7 +75,7 @@ class GroupChatViewModel : ViewModel() {
     private val contactsRepository = AppContainer.contactsRepository
 
     // ── WebSocket 连接池：管理所有 bot 的长连接 ──
-    private val botConnectionPool = BotConnectionPool(AppContainer.gson)
+    private val botConnectionPool = BotConnectionPoolImpl(AppContainer.gson)
 
     // ── 音频播放管理器：解码 Opus 并播放 ──
     private val playbackManager = AudioPlaybackManager()
