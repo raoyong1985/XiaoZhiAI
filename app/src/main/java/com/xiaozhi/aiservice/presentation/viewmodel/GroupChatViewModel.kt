@@ -10,7 +10,7 @@ import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.GroupChat
-import com.xiaozhi.aiservice.domain.model.GroupMessage
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
@@ -396,7 +396,7 @@ class GroupChatViewModel @Inject constructor(
                     if (_relayState.value.originalUserQuery.isEmpty()) {
                         _relayState.update { it.copy(originalUserQuery = text) }
                     }
-                    val userMessage = GroupMessage(
+                    val userMessage = ChatMessage(
                         id = java.util.UUID.randomUUID().toString(), groupId = currentGroupId,
                         botId = "", botName = "我", content = text,
                         type = MessageType.TEXT, direction = MessageDirection.SENT
@@ -612,7 +612,7 @@ class GroupChatViewModel @Inject constructor(
                                 // 给下一个 bot（仅跳过 UI 显示），避免下一 bot 收到空白
                                 continue
                             }
-                            groupChatRepository.addMessage(groupId, GroupMessage(
+                            groupChatRepository.addMessage(groupId, ChatMessage(
                                 id = java.util.UUID.randomUUID().toString(), groupId = groupId,
                                 botId = botId, botName = botName, content = msg.content,
                                 type = MessageType.TEXT, direction = MessageDirection.RECEIVED
@@ -780,7 +780,7 @@ class GroupChatViewModel @Inject constructor(
     }
 
     /** 获取指定群聊的消息流 */
-    fun getGroupMessages(groupId: String): Flow<List<GroupMessage>> {
+    fun getGroupMessages(groupId: String): Flow<List<ChatMessage>> {
         return groupChatRepository.getGroupMessages(groupId)
     }
 
@@ -790,7 +790,7 @@ class GroupChatViewModel @Inject constructor(
      * 触发接龙流程：用户文字 → 首 bot 处理 → 自动转发到下一 bot
      */
     suspend fun sendMessageToGroup(groupId: String, content: String) {
-        val userMessage = GroupMessage(
+        val userMessage = ChatMessage(
             id = java.util.UUID.randomUUID().toString(), groupId = groupId,
             botId = "", botName = "我", content = content,
             type = MessageType.TEXT, direction = MessageDirection.SENT

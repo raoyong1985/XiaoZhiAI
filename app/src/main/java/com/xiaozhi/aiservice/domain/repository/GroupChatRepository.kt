@@ -1,7 +1,7 @@
 package com.xiaozhi.aiservice.domain.repository
 
 import com.xiaozhi.aiservice.domain.model.GroupChat
-import com.xiaozhi.aiservice.domain.model.GroupMessage
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -55,13 +55,13 @@ interface GroupChatRepository {
      * - 首次订阅时从 DataStore 加载历史，后续实时增量推送
      * - UI 只需 collect，无需手动刷新
      */
-    fun getGroupMessages(groupId: String): Flow<List<GroupMessage>>
+    fun getGroupMessages(groupId: String): Flow<List<ChatMessage>>
 
     /** 向群聊发送一条消息（写入内存 + 触发延时落盘） */
-    suspend fun sendMessage(groupId: String, message: GroupMessage)
+    suspend fun sendMessage(groupId: String, message: ChatMessage)
 
     /** sendMessage 的别名，语义更明确 */
-    suspend fun addMessage(groupId: String, message: GroupMessage)
+    suspend fun addMessage(groupId: String, message: ChatMessage)
 
     /** 更新指定消息的文本内容（用于流式回答修正） */
     suspend fun updateMessageText(groupId: String, messageId: String, newText: String)

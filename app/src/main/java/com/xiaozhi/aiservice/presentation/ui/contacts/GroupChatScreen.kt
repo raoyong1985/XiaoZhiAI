@@ -34,7 +34,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import com.xiaozhi.aiservice.domain.model.GroupMessage
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -176,7 +176,7 @@ fun GroupChatScreen(
             items(messages, key = { it.id }) { message ->
                 // 根据 botId 在群聊成员列表中的位置分配颜色
                 val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
-                GroupMessageItem(
+                ChatMessageItem(
                     message = message,
                     botColorIndex = botIndex,
                     onCopy = { text ->
@@ -202,7 +202,7 @@ fun GroupChatScreen(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
+fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
 
     val bubbleColor = when {

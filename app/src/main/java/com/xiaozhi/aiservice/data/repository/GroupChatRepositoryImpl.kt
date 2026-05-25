@@ -9,7 +9,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.GroupChat
-import com.xiaozhi.aiservice.domain.model.GroupMessage
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -65,7 +65,7 @@ class GroupChatRepositoryImpl @Inject constructor(
     // ── 内存缓存 + 批量写入 ──
 
     /** 消息缓存：groupId → MutableStateFlow（内存中的实时消息列表） */
-    private val messagesCache = ConcurrentHashMap<String, MutableStateFlow<List<GroupMessage>>>()
+    private val messagesCache = ConcurrentHashMap<String, MutableStateFlow<List<ChatMessage>>>()
 
     /**
      * dirty 标记集合
@@ -235,7 +235,7 @@ class GroupChatRepositoryImpl @Inject constructor(
      * 每个 groupId 对应一个独立的 MutableStateFlow，
      * ViewModel 通过它实时接收消息变更通知。
      */
-    private fun getOrCreateFlow(groupId: String): MutableStateFlow<List<GroupMessage>> {
+    private fun getOrCreateFlow(groupId: String): MutableStateFlow<List<ChatMessage>> {
         return messagesCache.getOrPut(groupId) {
             MutableStateFlow(emptyList())
         }
@@ -296,7 +296,7 @@ class GroupChatRepositoryImpl @Inject constructor(
     }
 
     /** 将指定群聊的消息列表序列化为 JSON 写入 DataStore */
-    private suspend fun writeToDisk(groupId: String, messages: List<GroupMessage>) {
+    private suspend fun writeToDisk(groupId: String, messages: List<ChatMessage>) {
         try {
             context.messagesDataStore.edit { preferences ->
                 preferences[messagesKey(groupId)] = gson.toJson(messages)
@@ -327,7 +327,7 @@ class GroupChatRepositoryImpl @Inject constructor(
      * - 仅在 flow.value 为空时才写入（防止并发写入期间覆盖新消息）
      * - 后续调用直接返回已有 Flow（不二次加载）
      */
-    override fun getGroupMessages(groupId: String): Flow<List<GroupMessage>> {
+    override fun getGroupMessages(groupId: String): Flow<List<ChatMessage>> {
         val flow = getOrCreateFlow(groupId)
         android.util.Log.i("GroupChatRepo", "getGroupMessages groupId=$groupId currentSize=${flow.value.size}")
         if (loadedFromDisk.putIfAbsent(groupId, true) == null) {
@@ -345,11 +345,11 @@ class GroupChatRepositoryImpl @Inject constructor(
     }
 
     /** 从 DataStore 加载指定群聊的历史消息 */
-    private suspend fun loadMessagesFromDisk(groupId: String): List<GroupMessage> {
+    private suspend fun loadMessagesFromDisk(groupId: String): List<ChatMessage> {
         return try {
             val preferences = context.messagesDataStore.data.first()
             val json = preferences[messagesKey(groupId)] ?: "[]"
-            val type = object : TypeToken<List<GroupMessage>>() {}.type
+            val type = object : TypeToken<List<ChatMessage>>() {}.type
             gson.fromJson(json, type) ?: emptyList()
         } catch (e: Exception) {
             emptyList()
@@ -361,7 +361,7 @@ class GroupChatRepositoryImpl @Inject constructor(
      * 1. 追加到内存 Flow（UI 立即更新）
      * 2. 标记 dirty（触发防抖写盘）
      */
-    override suspend fun sendMessage(groupId: String, message: GroupMessage) {
+    override suspend fun sendMessage(groupId: String, message: ChatMessage) {
         val flow = getOrCreateFlow(groupId)
         flow.value = flow.value + message
         android.util.Log.i("GroupChatRepo", "sendMessage groupId=$groupId msgId=${message.id} content='${message.content.take(20)}' dir=${message.direction} total=${flow.value.size}")
@@ -369,7 +369,7 @@ class GroupChatRepositoryImpl @Inject constructor(
     }
 
     /** sendMessage 的别名 */
-    override suspend fun addMessage(groupId: String, message: GroupMessage) {
+    override suspend fun addMessage(groupId: String, message: ChatMessage) {
         sendMessage(groupId, message)
     }
 
