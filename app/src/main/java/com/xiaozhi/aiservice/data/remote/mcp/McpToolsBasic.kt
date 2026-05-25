@@ -4,13 +4,12 @@ import android.content.Context
 import android.os.BatteryManager
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-fun registerBasicTools() {
-    MCPToolRegistry.registerTool(
+fun registerBasicTools(registry: MCPToolRegistry) {
+    registry.registerTool(
         name = "get_device_info",
         description = "获取Android设备的基本信息，包括厂商、型号、系统版本等",
         inputSchema = jsonSchema()
@@ -25,7 +24,7 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_current_time",
         description = "获取当前系统时间，支持指定时间格式",
         inputSchema = jsonSchema(
@@ -39,12 +38,12 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_battery_level",
         description = "获取当前设备的电池电量百分比",
         inputSchema = jsonSchema()
     ) { _ ->
-        val bm = AppContext.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val bm = registry.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         JsonObject().apply {
             addProperty("level", level)
@@ -52,7 +51,7 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "calculate",
         description = "执行简单的四则运算，支持加减乘除和括号，如 1+2*3",
         inputSchema = jsonSchema(
@@ -67,7 +66,7 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "random_number",
         description = "生成指定范围内的随机整数，或随机浮点数",
         inputSchema = jsonSchema(
@@ -89,7 +88,7 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "encode_decode",
         description = "对文本进行 Base64 或 URL 编码/解码",
         inputSchema = jsonSchema(
@@ -109,12 +108,12 @@ fun registerBasicTools() {
         }.also { it.addProperty("mode", mode) }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_orientation",
         description = "获取设备当前的屏幕方向和旋转角度",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val display = (ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager)?.defaultDisplay
         val rotation = display?.rotation ?: -1
         val orientation = ctx.resources.configuration.orientation
@@ -137,7 +136,7 @@ fun registerBasicTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_memory_info",
         description = "获取设备的内存（RAM）和存储空间使用情况",
         inputSchema = jsonSchema()
@@ -160,12 +159,12 @@ fun registerBasicTools() {
     }
 
     // 统一系统信息工具（对应 ESP32 self.get_system_info）
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_system_info",
         description = "获取设备的完整系统信息，一次性返回厂商、型号、电量、内存、存储、时间等",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val batteryLevel = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         val stats = android.os.StatFs("/data")

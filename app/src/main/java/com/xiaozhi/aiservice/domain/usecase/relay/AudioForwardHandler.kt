@@ -1,9 +1,10 @@
 package com.xiaozhi.aiservice.domain.usecase.relay
 
-import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
+import com.xiaozhi.aiservice.domain.PlatformLogger
+import com.xiaozhi.aiservice.domain.model.BotConnection
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import kotlinx.coroutines.delay
-import android.util.Log
 
 /**
  * 音频转发处理器 —— 管理 bot 间音频/文字转发的核心逻辑
@@ -16,7 +17,8 @@ import android.util.Log
 class AudioForwardHandler(
     private val audioForwardBuffer: MutableMap<String, MutableList<ByteArray>>,
     private val isRecording: () -> Boolean,
-    private val getContacts: () -> List<BotContact>
+    private val getContacts: () -> List<BotContact>,
+    private val logger: PlatformLogger = PlatformLogger.EMPTY,
 ) {
     private val tag = "AudioFwdHandler"
 
@@ -32,20 +34,20 @@ class AudioForwardHandler(
      * @param service 目标 bot 的 WebSocket 连接
      * @return true=转发成功，false=失败（连接断开/无缓存/用户录音中）
      */
-    suspend fun forwardAudioToBot(prevBotId: String?, service: XiaoZhiBackendService): Boolean {
+    suspend fun forwardAudioToBot(prevBotId: String?, service: BotConnection): Boolean {
         if (isRecording()) {
-            Log.w(tag, "用户正在录音，跳过音频转发")
+            logger.w(tag, "用户正在录音，跳过音频转发")
             return false
         }
-        if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-            Log.w(tag, "音频转发失败：WebSocket未连接")
+        if (service.connectionState.value !is BotConnectionState.Connected) {
+            logger.w(tag, "音频转发失败：WebSocket未连接")
             return false
         }
         if (prevBotId == null) return false
         val cachedList = audioForwardBuffer[prevBotId] ?: return false
         if (cachedList.isEmpty()) return false
         val cachedOpus = cachedList.toList()
-        Log.i(tag, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
+        logger.i(tag, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
         try {
             service.sendListenStart("auto")
             val batchSize = 5
@@ -58,9 +60,9 @@ class AudioForwardHandler(
             }
             delay(200)
             service.sendListenStopOnly()
-            return service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
+            return service.connectionState.value is BotConnectionState.Connected
         } catch (e: Exception) {
-            Log.w(tag, "音频转发失败: ${e.message}")
+            logger.w(tag, "音频转发失败: ${e.message}")
             return false
         }
     }

@@ -8,8 +8,8 @@ import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
 import com.xiaozhi.aiservice.domain.model.VoiceMode
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
-import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -27,7 +27,7 @@ class ChatViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    val connectionState: StateFlow<ConnectionState> = connectionRepository.connectionState
+    val connectionState: StateFlow<BotConnectionState> = connectionRepository.connectionState
 
     private var currentContactId: String = ""
     private var pendingConfig: ConnectionConfig? = null
@@ -158,7 +158,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isRecording: Boolean = false,
     val aiState: AiState = AiState.IDLE,
-    val connectionState: com.xiaozhi.aiservice.domain.repository.ConnectionState = com.xiaozhi.aiservice.domain.repository.ConnectionState.Disconnected,
+    val connectionState: BotConnectionState = BotConnectionState.Disconnected,
     val emotion: String = "",   // AI情感：happy/sad/angry/worried/thoughtful/gentle/doubtful
     val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 当前语音模式：auto / manual / realtime
     val alert: String? = null,  // 服务器Alert弹窗内容（非null时显示）

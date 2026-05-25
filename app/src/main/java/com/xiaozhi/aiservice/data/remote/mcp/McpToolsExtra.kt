@@ -16,17 +16,15 @@ import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContext
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 
-fun registerExtraTools() {
+fun registerExtraTools(registry: MCPToolRegistry) {
 
     // ──────────────── clipboard ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "clipboard",
         description = "读取或写入系统剪贴板。读取时返回剪贴板文本内容，写入时设置新文本到剪贴板",
         inputSchema = jsonSchema(
@@ -36,7 +34,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val action = (args["action"] as? String)?.lowercase() ?: "read"
-        val ctx = AppContext.context
+        val ctx = registry.context
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             ?: throw Exception("此设备不支持剪贴板")
 
@@ -67,7 +65,7 @@ fun registerExtraTools() {
     }
 
     // ──────────────── set_ringer_mode ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_ringer_mode",
         description = "设置手机响铃模式：normal（正常响铃）/ silent（静音）/ vibrate（仅震动）",
         inputSchema = jsonSchema(
@@ -76,7 +74,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val mode = (args["mode"] as? String)?.lowercase() ?: throw Exception("mode 不能为空")
-        val ctx = AppContext.context
+        val ctx = registry.context
 
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
@@ -109,14 +107,14 @@ fun registerExtraTools() {
     }
 
     // ──────────────── ring_phone ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "ring_phone",
         description = "让手机持续响铃+震动（找手机功能），即使当前是静音/震动模式也会强制响铃。调用后 30 秒自动停止",
         inputSchema = jsonSchema(
             "duration_seconds" to jsonNumberProp("响铃持续时间（秒），默认 15，最大 60"),
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val duration = (args["duration_seconds"] as? Number)?.toInt()?.coerceIn(1, 60) ?: 15
 
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
@@ -178,14 +176,14 @@ fun registerExtraTools() {
     }
 
     // ──────────────── wifi_scan ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "wifi_scan",
         description = "扫描附近的 WiFi 网络，返回 SSID、信号强度、加密方式等信息",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回数量，默认 20"),
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 20
         val wifiManager = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: throw Exception("此设备不支持 WiFi")
@@ -239,14 +237,14 @@ fun registerExtraTools() {
     }
 
     // ──────────────── bluetooth_scan ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "bluetooth_scan",
         description = "扫描附近的蓝牙设备，返回设备名称、地址、类型等信息",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回数量，默认 20"),
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
 
         // 检查权限
         if (Build.VERSION.SDK_INT >= 31) {
@@ -312,7 +310,7 @@ fun registerExtraTools() {
     }
 
     // ──────────────── sensor_data ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "sensor_data",
         description = "读取设备传感器数据，支持光感(light)、距离(proximity)、加速度(accelerometer)、陀螺仪(gyroscope)等",
         inputSchema = jsonSchema(
@@ -320,7 +318,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val sensorType = (args["type"] as? String)?.lowercase() ?: "all"
-        val ctx = AppContext.context
+        val ctx = registry.context
         val sensorManager = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
             ?: throw Exception("此设备不支持传感器")
 
@@ -381,12 +379,12 @@ fun registerExtraTools() {
     }
 
     // ──────────────── vpn_status ────────────────
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "vpn_status",
         description = "检测设备是否正在使用 VPN 连接",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         var vpnActive = false
         var vpnName = ""

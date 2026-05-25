@@ -6,9 +6,10 @@ import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
+import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.WakeWordDetector
-import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
@@ -17,8 +18,7 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.VoiceMode  // 复用 Models.kt，与 ESP32 ListeningMode 对应
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
-import com.xiaozhi.aiservice.domain.repository.ConnectionState
-import com.xiaozhi.aiservice.domain.repository.DeviceState  // 设备状态机（定义在 Repositories.kt）
+import com.xiaozhi.aiservice.domain.repository.DeviceState
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -48,8 +48,8 @@ class ConnectionRepositoryImpl @Inject constructor(
     
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    override val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    private val _connectionState = MutableStateFlow<BotConnectionState>(BotConnectionState.Disconnected)
+    override val connectionState: StateFlow<BotConnectionState> = _connectionState.asStateFlow()
     
     private val _aiState = MutableStateFlow(AiState.IDLE)
     override val aiState: StateFlow<AiState> = _aiState.asStateFlow()
@@ -99,18 +99,10 @@ class ConnectionRepositoryImpl @Inject constructor(
         observeBackendService()
     }
 
-    // 将后端连接状态映射到领域层连接状态
-    private fun XiaoZhiBackendService.ConnectionState.toDomainState(): ConnectionState = when (this) {
-        is XiaoZhiBackendService.ConnectionState.Connected -> ConnectionState.Connected
-        is XiaoZhiBackendService.ConnectionState.Connecting -> ConnectionState.Connecting
-        is XiaoZhiBackendService.ConnectionState.Error -> ConnectionState.Error("连接错误")
-        is XiaoZhiBackendService.ConnectionState.Disconnected -> ConnectionState.Disconnected
-    }
-
     private fun observeBackendService() {
         scope.launch {
             backendService.connectionState.collect { state ->
-                _connectionState.value = state.toDomainState()
+                _connectionState.value = state
             }
         }
 
@@ -222,7 +214,7 @@ class ConnectionRepositoryImpl @Inject constructor(
         // 解码器会在收到第一个音频包时延迟初始化（此时 hello 肯定已处理）
         scope.launch {
             backendService.connectionState.collect { state ->
-                if (state is XiaoZhiBackendService.ConnectionState.Connected) {
+                if (state is BotConnectionState.Connected) {
                     val serverSampleRate = backendService.getServerSampleRate()
                     audioService.setSampleRate(serverSampleRate)
                     // 不在这初始化解码器，等 hello 收到后再初始化
@@ -234,8 +226,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                         kotlinx.coroutines.delay(2000)
                         startWakeWordMode()
                     }
-                } else if (state is XiaoZhiBackendService.ConnectionState.Disconnected ||
-                           state is XiaoZhiBackendService.ConnectionState.Error) {
+                } else if (state is BotConnectionState.Disconnected ||
+                           state is BotConnectionState.Error) {
                     playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
                     // 断开后唤醒词已经在 disconnect() 中启动，但如果在 observeBackendService 外断开（如后端主动断开），此处兜底
@@ -299,13 +291,13 @@ class ConnectionRepositoryImpl @Inject constructor(
         Logger.i(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
 
         // 互斥：连接新联系人前先断开旧连接
-        if (_connectionState.value is ConnectionState.Connected ||
-            _connectionState.value is ConnectionState.Connecting) {
+        if (_connectionState.value is BotConnectionState.Connected ||
+            _connectionState.value is BotConnectionState.Connecting) {
             Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
             audioRecorder.stop("main")
             playbackManager.releaseAll()
-            _connectionState.value = ConnectionState.Disconnected
+            _connectionState.value = BotConnectionState.Disconnected
             _aiState.value = AiState.IDLE
             // 重置全部状态变量（防止旧会话泄漏到新连接）
             weStartedRecording = false
@@ -325,14 +317,14 @@ class ConnectionRepositoryImpl @Inject constructor(
         AppContext.initDeviceIds(context)
 
         return try {
-            _connectionState.value = ConnectionState.Connecting
+            _connectionState.value = BotConnectionState.Connecting
             Logger.i(TAG, "ConnectionRepositoryImpl: calling backendService.connect()...")
             backendService.connect(config.serverUrl, config.otaUrl, config.deviceId, config.clientId, config.accessToken)
             Logger.i(TAG, "ConnectionRepositoryImpl: backendService.connect() returned successfully")
             Result.success(Unit)
         } catch (e: Exception) {
             Logger.e(TAG, "ConnectionRepositoryImpl.connect() failed: ${e.message}")
-            _connectionState.value = ConnectionState.Error(e.message ?: "连接失败")
+            _connectionState.value = BotConnectionState.Error(e.message ?: "连接失败")
             Result.failure(e)
         }
     }
@@ -341,7 +333,7 @@ class ConnectionRepositoryImpl @Inject constructor(
         backendService.disconnect()
         audioRecorder.stop("main")
         playbackManager.releaseAll()
-        _connectionState.value = ConnectionState.Disconnected
+        _connectionState.value = BotConnectionState.Disconnected
         _aiState.value = AiState.IDLE
         // 断开后重启唤醒词检测
         startWakeWordMode()
@@ -350,7 +342,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
         currentContactId = contactId
         // 先检查连接状态
-        if (_connectionState.value !is ConnectionState.Connected) {
+        if (_connectionState.value !is BotConnectionState.Connected) {
             Logger.w(TAG, "sendTextMessage: 未连接，消息未发送: $text")
             return Result.failure(Exception("未连接到服务器"))
         }

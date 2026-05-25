@@ -1,8 +1,8 @@
 package com.xiaozhi.aiservice.domain.usecase.relay
 
-import android.util.Log
+import com.xiaozhi.aiservice.domain.PlatformLogger
 import com.xiaozhi.aiservice.domain.model.BotContact
-import com.xiaozhi.aiservice.presentation.viewmodel.RelayState
+import com.xiaozhi.aiservice.domain.model.RelayState
 
 /**
  * Speaker 评分器 —— 为接龙选择下一个发言的 bot
@@ -18,7 +18,8 @@ import com.xiaozhi.aiservice.presentation.viewmodel.RelayState
  */
 class SpeakerScorer(
     private val isDead: (String) -> Boolean,
-    private val getContacts: () -> List<BotContact>
+    private val getContacts: () -> List<BotContact>,
+    private val logger: PlatformLogger = PlatformLogger.EMPTY,
 ) {
     private val tag = "SpeakerScorer"
 
@@ -82,7 +83,7 @@ class SpeakerScorer(
                 val count = recentTransitions.count { it.first == prevBotId && it.second == c.id }
                 if (count >= 2) {
                     c.score -= transitionPenalty * count
-                    Log.w(tag, "惩罚 [$prevBotId→${c.id}] 出现${count}次, score=${c.score}")
+                    logger.w(tag, "惩罚 [$prevBotId→${c.id}] 出现${count}次, score=${c.score}")
                 }
             }
         }
@@ -105,7 +106,7 @@ class SpeakerScorer(
                         spokenInThisRound = compactedSpoken,
                         spokenRoundCounter = rs.spokenRoundCounter
                     )
-                    Log.i(tag, "选人: round_robin [$prevBotId→$nextId] (无强信号)")
+                    logger.i(tag, "选人: round_robin [$prevBotId→$nextId] (无强信号)")
                     return result to newRs
                 }
             }

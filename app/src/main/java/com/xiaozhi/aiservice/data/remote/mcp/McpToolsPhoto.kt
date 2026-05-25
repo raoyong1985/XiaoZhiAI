@@ -5,23 +5,22 @@ import android.content.pm.PackageManager
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContext
-import com.xiaozhi.aiservice.di.GlobalServices
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
-fun registerCameraTool() {
-    if (MCPToolRegistry.hasTool("take_photo")) return
+fun registerCameraTool(registry: MCPToolRegistry) {
+    if (registry.hasTool("take_photo")) return
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "take_photo",
         description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等。调用后手机将自动打开相机并拍照，用户无需按任何按钮",
         inputSchema = jsonSchema(),
         readOnly = true
     ) { _ ->
-        val context = AppContext.context
+        val context = registry.context
 
         // 检查相机权限
         val permCheck = checkPermissionWithGuide(
@@ -46,9 +45,9 @@ fun registerCameraTool() {
             val photoFile = File(photoDir, "photo_${System.currentTimeMillis()}.jpg")
             FileOutputStream(photoFile).use { it.write(jpegBytes) }
 
-            val contactId = (GlobalServices.connectionRepository as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
+            val contactId = (registry.connectionRepository.get() as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
             if (contactId.isNotEmpty()) {
-                GlobalServices.messageRepository.addSentMessage(
+                registry.messageRepository.addSentMessage(
                     contactId,
                     com.xiaozhi.aiservice.domain.model.ChatMessage(
                         id = java.util.UUID.randomUUID().toString(),
@@ -79,12 +78,13 @@ fun registerCameraTool() {
  * 发送图片到视觉 API 分析（multipart/form-data 方式，与 ESP32 一致）
  */
 private suspend fun analyzeWithVision(jpegData: ByteArray): String {
-    val visionUrl = com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService.visionUrl
+    val backend = com.xiaozhi.aiservice.di.GlobalServices.xiaozhiBackend
+    val visionUrl = backend.visionUrl
     if (visionUrl.isNullOrBlank()) return "照片已拍好，但视觉AI分析服务未配置"
 
     try {
         val boundary = "----AndroidCameraBoundary"
-        val token = com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService.visionToken
+        val token = backend.visionToken
 
         // 构造 multipart body
         val bodyBuilder = okhttp3.MultipartBody.Builder()

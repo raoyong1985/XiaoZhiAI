@@ -28,7 +28,7 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
         serverRate: Int,
         channels: Int,
         volume: Int
-    ): NativeOpusDecoder {
+    ) {
         // 超限时淘汰最旧解码器（按插入顺序排）
         if (decoders.size >= MAX_DECODERS && !decoders.containsKey(sourceId)) {
             val toEvict = decoders.keys.firstOrNull()
@@ -39,7 +39,7 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
                 Logger.w(TAG, "解码器超限($MAX_DECODERS)，淘汰: $toEvict")
             }
         }
-        return decoders.getOrPut(sourceId) {
+        decoders.getOrPut(sourceId) {
             NativeOpusDecoder(serverRate, 16000, channels, volume).also {
                 it.init()
                 if (volume < 100) it.setVolume(volume)
@@ -57,8 +57,8 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
         audioData: ByteArray,
         volume: Int
     ) {
-        val decoder = getOrCreate(sourceId, serverRate, channels, volume)
-        decoder.decodePacket(audioData)
+        getOrCreate(sourceId, serverRate, channels, volume)
+        decoders[sourceId]?.decodePacket(audioData)
     }
 
     /**
@@ -90,8 +90,12 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
     /** 判断源是否存在。 */
     override fun contains(sourceId: String): Boolean = decoders.containsKey(sourceId)
 
-    /** 获取指定源的解码器，不存在返回 null */
-    override fun get(sourceId: String): NativeOpusDecoder? = decoders[sourceId]
+    /**
+     * 获取指定源的解码器采样率，不存在返回 0
+     */
+    override fun getServerSampleRate(sourceId: String): Int {
+        return decoders[sourceId]?.getServerSampleRate() ?: 0
+    }
 
     /**
      * 等待指定源的音频队列排空。

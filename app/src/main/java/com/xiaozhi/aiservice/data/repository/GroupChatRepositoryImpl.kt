@@ -11,6 +11,7 @@ import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
+import com.xiaozhi.aiservice.utils.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+
+private const val TAG = "GroupChatRepo"
 
 /**
  * GroupChatRepository 的实现
@@ -301,7 +304,7 @@ class GroupChatRepositoryImpl @Inject constructor(
             context.messagesDataStore.edit { preferences ->
                 preferences[messagesKey(groupId)] = gson.toJson(messages)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) { Logger.w(TAG, "writeToDisk failed: ${e.message}") }
     }
 
     // ═══════════════════════════════════════════

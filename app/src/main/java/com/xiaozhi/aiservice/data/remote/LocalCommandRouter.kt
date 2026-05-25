@@ -21,6 +21,7 @@ object LocalCommandRouter {
     private const val TAG = "LocalCommandRouter"
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private lateinit var mcpToolRegistry: MCPToolRegistry
 
     /** 命令映射：关键词列表 → (工具名, 参数字典, TTS反馈模板) */
     val commands = listOf(
@@ -130,8 +131,9 @@ object LocalCommandRouter {
         ),
     )
 
-    /** 初始化 TextToSpeech（仅做本地反馈备选，主反馈走服务器TTS） */
-    fun init(context: Context) {
+    /** 初始化 TextToSpeech + MCP工具注册表 */
+    fun init(context: Context, registry: MCPToolRegistry) {
+        mcpToolRegistry = registry
         if (tts != null) return
         try {
             tts = TextToSpeech(context) { status ->
@@ -188,7 +190,7 @@ object LocalCommandRouter {
 
                     // 调用MCP工具
                     val (success, result) = withContext(Dispatchers.IO) {
-                        MCPToolRegistry.callTool(rule.toolName, resolvedArgs)
+                        mcpToolRegistry.callTool(rule.toolName, resolvedArgs)
                     }
 
                     val responseText = if (success) {

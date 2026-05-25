@@ -7,15 +7,13 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContext
-
-fun registerNetworkTools() {
-    MCPToolRegistry.registerTool(
+fun registerNetworkTools(registry: MCPToolRegistry) {
+    registry.registerTool(
         name = "get_network_info",
         description = "获取当前设备的网络状态，包括 WiFi/移动网络、IP 地址、信号强度等",
         inputSchema = jsonSchema()
     ) { _ ->
-        val context = AppContext.context
+        val context = registry.context
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val network = cm?.activeNetwork
@@ -51,7 +49,7 @@ fun registerNetworkTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_public_ip",
         description = "获取设备的公网 IP 地址和所在地",
         inputSchema = jsonSchema()
@@ -78,7 +76,7 @@ fun registerNetworkTools() {
         } catch (e: Exception) { throw Exception("获取公网 IP 失败: ${e.message}") }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "web_search",
         description = "搜索网页获取实时信息，返回搜索结果列表",
         inputSchema = jsonSchema(

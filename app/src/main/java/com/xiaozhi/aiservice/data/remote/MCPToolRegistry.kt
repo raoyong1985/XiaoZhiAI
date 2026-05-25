@@ -1,7 +1,9 @@
 package com.xiaozhi.aiservice.data.remote
 
+import android.content.Context
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.remote.mcp.registerBasicTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerCameraTool
 import com.xiaozhi.aiservice.data.remote.mcp.registerExtraTools
@@ -9,6 +11,12 @@ import com.xiaozhi.aiservice.data.remote.mcp.registerIntentTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerLocationTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerNetworkTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerXiaozhiTools
+import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
+import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.Lazy
+import javax.inject.Inject
+import javax.inject.Singleton
 
 data class MCPTool(
     val name: String,
@@ -19,19 +27,24 @@ data class MCPTool(
     val handler: suspend (Map<String, Any>) -> JsonObject
 )
 
-object MCPToolRegistry {
-    private const val TAG = "MCPToolRegistry"
+@Singleton
+class MCPToolRegistry @Inject constructor(
+    @ApplicationContext val context: Context,
+    val audioService: AudioService,
+    val connectionRepository: Lazy<ConnectionRepository>,
+    val messageRepository: MessageRepository
+) {
     private val tools = mutableListOf<MCPTool>()
     private var cachedToolList: JsonArray? = null
 
     init {
-        registerBasicTools()
-        registerLocationTools()
-        registerNetworkTools()
-        registerIntentTools()
-        registerXiaozhiTools()
-        registerCameraTool()
-        registerExtraTools()
+        registerBasicTools(this)
+        registerLocationTools(this)
+        registerNetworkTools(this)
+        registerIntentTools(this)
+        registerXiaozhiTools(this)
+        registerCameraTool(this)
+        registerExtraTools(this)
     }
 
     fun registerTool(
@@ -58,7 +71,6 @@ object MCPToolRegistry {
         return arr
     }
 
-    /** 返回全部工具（含 userOnly），供 UI 展示使用 */
     fun getAllToolList(): JsonArray {
         val arr = JsonArray()
         tools.forEach { tool ->

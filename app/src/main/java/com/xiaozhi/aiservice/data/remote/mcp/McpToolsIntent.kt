@@ -23,8 +23,8 @@ import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
 
-fun registerIntentTools() {
-    MCPToolRegistry.registerTool(
+fun registerIntentTools(registry: MCPToolRegistry) {
+    registry.registerTool(
         name = "open_app",
         description = "在手机上打开指定的应用，通过包名启动",
         inputSchema = jsonSchema(
@@ -36,7 +36,7 @@ fun registerIntentTools() {
         val pkg = (args["package_name"] as? String)?.takeIf { it.isNotBlank() }
             ?: throw Exception("package_name 不能为空")
         val fallback = (args["fallback_search"] as? Boolean) ?: true
-        val ctx = AppContext.context
+        val ctx = registry.context
         try {
             ctx.packageManager.getLaunchIntentForPackage(pkg)?.let {
                 it.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -55,7 +55,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "open_url",
         description = "在系统浏览器中打开指定链接",
         inputSchema = jsonSchema(
@@ -68,12 +68,12 @@ fun registerIntentTools() {
         val finalUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
         Intent(Intent.ACTION_VIEW, android.net.Uri.parse(finalUrl)).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            AppContext.context.startActivity(this)
+            registry.context.startActivity(this)
         }
         JsonObject().apply { addProperty("success", true); addProperty("url", finalUrl) }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_volume",
         description = "调节手机音量，支持媒体、闹钟、通知、通话音量",
         inputSchema = jsonSchema(
@@ -84,7 +84,7 @@ fun registerIntentTools() {
     ) { args ->
         val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100) ?: throw Exception("level 必须为 0-100")
         val type = (args["type"] as? String)?.lowercase() ?: "media"
-        val audioManager = AppContext.context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+        val audioManager = registry.context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
         val streamType = when (type) {
             "media" -> android.media.AudioManager.STREAM_MUSIC
@@ -102,7 +102,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_alarm",
         description = "在手机上设置闹钟提醒",
         inputSchema = jsonSchema(
@@ -112,7 +112,7 @@ fun registerIntentTools() {
             required = listOf("hour", "minute")
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val hour = (args["hour"] as? Number)?.toInt() ?: throw Exception("hour 必须为 0-23 的数字")
         val minute = (args["minute"] as? Number)?.toInt() ?: throw Exception("minute 必须为 0-59 的数字")
         require(hour in 0..23) { "hour 必须在 0-23 之间" }
@@ -186,7 +186,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_timer",
         description = "设置一个倒计时器，到时间会响铃提醒",
         inputSchema = jsonSchema(
@@ -206,7 +206,7 @@ fun registerIntentTools() {
                     putExtra(AlarmClock.EXTRA_MESSAGE, label)
                     putExtra(AlarmClock.EXTRA_SKIP_UI, false)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    AppContext.context.startActivity(this)
+                    registry.context.startActivity(this)
                 }
                 JsonObject().apply { addProperty("success", true); addProperty("seconds", seconds); addProperty("display", display) }
             } catch (e: Exception) { throw Exception("无法设置倒计时: ${e.message}") }
@@ -215,7 +215,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "vibrate",
         description = "让手机震动，可指定时长和模式",
         inputSchema = jsonSchema(
@@ -225,7 +225,7 @@ fun registerIntentTools() {
     ) { args ->
         val duration = (args["duration_ms"] as? Number)?.toLong() ?: 500L
         val pattern = (args["pattern"] as? String)?.lowercase() ?: "once"
-        val ctx = AppContext.context
+        val ctx = registry.context
 
         // 检查震动权限
         val vibratePerm = checkPermissionWithGuide(
@@ -249,7 +249,7 @@ fun registerIntentTools() {
         JsonObject().apply { addProperty("success", true); addProperty("pattern", pattern); addProperty("duration_ms", patternArr.sum()) }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "send_notification",
         description = "在手机通知栏发送一条通知提醒",
         inputSchema = jsonSchema(
@@ -267,7 +267,7 @@ fun registerIntentTools() {
 
         ensureNotificationChannel(channelId)
 
-        val notification = NotificationCompat.Builder(AppContext.context, channelId)
+        val notification = NotificationCompat.Builder(registry.context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(content)
@@ -279,7 +279,7 @@ fun registerIntentTools() {
             Manifest.permission.POST_NOTIFICATIONS, permissionName = "通知"
         )
         if (notifPerm != null) return@registerTool notifPerm
-        NotificationManagerCompat.from(AppContext.context).notify(
+        NotificationManagerCompat.from(registry.context).notify(
             System.currentTimeMillis().toInt(), notification
         )
         JsonObject().apply {
@@ -289,14 +289,14 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "screen_brightness",
         description = "获取当前屏幕亮度，或设置亮度百分比",
         inputSchema = jsonSchema(
             "level" to jsonNumberProp("设置亮度 0-100（百分比），不传则只读取当前亮度"),
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val resolver = ctx.contentResolver
         try {
             val current = android.provider.Settings.System.getInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
@@ -325,7 +325,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "navigate",
         description = "打开地图导航到指定目的地，支持高德/百度地图或系统地图",
         inputSchema = jsonSchema(
@@ -343,7 +343,7 @@ fun registerIntentTools() {
         val lon = (args["longitude"] as? Number)?.toDouble()
         val mode = (args["mode"] as? String)?.lowercase() ?: "driving"
         val app = (args["app"] as? String)?.lowercase() ?: "auto"
-        val ctx = AppContext.context
+        val ctx = registry.context
 
         val dlat = args["dlat"] as? Double
         val dlon = args["dlon"] as? Double
@@ -410,7 +410,7 @@ fun registerIntentTools() {
     }
 
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "make_call",
         description = "拨打电话。有权限直接呼叫，无权限打开拨号界面",
         inputSchema = jsonSchema(
@@ -418,7 +418,7 @@ fun registerIntentTools() {
             "name" to jsonStringProp("联系人姓名（可选，自动从通讯录查找号码）"),
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         var number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
 
@@ -463,7 +463,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "send_sms",
         description = "发送短信。有权限直接发送，无权限打开短信编辑界面",
         inputSchema = jsonSchema(
@@ -473,7 +473,7 @@ fun registerIntentTools() {
             required = listOf("message")
         )
     ) { args ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         var number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val message = (args["message"] as? String)?.takeIf { it.isNotBlank() }
@@ -529,7 +529,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "toggle_flashlight",
         description = "打开或关闭手机手电筒/闪光灯",
         inputSchema = jsonSchema(
@@ -538,7 +538,7 @@ fun registerIntentTools() {
         )
     ) { args ->
         val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
-        val ctx = AppContext.context
+        val ctx = registry.context
 
         // 检查相机权限（手电筒使用相机闪光灯需要 CAMERA 权限）
         val flashlightPerm = checkPermissionWithGuide(
@@ -570,7 +570,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "toggle_wifi",
         description = "打开或关闭手机 WiFi",
         inputSchema = jsonSchema(
@@ -579,7 +579,7 @@ fun registerIntentTools() {
         )
     ) { args ->
         val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
-        val ctx = AppContext.context
+        val ctx = registry.context
         val wifiManager = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
             ?: throw Exception("此设备不支持 WiFi")
 
@@ -610,12 +610,12 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "take_screenshot",
         description = "对手机当前屏幕进行截图（需要 Android 11+ 或辅助功能权限）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             try {
                 // Use MediaProjection for screenshot on Android 11+
@@ -649,7 +649,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "toggle_xiaozhi_mute",
         description = "切换小智 AI 麦克风的静音状态。静音后 AI 不会听到你的声音，但对话仍然可以继续",
         inputSchema = jsonSchema(
@@ -667,7 +667,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_installed_apps",
         description = "列出手机上安装的应用包名和名称（非系统应用）",
         inputSchema = jsonSchema(
@@ -677,7 +677,7 @@ fun registerIntentTools() {
     ) { args ->
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 200) ?: 30
         val keyword = (args["keyword"] as? String)?.lowercase() ?: ""
-        val pm = AppContext.context.packageManager
+        val pm = registry.context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val apps = pm.queryIntentActivities(intent, 0)
             .map { it.activityInfo }
@@ -694,7 +694,7 @@ fun registerIntentTools() {
         JsonObject().apply { add("apps", arr); addProperty("count", arr.size()) }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "dict_lookup",
         description = "中英文词典查询，返回单词释义、音标、例句等",
         inputSchema = jsonSchema(
@@ -747,7 +747,7 @@ fun registerIntentTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_calendar",
         description = "获取日历中的事件列表，默认查询今天的事件，支持指定日期范围",
         inputSchema = jsonSchema(

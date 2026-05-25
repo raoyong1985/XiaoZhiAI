@@ -10,6 +10,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import com.xiaozhi.aiservice.utils.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -43,6 +44,7 @@ class MessageRepositoryImpl @Inject constructor(
     private val loadedFromDisk = ConcurrentHashMap<String, Boolean>()
 
     companion object {
+        private const val TAG = "MessageRepo"
         private fun messagesKey(contactId: String) = stringPreferencesKey("messages_$contactId")
     }
 
@@ -105,7 +107,7 @@ class MessageRepositoryImpl @Inject constructor(
             context.messagesDataStore.edit { preferences ->
                 preferences[messagesKey(contactId)] = gson.toJson(messages)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) { Logger.w(TAG, "writeToDisk failed: ${e.message}") }
     }
 
     private fun updateMessages(contactId: String, transform: (List<ChatMessage>) -> List<ChatMessage>) {

@@ -4,15 +4,13 @@ import android.Manifest
 import androidx.core.app.ActivityCompat
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContext
-
-fun registerLocationTools() {
-    MCPToolRegistry.registerTool(
+fun registerLocationTools(registry: MCPToolRegistry) {
+    registry.registerTool(
         name = "get_location",
         description = "获取设备当前地理位置（经纬度），需要定位权限",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContext.context
+        val ctx = registry.context
         val permCheck = checkPermissionWithGuide(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,

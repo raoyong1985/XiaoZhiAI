@@ -48,7 +48,7 @@ import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.VoiceMode
-import com.xiaozhi.aiservice.domain.repository.ConnectionState
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 
@@ -95,9 +95,9 @@ fun ChatScreen(
     // 顶部栏状态
     val connectionColor by animateColorAsState(
         targetValue = when (uiState.connectionState) {
-            is ConnectionState.Connected -> Color(0xFF4CAF50)
-            is ConnectionState.Connecting -> Color(0xFFFFC107)
-            is ConnectionState.Error -> Color(0xFFF44336)
+            is BotConnectionState.Connected -> Color(0xFF4CAF50)
+            is BotConnectionState.Connecting -> Color(0xFFFFC107)
+            is BotConnectionState.Error -> Color(0xFFF44336)
             else -> Color(0xFF9E9E9E)
         },
         label = "connection_color"
@@ -335,7 +335,7 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
 private fun ChatInputArea(
     isRecording: Boolean,
     aiState: AiState,
-    connectionState: ConnectionState,
+    connectionState: BotConnectionState,
     inputMode: Int, // 0=麦克风模式, 1=文本输入模式
     onSendText: (String) -> Unit,
     onStartRecording: () -> Unit,
@@ -415,8 +415,8 @@ private fun ChatInputArea(
 
                                 IconButton(
                                     onClick = {
-                                        val isOffline = connectionState is ConnectionState.Disconnected ||
-                                                connectionState is ConnectionState.Error
+                                        val isOffline = connectionState is BotConnectionState.Disconnected ||
+                                                connectionState is BotConnectionState.Error
                                         if (isOffline) {
                                             onTryReconnect()
                                             return@IconButton
@@ -467,8 +467,8 @@ private fun ChatInputArea(
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
-                                            val isOffline = connectionState is ConnectionState.Disconnected ||
-                                                    connectionState is ConnectionState.Error
+                                            val isOffline = connectionState is BotConnectionState.Disconnected ||
+                                                    connectionState is BotConnectionState.Error
                                             if (isOffline) {
                                                 onTryReconnect()
                                                 return@KeyboardActions
@@ -484,8 +484,8 @@ private fun ChatInputArea(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 FilledIconButton(
                                     onClick = {
-                                        val isOffline = connectionState is ConnectionState.Disconnected ||
-                                                connectionState is ConnectionState.Error
+                                        val isOffline = connectionState is BotConnectionState.Disconnected ||
+                                                connectionState is BotConnectionState.Error
                                         if (isOffline) {
                                             onTryReconnect()
                                             return@FilledIconButton

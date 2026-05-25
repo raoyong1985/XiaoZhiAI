@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.domain.repository
 
 import com.xiaozhi.aiservice.domain.model.AiState
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
@@ -8,16 +9,6 @@ import com.xiaozhi.aiservice.domain.model.Device
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-
-/**
- * 连接状态
- */
-sealed class ConnectionState {
-    data object Disconnected : ConnectionState()
-    data object Connecting : ConnectionState()
-    data object Connected : ConnectionState()
-    data class Error(val message: String) : ConnectionState()
-}
 
 /**
  * 设备状态（参考 ESP32 device_state_machine.cc）
@@ -65,7 +56,7 @@ interface DeviceRepository {
  * 连接仓库接口 - 对接小智后台
  */
 interface ConnectionRepository {
-    val connectionState: StateFlow<ConnectionState>
+    val connectionState: StateFlow<BotConnectionState>
     val aiState: StateFlow<AiState>
     val deviceState: StateFlow<DeviceState>  // 设备状态机（参考 ESP32 device_state_machine.cc）
     val emotion: StateFlow<String>  // AI情感状态

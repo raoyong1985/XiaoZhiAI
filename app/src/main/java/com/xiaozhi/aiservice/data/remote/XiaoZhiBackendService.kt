@@ -11,8 +11,10 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.AiStateStr
 import com.xiaozhi.aiservice.data.settings.AudioSettings
+import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.di.AppContext
-import com.xiaozhi.aiservice.di.GlobalServices
+import com.xiaozhi.aiservice.domain.model.BotConnection
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,20 +38,18 @@ import java.util.concurrent.TimeUnit
  * 2. 交换hello消息
  * 3. 开始语音交互
  */
-class XiaoZhiBackendService(private val gson: Gson) {
+class XiaoZhiBackendService(
+    private val gson: Gson,
+    private val mcpToolRegistry: MCPToolRegistry,
+    private val audioService: AudioService
+) : BotConnection {
 
     private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
 
     companion object {
         private const val PROTOCOL_VERSION = "1"
         private const val TAG = "XiaoZhiWS"
-        private const val MAX_RECONNECT_ATTEMPTS = 10  // 最多重连 10 次，防无限循环
-        /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
-        @JvmStatic
-        var visionUrl: String? = null
-        /** 服务器下发的视觉AI token */
-        @JvmStatic
-        var visionToken: String? = null
+        private const val MAX_RECONNECT_ATTEMPTS = 10
 
         /** 共享 OkHttpClient 实例，减少连接池和线程创建开销 */
         val sharedClient = OkHttpClient.Builder()
@@ -59,54 +59,51 @@ class XiaoZhiBackendService(private val gson: Gson) {
             .build()
     }
 
+    /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
+    var visionUrl: String? = null
+    /** 服务器下发的视觉AI token */
+    var visionToken: String? = null
+
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.IO)
 
     private var webSocket: WebSocket? = null
     private val client = sharedClient
 
-    // 连接状态
-    sealed class ConnectionState {
-        data object Disconnected : ConnectionState()
-        data object Connecting : ConnectionState()
-        data object Connected : ConnectionState()
-        data object Error : ConnectionState()
-    }
-
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    private val _connectionState = MutableStateFlow<BotConnectionState>(BotConnectionState.Disconnected)
+    override val connectionState: StateFlow<BotConnectionState> = _connectionState.asStateFlow()
 
     // AI状态: idle, listening, speaking
     private val _aiState = MutableStateFlow<String>(AiStateStr.IDLE)
-    val aiState: StateFlow<String> = _aiState.asStateFlow()
+    override val aiState: StateFlow<String> = _aiState.asStateFlow()
 
     // 收到服务器转写的文本
     private val _textMessage = MutableStateFlow("")
-    val textMessage: StateFlow<String> = _textMessage.asStateFlow()
+    override val textMessage: StateFlow<String> = _textMessage.asStateFlow()
 
     // 完整的聊天消息流（区分用户/AI消息）
     private val _chatMessages = MutableSharedFlow<ChatMessage>(replay = 0)
-    val chatMessages: SharedFlow<ChatMessage> = _chatMessages.asSharedFlow()
+    override val chatMessages: SharedFlow<ChatMessage> = _chatMessages.asSharedFlow()
 
     // 收到TTS音频数据 (Opus) - 使用SharedFlow支持多包
     private val _audioData = MutableSharedFlow<ByteArray>(replay = 0)
-    val audioData: SharedFlow<ByteArray> = _audioData.asSharedFlow()
+    override val audioData: SharedFlow<ByteArray> = _audioData.asSharedFlow()
 
     // 服务器返回的TTS文本
     private val _ttsText = MutableStateFlow("")
-    val ttsText: StateFlow<String> = _ttsText.asStateFlow()
+    override val ttsText: StateFlow<String> = _ttsText.asStateFlow()
 
     // 情感状态
     private val _emotion = MutableStateFlow("")
-    val emotion: StateFlow<String> = _emotion.asStateFlow()
+    override val emotion: StateFlow<String> = _emotion.asStateFlow()
 
     // 服务器Alert弹窗消息
     private val _alert = MutableSharedFlow<String>(replay = 0)
-    val alert: SharedFlow<String> = _alert.asSharedFlow()
+    override val alert: SharedFlow<String> = _alert.asSharedFlow()
 
     // 流式消息结束信号（sentence_end时发出消息ID）
     private val _streamingEnd = MutableSharedFlow<String>(replay = 0)
-    val streamingEnd: SharedFlow<String> = _streamingEnd.asSharedFlow()
+    override val streamingEnd: SharedFlow<String> = _streamingEnd.asSharedFlow()
 
     @Volatile private var isConnected = false
     @Volatile private var serverUrl = ""
@@ -135,7 +132,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * @param clientId 客户端ID (用于Client-Id header，UUID格式)
      * @param accessToken 访问令牌 (用于Authorization header)
      */
-    fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String = "") {
+    override fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String) {
         serverUrl = url
         this.otaUrl = otaUrl
         this.deviceId = deviceId
@@ -143,7 +140,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         this.accessToken = accessToken
         this.reconnectAttempt = 0
         this.isDisconnecting = false
-        _connectionState.value = ConnectionState.Connecting
+        _connectionState.value = BotConnectionState.Connecting
         Logger.i(TAG, "连接中: $url")
 
         // 先进行OTA注册（设备激活），注册完成后建立WebSocket连接
@@ -254,7 +251,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 isConnected = true
                 isReconnecting = false
                 reconnectAttempt = 0
-                _connectionState.value = ConnectionState.Connected
+                _connectionState.value = BotConnectionState.Connected
                 Logger.i(TAG, "WebSocket已连接! 发送hello...")
                 sendHello()
             }
@@ -271,7 +268,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Logger.i(TAG, "WebSocket关闭: $code $reason")
                 isConnected = false
-                _connectionState.value = ConnectionState.Disconnected
+                _connectionState.value = BotConnectionState.Disconnected
                 // code 1005 = 服务器未发送关闭原因，可能是服务器重启/不稳定
                 // 不要误判为"要求激活设备"——实际激活走 OTA 注册流程的 activation 字段
                 if (code != 1000 && code != 1001) {
@@ -282,7 +279,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Logger.i(TAG, "WebSocket已关闭: $code $reason")
                 isConnected = false
-                _connectionState.value = ConnectionState.Disconnected
+                _connectionState.value = BotConnectionState.Disconnected
                 if (code != 1000 && code != 1001) {
                     scheduleReconnect()
                 }
@@ -291,13 +288,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Logger.e(TAG, "WebSocket失败: ${t.message}")
                 isConnected = false
-                _connectionState.value = ConnectionState.Error
+                _connectionState.value = BotConnectionState.Error()
                 scheduleReconnect()
             }
         })
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         isDisconnecting = true
         isReconnecting = false
         reconnectJob?.cancel()
@@ -311,7 +308,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         isConnected = false
         reconnectAttempt = 0  // 重置重连计数
         wsToken = ""
-        _connectionState.value = ConnectionState.Disconnected
+        _connectionState.value = BotConnectionState.Disconnected
         _aiState.value = AiStateStr.IDLE
         // 注意：不 cancel supervisorJob，scope 保持活跃以支持重连
         // 各协程通过 isDisconnecting 标志 + cancel() 协作取消
@@ -320,7 +317,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 完全销毁（Service 生命周期结束），取消全部协程
      */
-    fun destroy() {
+    override fun destroy() {
         disconnect()
         supervisorJob.cancel()
     }
@@ -335,7 +332,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         if (serverUrl.isEmpty()) return
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
             Logger.e(TAG, "重连已达到最大次数($MAX_RECONNECT_ATTEMPTS)，停止重连")
-            _connectionState.value = ConnectionState.Error
+            _connectionState.value = BotConnectionState.Error()
             return
         }
 
@@ -350,7 +347,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
         reconnectJob = scope.launch {
             delay(delay)
             Logger.i(TAG, "执行重连... (第 $reconnectAttempt 次)")
-            _connectionState.value = ConnectionState.Connecting
+            _connectionState.value = BotConnectionState.Connecting
             doConnect(serverUrl, deviceId, clientId, accessToken)
         }
     }
@@ -381,7 +378,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * 开始监听
      * @param mode "auto", "manual", 或 "realtime"
      */
-    fun sendListenStart(mode: String = "auto") {
+    override fun sendListenStart(mode: String) {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -395,7 +392,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 停止监听
      */
-    fun sendListenStop() {
+    override fun sendListenStop() {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -409,7 +406,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * 只发送 listen stop 消息，不修改 aiState
      * 用于群聊接龙场景：避免提前设置 idle 覆盖后续 TTS stop 事件
      */
-    fun sendListenStopOnly() {
+    override fun sendListenStopOnly() {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")
@@ -436,7 +433,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 终止当前会话
      */
-    fun sendAbort(reason: String = "") {
+    override fun sendAbort(reason: String) {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "abort")
@@ -451,13 +448,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 获取服务器采样率
      */
-    fun getServerSampleRate(): Int = serverSampleRate
-    fun getServerChannels(): Int = serverChannels
+    override fun getServerSampleRate(): Int = serverSampleRate
+    override fun getServerChannels(): Int = serverChannels
 
     /**
      * 发送Opus编码的音频数据
      */
-    fun sendAudio(audioData: ByteArray) {
+    override fun sendAudio(audioData: ByteArray) {
         if (!isConnected || audioData.isEmpty()) return
         webSocket?.send(audioData.toByteString())
     }
@@ -467,7 +464,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * 当前服务器仅支持 state="detect"，且文本需限制在 8 字符以内
      * state="text" 服务器不会响应
      */
-    fun sendTextContent(text: String) {
+    override fun sendTextContent(text: String) {
         Logger.i(TAG, "sendTextContent: isConnected=$isConnected text=${text.take(30)}")
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
@@ -484,7 +481,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 判断当前连接是否为本地服务器
      */
-    fun isLocalServer(): Boolean {
+    override fun isLocalServer(): Boolean {
         return serverUrl.contains("192.168.") || serverUrl.contains("localhost")
             || serverUrl.contains("127.0.0.1") || serverUrl.contains("10.")
     }
@@ -773,7 +770,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 Logger.i(TAG, "回复MCP initialized响应")
             }
             "tools/list" -> {
-                val toolList = MCPToolRegistry.getToolList()
+                val toolList = mcpToolRegistry.getToolList()
                 val response = JsonObject().apply {
                     addProperty("type", "mcp")
                     addProperty("session_id", sessionId)
@@ -805,7 +802,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     }
                 }
                 scope.launch(Dispatchers.IO) {
-                    val (isSuccess, result) = MCPToolRegistry.callTool(toolName, argsMap)
+                    val (isSuccess, result) = mcpToolRegistry.callTool(toolName, argsMap)
                     val response = JsonObject().apply {
                         addProperty("type", "mcp")
                         addProperty("session_id", sessionId)
@@ -902,7 +899,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
      * 格式: {"type":"iot","descriptors":[...]}
      * 参考 xiaozhi-esp32-server core/providers/tools/device_iot/iot_descriptor.py
      */
-    fun sendIotDescriptors() {
+    override fun sendIotDescriptors() {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "iot")
@@ -917,7 +914,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     addProperty("name", "aec")
                     addProperty("type", "binary")
                     addProperty("description", "声学回声消除")
-                    addProperty("value", GlobalServices.audioService.isAecEnabled())
+                    addProperty("value", audioService.isAecEnabled())
                 })
                 add(JsonObject().apply {
                     addProperty("name", "device_name")

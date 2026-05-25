@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.xiaozhi.aiservice.data.audio.AudioPlaybackManagerImpl
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.remote.BotConnectionPoolImpl
+import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
 import com.xiaozhi.aiservice.data.repository.ContactsRepositoryImpl
@@ -17,6 +18,8 @@ import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.DeviceRepository
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import com.xiaozhi.aiservice.domain.PlatformLogger
+import com.xiaozhi.aiservice.data.logging.AndroidLogger
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -70,6 +73,12 @@ abstract class AppModule {
         impl: ConnectionRepositoryImpl
     ): ConnectionRepository
 
+    @Binds
+    @Singleton
+    abstract fun bindPlatformLogger(
+        impl: AndroidLogger
+    ): PlatformLogger
+
     companion object {
         @Provides
         @Singleton
@@ -82,7 +91,9 @@ abstract class AppModule {
         @Provides
         @Singleton
         fun provideXiaoZhiBackendService(
-            gson: Gson
-        ): XiaoZhiBackendService = XiaoZhiBackendService(gson)
+            gson: Gson,
+            mcpToolRegistry: MCPToolRegistry,
+            audioService: AudioService
+        ): XiaoZhiBackendService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
     }
 }

@@ -4,11 +4,9 @@ import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContext
-import com.xiaozhi.aiservice.di.GlobalServices
 
-fun registerXiaozhiTools() {
-    MCPToolRegistry.registerTool(
+fun registerXiaozhiTools(registry: MCPToolRegistry) {
+    registry.registerTool(
         name = "set_xiaozhi_volume",
         description = "设置小智 AI 的语音输出音量（0-100），会持久化保存，下次启动自动恢复",
         inputSchema = jsonSchema(
@@ -18,9 +16,9 @@ fun registerXiaozhiTools() {
     ) { args ->
         val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100)
             ?: throw Exception("level 必须为 0-100 的整数")
-        AudioSettings.setOutputVolume(AppContext.context, level)
+        AudioSettings.setOutputVolume(registry.context, level)
         // 立即应用到所有活跃解码器（私聊 + 群聊各 bot）
-        GlobalServices.connectionRepository.let { repo ->
+        registry.connectionRepository.get().let { repo ->
             if (repo is com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl) {
                 repo.setVolume(level)
             }
@@ -32,18 +30,18 @@ fun registerXiaozhiTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_xiaozhi_volume",
         description = "获取当前小智 AI 的语音输出音量（0-100）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val level = AudioSettings.getOutputVolume(AppContext.context)
+        val level = AudioSettings.getOutputVolume(registry.context)
         JsonObject().apply {
             addProperty("level", level)
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_listening_mode",
         description = "设置小智 AI 的监听模式：auto（自动停止后重启）/ manual（手动重启）/ realtime（实时持续）。参考 ESP32 ListeningMode",
         inputSchema = jsonSchema(
@@ -55,7 +53,7 @@ fun registerXiaozhiTools() {
             ?: throw Exception("mode 必须为 auto/manual/realtime")
         val validModes = setOf("auto", "manual", "realtime")
         if (mode !in validModes) throw Exception("mode 必须为 auto/manual/realtime，当前值: $mode")
-        AudioSettings.setListeningMode(AppContext.context,
+        AudioSettings.setListeningMode(registry.context,
             com.xiaozhi.aiservice.domain.model.VoiceMode.fromServerValue(mode))
         JsonObject().apply {
             addProperty("success", true)
@@ -64,19 +62,19 @@ fun registerXiaozhiTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_listening_mode",
         description = "获取当前小智 AI 的监听模式",
         inputSchema = jsonSchema()
     ) { _ ->
-        val mode = AudioSettings.getListeningMode(AppContext.context)
+        val mode = AudioSettings.getListeningMode(registry.context)
         JsonObject().apply {
             addProperty("mode", mode.serverValue)
             addProperty("display_name", mode.displayName)
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "set_aec_mode",
         description = "设置 AEC（声学回声消除）模式：off（关闭）/ device（设备端 AEC）。AEC 可减少 AI 说话时麦克风采集回声的问题",
         inputSchema = jsonSchema(
@@ -87,10 +85,10 @@ fun registerXiaozhiTools() {
         val validModes = setOf("off", "device")
         if (mode !in validModes) throw Exception("mode 必须为 off/device")
         val aecMode = DeviceSettings.AecMode.fromValue(mode)
-        DeviceSettings.setAecMode(AppContext.context, aecMode)
+        DeviceSettings.setAecMode(registry.context, aecMode)
         // 立即应用 AEC 状态
-        GlobalServices.audioService.setAecEnabled(aecMode != DeviceSettings.AecMode.OFF)
-        val isSupported = GlobalServices.audioService.isAecSupported()
+        registry.audioService.setAecEnabled(aecMode != DeviceSettings.AecMode.OFF)
+        val isSupported = registry.audioService.isAecSupported()
         JsonObject().apply {
             addProperty("success", true)
             addProperty("mode", aecMode.value)
@@ -103,12 +101,12 @@ fun registerXiaozhiTools() {
         }
     }
 
-    MCPToolRegistry.registerTool(
+    registry.registerTool(
         name = "get_device_state",
         description = "获取小智 AI 设备的当前状态（设备状态机）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val connRepo = GlobalServices.connectionRepository
+        val connRepo = registry.connectionRepository.get()
         val aiState = connRepo.aiState.value
         val deviceState = connRepo.deviceState.value
         JsonObject().apply {

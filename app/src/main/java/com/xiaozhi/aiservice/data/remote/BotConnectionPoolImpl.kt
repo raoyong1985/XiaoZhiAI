@@ -1,6 +1,9 @@
 package com.xiaozhi.aiservice.data.remote
 
+import com.xiaozhi.aiservice.domain.model.BotConnection
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.BotContact
+import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
@@ -19,10 +22,14 @@ private const val TAG = "BotConnectionPool"
  */
 
 @Singleton
-class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotConnectionPoolRepository {
+class BotConnectionPoolImpl @Inject constructor(
+    private val gson: Gson,
+    private val mcpToolRegistry: MCPToolRegistry,
+    private val audioService: AudioService
+) : BotConnectionPoolRepository {
 
-    /** botId → XiaoZhiBackendService（WebSocket 连接实例） */
-    private val connections = ConcurrentHashMap<String, XiaoZhiBackendService>()
+    /** botId → BotConnection（WebSocket 连接实例） */
+    private val connections = ConcurrentHashMap<String, BotConnection>()
 
     /**
      * 已标记为「死亡」的 bot 集合
@@ -44,9 +51,9 @@ class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotCon
      * @param contact 包含 serverUrl/otaUrl/deviceId/clientId 的连接配置
      * @return XiaoZhiBackendService 实例（可能尚未完全 connected）
      */
-    override fun getOrConnect(botId: String, contact: BotContact): XiaoZhiBackendService {
+    override fun getOrConnect(botId: String, contact: BotContact): BotConnection {
         return connections.getOrPut(botId) {
-            XiaoZhiBackendService(gson).also { service ->
+            XiaoZhiBackendService(gson, mcpToolRegistry, audioService).also { service ->
                 service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
                 Logger.i(TAG, "连接 bot[$botId] (${contact.name})")
             }
@@ -54,10 +61,10 @@ class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotCon
     }
 
     /** 获取已有连接（不存在返回 null，不触发新建） */
-    override fun get(botId: String): XiaoZhiBackendService? = connections[botId]
+    override fun get(botId: String): BotConnection? = connections[botId]
 
     /** 所有连接实例的快照（只读） */
-    override val all: Map<String, XiaoZhiBackendService> get() = connections.toMap()
+    override val all: Map<String, BotConnection> get() = connections.toMap()
 
     /** 当前连接数 */
     override val size: Int get() = connections.size
@@ -76,10 +83,10 @@ class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotCon
     override suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
         if (deadBotIds.contains(botId)) return false
         val service = connections[botId]
-        if (service != null && service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected) {
+        if (service != null && service.connectionState.value is BotConnectionState.Connected) {
             return true
         }
-        if (service != null && service.connectionState.value is XiaoZhiBackendService.ConnectionState.Error) {
+        if (service != null && service.connectionState.value is BotConnectionState.Error) {
             Logger.w(TAG, "bot[$botId] 连接失败(Error)，尝试重连覆盖旧连接")
             // 不直接返回！Error 的 service 可能只是服务器断线后的残留，
             // 直接走到下面的重连逻辑创建新连接替代它
@@ -87,11 +94,11 @@ class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotCon
         Logger.w(TAG, "重新连接: $botId")
         // 覆盖前断开旧连接，防止泄漏
         connections[botId]?.disconnect()
-        val newService = XiaoZhiBackendService(gson)
+        val newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
         connections[botId] = newService
         newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
         return withTimeoutOrNull(5000) {
-            newService.connectionState.first { it is XiaoZhiBackendService.ConnectionState.Connected }
+            newService.connectionState.first { it is BotConnectionState.Connected }
             true
         } ?: false
     }
@@ -121,7 +128,7 @@ class BotConnectionPoolImpl @Inject constructor(private val gson: Gson) : BotCon
      */
     override fun abortAll(reason: String) {
         connections.values.forEach { svc ->
-            try { svc.sendAbort(reason) } catch (_: Exception) {}
+            try { svc.sendAbort(reason) } catch (e: Exception) { Logger.w(TAG, "abortAll bot failed: ${e.message}") }
         }
     }
 

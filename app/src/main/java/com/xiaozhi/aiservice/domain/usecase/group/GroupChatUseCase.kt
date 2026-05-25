@@ -1,7 +1,6 @@
 package com.xiaozhi.aiservice.domain.usecase.group
 
-import android.content.Context
-import android.content.Intent
+import com.xiaozhi.aiservice.domain.PlatformLogger
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -12,7 +11,7 @@ import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import com.xiaozhi.aiservice.domain.usecase.relay.DeduplicationUtil
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
-import com.xiaozhi.aiservice.presentation.viewmodel.RelayState
+import com.xiaozhi.aiservice.domain.model.RelayState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -37,6 +36,7 @@ class GroupChatUseCase(
     private val botObserverJobs: ConcurrentHashMap<String, Job>,
     private val getContacts: () -> List<BotContact>,
     private val onGroupsChanged: () -> Unit,
+    private val logger: PlatformLogger = PlatformLogger.EMPTY,
     private val tag: String = "GroupChatVM"
 ) {
 
@@ -90,7 +90,7 @@ class GroupChatUseCase(
                 val contact = getContacts().find { it.id == firstBotId }
                 val connected = contact != null && botConnectionPool.ensureConnected(firstBotId, contact)
                 if (connected) svc.sendTextContent(content)
-                else android.util.Log.w(tag, "sendMessage: 首bot连接失败")
+                else logger.w(tag, "sendMessage: 首bot连接失败")
             }
         }
     }
@@ -120,20 +120,6 @@ class GroupChatUseCase(
     /** 清空群聊消息记录 */
     suspend fun clearGroupMessages(groupId: String) {
         groupChatRepository.clearGroupMessages(groupId)
-    }
-
-    /** 导出群聊消息（通过 Intent 分享） */
-    suspend fun exportGroupMessages(groupId: String, context: Context) {
-        val messages = groupChatRepository.getGroupMessages(groupId).first()
-        if (messages.isEmpty()) return
-        val text = messages.joinToString("\n") { msg ->
-            "[${if (msg.direction == MessageDirection.SENT) "我" else msg.botName}]: ${msg.content}"
-        }
-        context.startActivity(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            putExtra(Intent.EXTRA_SUBJECT, "群聊记录")
-        })
     }
 
     /** 设置群聊输入模式 */

@@ -5,14 +5,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
-import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
+import com.xiaozhi.aiservice.domain.model.BotConnection
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.domain.model.AiStateStr
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.model.RelayState
 import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
@@ -428,7 +431,7 @@ class GroupChatViewModel @Inject constructor(
         audioService.abandonAudioFocus()
         sttCollectorJob?.cancel()
 
-        try { botConnectionPool.get(_relayState.value.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (_: Exception) {}
+        try { botConnectionPool.get(_relayState.value.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (e: Exception) { android.util.Log.w(TAG, "sendListenStopOnly failed: ${e.message}") }
     }
 
     // ═══════════════════════════════════════════
@@ -456,7 +459,7 @@ class GroupChatViewModel @Inject constructor(
      * @param botName 智能体名称（仅用于日志）
      * @param service WebSocket 连接实例
      */
-    private fun observeBotEvents(botId: String, groupId: String, botName: String, service: XiaoZhiBackendService) {
+    private fun observeBotEvents(botId: String, groupId: String, botName: String, service: BotConnection) {
         botObserverJobs[botId]?.cancel()
         val parentJob = Job(viewModelScope.coroutineContext[Job])
         botObserverJobs[botId] = parentJob
@@ -530,8 +533,8 @@ class GroupChatViewModel @Inject constructor(
                     }
                 } else {
                     // 采样率变化时重建解码器（不同 bot 可能用不同采样率）
-                    val existing = playbackManager.get(currentSourceId)
-                    if (existing != null && existing.getServerSampleRate() != serverRate) {
+                    val existingRate = playbackManager.getServerSampleRate(currentSourceId)
+                    if (existingRate != 0 && existingRate != serverRate) {
                         speakerMutex.withLock {
                             // 先等旧解码器的队列排空再释放，避免切换时丢失 bot 的音频首帧
                             playbackManager.waitForQueueEmpty(currentSourceId, 500)
@@ -556,11 +559,11 @@ class GroupChatViewModel @Inject constructor(
             var wasDisconnected = false
             service.connectionState.collect { state ->
                 when (state) {
-                    is XiaoZhiBackendService.ConnectionState.Error,
-                    is XiaoZhiBackendService.ConnectionState.Disconnected -> {
+                    is BotConnectionState.Error,
+                    is BotConnectionState.Disconnected -> {
                         wasDisconnected = true
                     }
-                    is XiaoZhiBackendService.ConnectionState.Connected -> {
+                    is BotConnectionState.Connected -> {
                         if (wasDisconnected) {
                             wasDisconnected = false
                             android.util.Log.i(TAG, "[$botName] WebSocket重连完成，检查接龙状态")
@@ -625,7 +628,7 @@ class GroupChatViewModel @Inject constructor(
                         val rs = _relayState.value
                         android.util.Log.i(TAG, "[$botName] aiState=$state reply='${replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
 
-                        if (state == "speaking") {
+                        if (state == AiStateStr.SPEAKING) {
                             // ── AI 开始说话 ──
                             audioService.requestAudioFocus()
                             // 记录该 bot 进入 speaking 的时间，audioData 过滤据此做 3 秒 grace
@@ -658,7 +661,7 @@ class GroupChatViewModel @Inject constructor(
                             }
                         }
 
-                        if (state == "idle" && hasSpoken) {
+                        if (state == AiStateStr.IDLE && hasSpoken) {
                             // ── AI 说完话 → 触发下一轮 ──
                             hasSpoken = false
                             // 排空当前 bot 的音频缓冲区，确保全部播放完毕
@@ -808,7 +811,19 @@ class GroupChatViewModel @Inject constructor(
 
     /** 导出群聊消息 */
     fun exportGroupMessages(groupId: String, context: Context) {
-        viewModelScope.launch { groupChatUseCase.exportGroupMessages(groupId, context) }
+        viewModelScope.launch {
+            val messages = groupChatRepository.getGroupMessages(groupId).first()
+            if (messages.isEmpty()) return@launch
+            val text = messages.joinToString("\n") { msg ->
+                "[${if (msg.direction == MessageDirection.SENT) "我" else msg.botName}]: ${msg.content}"
+            }
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(android.content.Intent.EXTRA_TEXT, text)
+                putExtra(android.content.Intent.EXTRA_SUBJECT, "群聊记录")
+            }
+            context.startActivity(android.content.Intent.createChooser(intent, "导出群聊记录"))
+        }
     }
 
     /**
