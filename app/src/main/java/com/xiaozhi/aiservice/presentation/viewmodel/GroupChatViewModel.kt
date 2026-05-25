@@ -365,7 +365,7 @@ class GroupChatViewModel @Inject constructor(
         // 新会话：递增 sessionId，重置轮次
         _relayState.update { it.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0,
-            waitingSpeakerIndex = 0, originalUserQuery = ""
+            waitingSpeakerIndex = 0, lastForwardedText = ""
         ) }
         deduplicationUtil.clear()
 
@@ -397,8 +397,8 @@ class GroupChatViewModel @Inject constructor(
         sttCollectorJob = viewModelScope.launch {
             service.textMessage.drop(1).collect { text ->
                 if (text.isNotBlank()) {
-                    if (_relayState.value.originalUserQuery.isEmpty()) {
-                        _relayState.update { it.copy(originalUserQuery = text) }
+                    if (_relayState.value.lastForwardedText.isEmpty()) {
+                        _relayState.update { it.copy(lastForwardedText = text) }
                     }
                     val userMessage = ChatMessage(
                         id = java.util.UUID.randomUUID().toString(), groupId = currentGroupId,

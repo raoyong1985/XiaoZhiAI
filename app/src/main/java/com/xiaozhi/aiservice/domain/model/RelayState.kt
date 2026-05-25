@@ -8,7 +8,7 @@ data class RelayState(
     val sessionId: Long = 0L,
     val spokenInThisRound: Set<Int> = emptySet(),
     val spokenRoundCounter: Int = 0,
-    val originalUserQuery: String = "",
+    val lastForwardedText: String = "",
     val transitionHistory: List<Pair<String, String>> = emptyList()
 ) {
     fun nextSession(): RelayState = copy(

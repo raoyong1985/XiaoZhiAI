@@ -37,7 +37,7 @@ class GroupChatUseCase(
     private val getContacts: () -> List<BotContact>,
     private val onGroupsChanged: () -> Unit,
     private val logger: PlatformLogger = PlatformLogger.EMPTY,
-    private val tag: String = "GroupChatVM"
+    private val tag: String = "GroupChatUC"
 ) {
 
     /** 创建群聊 */
@@ -77,7 +77,7 @@ class GroupChatUseCase(
 
         relayState.update { it.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0, waitingSpeakerIndex = 0,
-            originalUserQuery = content
+            lastForwardedText = content
         ) }
         audioForwardBuffer.clear()
         deduplicationUtil.clear()

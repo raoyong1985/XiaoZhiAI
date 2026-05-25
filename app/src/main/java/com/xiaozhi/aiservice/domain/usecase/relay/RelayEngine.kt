@@ -41,8 +41,8 @@ class RelayEngine(
     private val relayLock = Any()
     private var isRelaying = false
 
-    // 委派方法: checkDeadloop (保持与原行为一致)
-    private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
+    // 委派方法: checkAndClearOnDeadloop (保持与原行为一致)
+    private fun checkAndClearOnDeadloop(hint: String, speakerId: String? = null): Boolean {
         val isDead = deadloopDetector.check(hint, speakerId)
         if (isDead) relayState.update { it.clearWaiting() }
         return isDead
@@ -148,8 +148,8 @@ class RelayEngine(
                     service.aiState.first { it == AiStateStr.SPEAKING }
                 }
                 if (startConfirmed != null) {
-                    val hint = if (previousReply.isNotBlank()) relayState.value.originalUserQuery.take(8) else ""
-                    if (checkDeadloop(hint, speakerId)) {
+                    val hint = if (previousReply.isNotBlank()) relayState.value.lastForwardedText.take(8) else ""
+                    if (checkAndClearOnDeadloop(hint, speakerId)) {
                         logger.i(tag, "死循环终止，跳过转发")
                         relayState.update { it.clearWaiting() }
                         return
@@ -160,7 +160,7 @@ class RelayEngine(
                             .recordTransition(prevBotId ?: "", speakerId)
                     }
                     if (previousReply.isNotBlank()) {
-                        relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
+                        relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
                     }
                     audioForwardBuffer.remove(prevBotId)
                     logger.i(tag, "音频转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
@@ -177,7 +177,7 @@ class RelayEngine(
             } else {
                 if (previousReply.isNotBlank()) audioForwardHandler.truncateReply(previousReply, 8) else ""
             }
-            if (checkDeadloop(textToSend, speakerId)) {
+            if (checkAndClearOnDeadloop(textToSend, speakerId)) {
                 logger.i(tag, "死循环终止，跳过本轮转发")
                 relayState.update { it.clearWaiting() }
                 return
@@ -194,7 +194,7 @@ class RelayEngine(
                 try {
                     service.sendTextContent(textToSend)
                     if (previousReply.isNotBlank()) {
-                        relayState.update { it.copy(originalUserQuery = previousReply.take(20)) }
+                        relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
                     }
                     val startConfirmed = withTimeoutOrNull(30_000) {
                         service.aiState.first { it == AiStateStr.SPEAKING }
