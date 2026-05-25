@@ -22,6 +22,7 @@ import com.xiaozhi.aiservice.domain.usecase.relay.DeduplicationUtil
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayEngine
 import com.xiaozhi.aiservice.domain.usecase.relay.SpeakerScorer
+import com.xiaozhi.aiservice.domain.usecase.group.GroupChatUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -171,6 +172,14 @@ class GroupChatViewModel @Inject constructor(
     // ── 消息去重 ──
     private val deduplicationUtil = DeduplicationUtil()
 
+    // ── 群聊 CRUD UseCase ──
+    private val groupChatUseCase = GroupChatUseCase(
+        groupChatRepository, botConnectionPool, playbackManager,
+        _relayState, audioForwardBuffer, deduplicationUtil, deadloopDetector,
+        botObserverJobs, { _contacts.value },
+        onGroupsChanged = { loadGroups() }, tag = TAG
+    )
+
     companion object {
         private const val TAG = "GroupChatVM"
     }
@@ -307,15 +316,7 @@ class GroupChatViewModel @Inject constructor(
 
     /** 设置群聊输入模式（0=语音，1=文字） */
     fun setGroupInputMode(groupId: String, mode: Int) {
-        viewModelScope.launch {
-            groupChatRepository.updateGroupInputMode(groupId, mode)
-            val currentGroups = _groups.value.toMutableList()
-            val index = currentGroups.indexOfFirst { it.id == groupId }
-            if (index >= 0) {
-                currentGroups[index] = currentGroups[index].copy(inputMode = mode)
-                _groups.value = currentGroups
-            }
-        }
+        viewModelScope.launch { groupChatUseCase.updateGroupInputMode(groupId, mode, _groups) }
     }
 
     // ═══════════════════════════════════════════
@@ -759,62 +760,27 @@ class GroupChatViewModel @Inject constructor(
     }
 
     // ═══════════════════════════════════════════
-    // CRUD（群聊管理操作）
+    // CRUD（群聊管理操作 — 委派给 GroupChatUseCase）
     // ═══════════════════════════════════════════
 
     /** 创建群聊 */
     suspend fun createGroup(name: String, selectedBotIds: List<String>): GroupChat {
-        val group = groupChatRepository.createGroup(name, selectedBotIds)
-        loadGroups()
-        return group
+        return groupChatUseCase.createGroup(name, selectedBotIds)
     }
 
     /** 删除群聊（同时断开所有连接） */
     suspend fun deleteGroup(groupId: String) {
-        groupChatRepository.deleteGroup(groupId)
-        botConnectionPool.disconnectAll()
-        botObserverJobs.values.forEach { it.cancel() }
-        botObserverJobs.clear()
-        playbackManager.releaseAll()
-        loadGroups()
+        groupChatUseCase.deleteGroup(groupId)
     }
 
     /** 获取指定群聊的消息流 */
     fun getGroupMessages(groupId: String): Flow<List<ChatMessage>> {
-        return groupChatRepository.getGroupMessages(groupId)
+        return groupChatUseCase.getGroupMessages(groupId)
     }
 
-    /**
-     * 发送文字消息到群聊
-     *
-     * 触发接龙流程：用户文字 → 首 bot 处理 → 自动转发到下一 bot
-     */
+    /** 发送文字消息到群聊 */
     suspend fun sendMessageToGroup(groupId: String, content: String) {
-        val userMessage = ChatMessage(
-            id = java.util.UUID.randomUUID().toString(), groupId = groupId,
-            botId = "", botName = "我", content = content,
-            type = MessageType.TEXT, direction = MessageDirection.SENT
-        )
-        groupChatRepository.addMessage(groupId, userMessage)
-
-        _relayState.update { it.nextSession().copy(
-            forwardRound = 0, currentSpeakerIndex = 0, waitingSpeakerIndex = 0,
-            originalUserQuery = content
-        ) }
-        audioForwardBuffer.clear()
-        deduplicationUtil.clear()
-        deadloopDetector.reset()
-
-        if (_relayState.value.botIds.isNotEmpty()) {
-            val firstBotId = _relayState.value.botIds[0]
-            val svc = botConnectionPool.get(firstBotId)
-            if (svc != null) {
-                val contact = _contacts.value.find { it.id == firstBotId }
-                val connected = contact != null && botConnectionPool.ensureConnected(firstBotId, contact)
-                if (connected) svc.sendTextContent(content)
-                else android.util.Log.w(TAG, "sendMessage: 首bot连接失败")
-            }
-        }
+        groupChatUseCase.sendMessageToGroup(groupId, content)
     }
 
     /** sendMessageToGroup 的缩写 */
@@ -822,46 +788,27 @@ class GroupChatViewModel @Inject constructor(
 
     /** 修改群聊名称 */
     suspend fun updateGroupName(groupId: String, newName: String) {
-        groupChatRepository.updateGroupName(groupId, newName); loadGroups()
+        groupChatUseCase.updateGroupName(groupId, newName)
     }
 
     /** 向群聊添加智能体成员 */
     suspend fun addBotToGroup(groupId: String, botId: String) {
-        groupChatRepository.addBotToGroup(groupId, botId)
-        _relayState.update { it.copy(botIds = it.botIds + botId) }
-        loadGroups()
+        groupChatUseCase.addBotToGroup(groupId, botId)
     }
 
     /** 从群聊移除智能体成员 */
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
-        groupChatRepository.removeBotFromGroup(groupId, botId)
-        _relayState.update { it.copy(botIds = it.botIds - botId) }
-        loadGroups()
+        groupChatUseCase.removeBotFromGroup(groupId, botId)
     }
 
     /** 清空群聊消息记录 */
     suspend fun clearGroupMessages(groupId: String) {
-        groupChatRepository.clearGroupMessages(groupId)
+        groupChatUseCase.clearGroupMessages(groupId)
     }
 
-    /**
-     * 导出群聊消息
-     *
-     * 通过 Android 分享 Intent 将消息文本发送到其他应用
-     */
-    fun exportGroupMessages(groupId: String, context: android.content.Context) {
-        viewModelScope.launch {
-            val messages = groupChatRepository.getGroupMessages(groupId).first()
-            if (messages.isEmpty()) return@launch
-            val text = messages.joinToString("\n") { msg ->
-                "[${if (msg.direction == MessageDirection.SENT) "我" else msg.botName}]: ${msg.content}"
-            }
-            context.startActivity(android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(android.content.Intent.EXTRA_TEXT, text)
-                putExtra(android.content.Intent.EXTRA_SUBJECT, "群聊记录")
-            })
-        }
+    /** 导出群聊消息 */
+    fun exportGroupMessages(groupId: String, context: Context) {
+        viewModelScope.launch { groupChatUseCase.exportGroupMessages(groupId, context) }
     }
 
     /**

@@ -42,7 +42,11 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         Logger.i(TAG, "权限结果: RECORD_AUDIO=$audioGranted")
-        setContent { MainNavigation() }
+        setContent {
+            XiaoZhiTheme {
+                MainNavigation()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +54,11 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         AppContext.initDeviceIds(this)
         checkAndRequestPermissions()
+        setContent {
+            XiaoZhiTheme {
+                MainNavigation()
+            }
+        }
     }
 
     private fun checkAndRequestPermissions() {
@@ -98,7 +107,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (permissionsToRequest.isEmpty()) {
-            setContent { MainNavigation() }
+            // 权限已有，onCreate 中已调用 setContent
         } else {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }

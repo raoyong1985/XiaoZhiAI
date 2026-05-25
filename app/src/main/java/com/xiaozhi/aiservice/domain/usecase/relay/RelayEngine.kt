@@ -32,6 +32,7 @@ class RelayEngine(
     private val audioForwardHandler: AudioForwardHandler,
     private val speakerScorer: SpeakerScorer,
     private val deadloopDetector: DeadloopDetector,
+    private val relayValidator: RelayValidator = RelayValidator(),
     private val tag: String = "RelayEngine"
 ) {
     private val relayLock = Any()
@@ -68,7 +69,7 @@ class RelayEngine(
 
     private suspend fun innerTriggerNextSpeaker(previousReply: String = "") {
         val rs = relayState.value
-        if (rs.botIds.size <= 1) {
+        if (relayValidator.isSingleBot(rs.botIds)) {
             relayState.update { it.clearWaiting() }
             return
         }
@@ -78,26 +79,17 @@ class RelayEngine(
             return
         }
 
-        if (previousReply.isNotBlank()) {
-            val tail = previousReply.takeLast(35)
-            val isGoodbye = RelayConfig.GOODBYE_KEYWORDS.any { keyword ->
-                val idx = tail.indexOf(keyword)
-                idx >= 0 && (idx + keyword.length >= tail.length ||
-                    tail.substring(idx + keyword.length).none { it in '一'..'龥' })
-            }
-            if (isGoodbye) {
-                Log.i(tag, "检测到结束语，停止接龙: '${previousReply.take(20)}'")
-                relayState.update { it.clearWaiting() }
-                return
-            }
+        if (relayValidator.isGoodbye(previousReply)) {
+            Log.i(tag, "检测到结束语，停止接龙: '${previousReply.take(20)}'")
+            relayState.update { it.clearWaiting() }
+            return
         }
 
         val prevIndex = rs.currentSpeakerIndex
         val prevBotId = rs.botIds.getOrNull(prevIndex)
 
-        val maxRounds = if (RelayConfig.MAX_FORWARD_ROUND > 0) RelayConfig.MAX_FORWARD_ROUND else rs.botIds.size - 1
-        if (rs.forwardRound >= maxRounds) {
-            Log.i(tag, "接龙已达最大轮次($maxRounds)，停止转发")
+        if (relayValidator.isMaxRoundReached(rs.forwardRound, rs.botIds.size)) {
+            Log.i(tag, "接龙已达最大轮次，停止转发")
             relayState.update { it.clearWaiting() }
             return
         }
@@ -136,7 +128,7 @@ class RelayEngine(
             botLastAudioTime[speakerId] = System.currentTimeMillis()
 
             val audioBuf = audioForwardBuffer[prevBotId]
-            val isLongAudio = audioBuf != null && audioBuf.size > 200
+            val isLongAudio = relayValidator.isLongAudio(audioBuf)
             val audioOk = if (isLongAudio) {
                 Log.i(tag, "超长语音(${audioBuf!!.size}包)，跳过音频转发")
                 false
@@ -145,8 +137,7 @@ class RelayEngine(
             }
 
             if (audioOk) {
-                val forwardAudioSize = audioForwardBuffer[prevBotId]?.sumOf { it.size } ?: 0
-                val estimatedAudioMs = (forwardAudioSize / (32000.0 / 50.0 * 2)).toLong().coerceIn(0, 60000)
+                val estimatedAudioMs = relayValidator.estimateAudioMs(audioForwardBuffer[prevBotId])
                 val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
                 Log.i(tag, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
 
