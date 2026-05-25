@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
-import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
+import com.xiaozhi.aiservice.data.audio.AudioPlaybackManagerImpl
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.remote.BotConnectionPoolImpl
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
@@ -78,7 +78,7 @@ class GroupChatViewModel : ViewModel() {
     private val botConnectionPool = BotConnectionPoolImpl(AppContainer.gson)
 
     // ── 音频播放管理器：解码 Opus 并播放 ──
-    private val playbackManager = AudioPlaybackManager()
+    private val playbackManager = AudioPlaybackManagerImpl()
 
     // ── Bot 事件监听协程 Job 表：botId → Job，用于清理 ──
     private val botObserverJobs = ConcurrentHashMap<String, Job>()

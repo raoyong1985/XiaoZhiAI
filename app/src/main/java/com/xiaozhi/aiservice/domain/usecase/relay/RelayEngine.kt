@@ -1,7 +1,7 @@
 package com.xiaozhi.aiservice.domain.usecase.relay
 
 import android.util.Log
-import com.xiaozhi.aiservice.data.audio.AudioPlaybackManager
+import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository

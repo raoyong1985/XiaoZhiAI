@@ -1,21 +1,18 @@
 package com.xiaozhi.aiservice.data.audio
 
+import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager as AudioPlaybackManagerInterface
 import com.xiaozhi.aiservice.utils.Logger
 import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
 
 private const val TAG = "AudioPlaybackManager"
 
 /**
- * 统一音频播放管理器。
- *
- * 职责：
- * - 创建/缓存 NativeOpusDecoder（统一音量注入、init）
- * - 释放解码器（单源/全量）
- * - 编解码器数量（群聊多 bot 场景）
- *
- * 不负责：接龙排空逻辑、播放源切换仲裁 —— 这些由调用方（GroupChatViewModel）管理。
+ * 统一音频播放管理器实现。
  */
-class AudioPlaybackManager {
+@Singleton
+class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInterface {
 
     companion object {
         private const val MAX_DECODERS = 8
@@ -26,11 +23,11 @@ class AudioPlaybackManager {
     /**
      * 获取或创建解码器，自动注入音量设置。
      */
-    fun getOrCreate(
+    override fun getOrCreate(
         sourceId: String,
         serverRate: Int,
         channels: Int,
-        volume: Int = 100
+        volume: Int
     ): NativeOpusDecoder {
         // 超限时淘汰最旧解码器（按插入顺序排）
         if (decoders.size >= MAX_DECODERS && !decoders.containsKey(sourceId)) {
@@ -53,12 +50,12 @@ class AudioPlaybackManager {
     /**
      * 解码播放一包音频（懒创建解码器）。
      */
-    fun decodeAndPlay(
+    override fun decodeAndPlay(
         sourceId: String,
         serverRate: Int,
         channels: Int,
         audioData: ByteArray,
-        volume: Int = 100
+        volume: Int
     ) {
         val decoder = getOrCreate(sourceId, serverRate, channels, volume)
         decoder.decodePacket(audioData)
@@ -67,7 +64,7 @@ class AudioPlaybackManager {
     /**
      * 释放指定源。
      */
-    fun release(sourceId: String) {
+    override fun release(sourceId: String) {
         decoders.remove(sourceId)?.let {
             if (!it.isReleased) it.release()
         }
@@ -76,14 +73,14 @@ class AudioPlaybackManager {
     /**
      * 强制清空指定源的播放缓冲（丢弃未播放的音频）。
      */
-    fun flushSource(sourceId: String) {
+    override fun flushSource(sourceId: String) {
         decoders[sourceId]?.flushAudio()
     }
 
     /**
      * 释放所有解码器。
      */
-    fun releaseAll() {
+    override fun releaseAll() {
         decoders.values.forEach {
             if (!it.isReleased) it.release()
         }
@@ -91,15 +88,15 @@ class AudioPlaybackManager {
     }
 
     /** 判断源是否存在。 */
-    fun contains(sourceId: String): Boolean = decoders.containsKey(sourceId)
+    override fun contains(sourceId: String): Boolean = decoders.containsKey(sourceId)
 
     /** 获取指定源的解码器，不存在返回 null */
-    fun get(sourceId: String): NativeOpusDecoder? = decoders[sourceId]
+    override fun get(sourceId: String): NativeOpusDecoder? = decoders[sourceId]
 
     /**
      * 等待指定源的音频队列排空。
      */
-    suspend fun waitForQueueEmpty(sourceId: String, timeoutMs: Long = 2000): Boolean {
+    override suspend fun waitForQueueEmpty(sourceId: String, timeoutMs: Long): Boolean {
         val decoder = decoders[sourceId] ?: return true
         return decoder.waitForQueueEmpty(timeoutMs)
     }
@@ -108,24 +105,24 @@ class AudioPlaybackManager {
      * 等待指定源 AudioTrack 硬件缓冲自然排空（不 flush，等播完）。
      * 对应 ESP32 WaitForPlaybackQueueEmpty() 语义。
      */
-    suspend fun waitForHardwareDrain(sourceId: String, timeoutMs: Long = 5000): Boolean {
+    override suspend fun waitForHardwareDrain(sourceId: String, timeoutMs: Long): Boolean {
         val decoder = decoders[sourceId] ?: return true
         return decoder.waitForHardwareDrain(timeoutMs)
     }
 
     /** 释放除 protectKey 外所有解码器 */
-    fun releaseAllExcept(protectKey: String) {
+    override fun releaseAllExcept(protectKey: String) {
         val toRelease = decoders.keys.filter { it != protectKey }
         toRelease.forEach { release(it) }
     }
 
     /** 当前解码器数量 */
-    val size: Int get() = decoders.size
+    override val size: Int get() = decoders.size
 
     /**
      * 更新所有活跃解码器的音量
      */
-    fun setVolume(level: Int) {
+    override fun setVolume(level: Int) {
         val clamped = level.coerceIn(0, 100)
         decoders.entries.toList().forEach { (_, decoder) ->
             if (!decoder.isReleased) decoder.setVolume(clamped)
