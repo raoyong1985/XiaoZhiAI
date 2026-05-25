@@ -725,34 +725,6 @@ class GroupChatViewModel : ViewModel() {
         relayEngine.triggerNextSpeaker(previousReply)
     }
 
-    // ── 智能 speaker 选择 ──
-
-    /**
-     * 计算下一候选 speaker
-     *
-     * 评分机制（分数越高越优先）：
-     * +100  @提及（如"@小明"）
-     * +30   名字匹配（回复中包含 bot 名称）
-     * +20   本轮尚未发言
-     * +0~15 随机抖动（避免完全确定性选择）
-     * -20×N  重复轮转惩罚（同一 from→to ≥2 次）
-     *
-     * 特殊情况：无强信号（@提及或名字匹配）且分数扁平时 →
-     * fallback 到 round_robin（按列表顺序轮转）
-     *
-     * 返回：List<Pair<原始索引, botId>> + 更新后的 RelayState
-     *
-     * @param prevIndex 上一位发言 bot 的索引
-     * @param previousReply 上一位 bot 的回复文本
-     * @param botIds 当前 bot 列表
-     * @param rs 当前 RelayState
-     */
-    private fun resolveSpeakerCandidates(
-        prevIndex: Int, previousReply: String, botIds: List<String>, rs: RelayState
-    ): Pair<List<Pair<Int, String>>, RelayState> {
-        return speakerScorer.resolveCandidates(prevIndex, previousReply, botIds, rs)
-    }
-
     // ── 连接保活 ──
     // 由 BotConnectionPool 管理
 
@@ -766,94 +738,6 @@ class GroupChatViewModel : ViewModel() {
      */
     private suspend fun drainPreviousBotAudio(botId: String?, sourceId: String?) {
         relayEngine.drainPreviousBotAudio(botId, sourceId)
-    }
-
-    // ── 音频转发 ──
-
-    /**
-     * 将上一位 bot 的缓存音频转发给下一个 bot
-     *
-     * 音频转发的意义：让下一个 bot "听到"当前 bot 说了什么，
-     * 从而实现多 bot 之间的上下文感知对话。
-     *
-     * 流程：
-     * 1. 检查条件（不是录音中、WebSocket 已连接、有缓存音频）
-     * 2. 发送 listenStart 通知 bot 准备接收音频
-     * 3. 攒批发送：每 5 包一组，加适当延迟避免 WebSocket 拥塞
-     * 4. 发送 listenStop 通知 bot 音频结束
-     *
-     * 跳过条件：
-     * - 用户正在录音
-     * - WebSocket 未连接
-     * - 无缓存音频
-     * - 音频包 > 200 包（超长语音直接文字兜底，在 caller 判断）
-     *
-     * @param prevBotId 上一位 bot 的 ID（用于取出缓存音频）
-     * @param service 目标 bot 的 WebSocket 服务实例
-     * @return true=音频转发成功（服务端开始处理）
-     */
-    private suspend fun forwardAudioToBot(prevBotId: String?, service: XiaoZhiBackendService): Boolean {
-        return audioForwardHandler.forwardAudioToBot(prevBotId, service)
-    }
-
-    // ── 文字兜底 ──
-
-    /**
-     * 构建转发用的文本摘要
-     *
-     * 当音频转发失败时，将上一 bot 的回复文本提取前几个字
-     * 作为提示发送给下一 bot。文本简短精炼，让下一 bot
-     * 能大概知道对话上下文即可。
-     */
-    /**
-     * 构建转发文本，带上说话人标识
-     *
-     * 格式：{"speaker":"说话人名称","content":"完整回复内容"}
-     * 服务器端会解析 JSON 格式，提取说话人信息后传递给 LLM。
-     * LLM prompt 中的 @[说话人:XXX] 标记让 bot 知道当前谁在说话。
-     *
-     * 注意：必须使用 previousReply（上一轮的完整回复内容），
-     * 不得使用 truncated 的 originalUserQuery（那里存的是截断版历史，会丢失上下文）
-     */
-    private fun buildForwardMessage(previousReply: String, prevBotId: String? = null): String {
-        return audioForwardHandler.buildForwardMessage(previousReply, prevBotId)
-    }
-
-    // ── 死循环检测 ──
-
-    /**
-     * 检测接龙是否陷入死循环
-     *
-     * 检测规则：
-     * 1. 同一 hint 连续出现 ≥8 次（原为 5 次，提升阈值减少误杀）
-     * 2. 同一 speakerId 连续出现 ≥8 次（2-bot 场景下交替必然出现相同 speaker）
-     *
-     * 两种条件 OR 触发，连续出现 ≥8 次 → 终止接龙
-     * 放宽阈值的理由：
-     * - 2-bot 场景下 bot1→bot2→bot1 交替，speaker 最多 2 个 distinct
-     * - 短回复如"好的""明白"截断后 hint 容易相同
-     *
-     * @param hint 文本提示
-     * @param speakerId 候选的 speaker ID
-     * @return true=检测到死循环，应终止本轮转发
-     */
-    private fun checkDeadloop(hint: String, speakerId: String? = null): Boolean {
-        val isDead = deadloopDetector.check(hint, speakerId)
-        if (isDead) _relayState.update { it.clearWaiting() }
-        return isDead
-    }
-
-    // ── 消息截断 ──
-
-    /**
-     * 智能截断文本
-     *
-     * 用于构建文字兜底时的提示文本。
-     * 优先在句号/叹号/问号处截断，其次在逗号/空格处，
-     * 最后硬截断到 maxLen 字符。
-     */
-    private fun truncateReply(text: String, maxLen: Int = 24): String {
-        return audioForwardHandler.truncateReply(text, maxLen)
     }
 
     // ── 去重 ──
