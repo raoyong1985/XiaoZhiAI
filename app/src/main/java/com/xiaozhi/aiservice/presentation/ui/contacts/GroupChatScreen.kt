@@ -38,21 +38,46 @@ import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
+// ── 气泡颜色盘 ──
+// 每个 bot 在群聊中有独立的背景色，帮助用户区分不同的智能体
 val botBubbleColors = listOf(
-    Color(0xFFE8F5E9),
-    Color(0xFFE3F2FD),
-    Color(0xFFFFF3E0),
-    Color(0xFFF3E5F5),
-    Color(0xFFE0F7FA),
-    Color(0xFFFFEBEE),
+    Color(0xFFE8F5E9),  // 浅绿
+    Color(0xFFE3F2FD),  // 浅蓝
+    Color(0xFFFFF3E0),  // 浅橙
+    Color(0xFFF3E5F5),  // 浅紫
+    Color(0xFFE0F7FA),  // 浅青
+    Color(0xFFFFEBEE),  // 浅红
 )
 
+/**
+ * 群聊聊天界面（对话屏幕）
+ *
+ * 功能：
+ * - 消息列表（LazyColumn 自动滚动到最新消息）
+ * - 底部输入区（语音按钮 / 文字输入框，根据 group.inputMode 切换）
+ * - 进入时自动连接群聊（connectGroup），离开时断开（disconnectGroup）
+ *
+ * 界面布局：
+ * ┌─────────────────────────┐
+ * │  TopAppBar：群聊名称+成员数  │
+ * ├─────────────────────────┤
+ * │  消息列表                  │
+ * │  ┌───┐  ┌──────┐       │
+ * │  │bot│→│回复内容│       │
+ * │  └───┘  └──────┘       │
+ * │           ┌──────┐     │
+ * │           │我的消息│←── │
+ * │           └──────┘     │
+ * ├─────────────────────────┤
+ * │  输入区（语音/文字切换）   │
+ * └─────────────────────────┘
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun GroupChatScreen(
     groupId: String,
     viewModel: GroupChatViewModel = viewModel(
-        key = groupId,
+        key = groupId,  // key 确保每个群聊有独立的 ViewModel 实例
         factory = GroupChatViewModel.Factory()
     ),
     onNavigateBack: () -> Unit
@@ -67,6 +92,7 @@ fun GroupChatScreen(
     var inputText by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // ── lifecycle：进入时连接，离开时断开 ──
     LaunchedEffect(groupId) {
         viewModel.connectGroup(groupId)
     }
@@ -78,6 +104,11 @@ fun GroupChatScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val ctx = LocalContext.current
+
+    // ── 自动滚动到最新消息 ──
+    // initialLoad=true 时直接跳到底部（无动画）
+    // 后续如果用户已经在底部则 animateScroll（平滑滚动）
+    // 如果用户手动滚上去了则保持不动（不打扰阅读）
     var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -139,17 +170,20 @@ fun GroupChatScreen(
             )
         }
     ) { padding ->
+        // ── 消息列表示 ──
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(vertical = 8.dp),
             state = listState
         ) {
             items(messages, key = { it.id }) { message ->
+                // 根据 botId 在群聊成员列表中的位置分配颜色
                 val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
                 GroupMessageItem(
                     message = message,
                     botColorIndex = botIndex,
                     onCopy = { text ->
+                        // 静默复制到剪贴板（无 Toast/Snackbar）
                         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("chat", text))
                     }
@@ -159,6 +193,16 @@ fun GroupChatScreen(
     }
 }
 
+/**
+ * 单条群聊消息气泡
+ *
+ * 根据 direction 决定气泡位置：
+ * - SENT（我发送的）：靠右，主色背景
+ * - RECEIVED（bot 回复）：靠左，根据 botColorIndex 分配不同颜色
+ *
+ * bot 名称显示在 bot 回复的气泡上方（便于区分不同智能体）
+ * 长按复制文本内容
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
@@ -195,6 +239,7 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((S
                 .padding(12.dp)
         ) {
             Column {
+                // bot 回复显示名称（用户消息不显示）
                 if (!isFromMe) {
                     Text(
                         text = message.botName,
@@ -214,6 +259,17 @@ fun GroupMessageItem(message: GroupMessage, botColorIndex: Int = -1, onCopy: ((S
     }
 }
 
+/**
+ * 群聊底部输入区
+ *
+ * 两种模式（通过 AnimatedContent 平滑切换）：
+ * 0 - 语音模式：显示一个大的录音按钮（带脉动动画）
+ * 1 - 文字模式：显示 TextField + 发送按钮
+ *
+ * 按钮动画：
+ * - 录音中：红色背景 + 1.0↔1.15 缩放脉动
+ * - 空闲时：主色背景，正常大小
+ */
 @Composable
 private fun GroupChatInputArea(
     inputMode: Int,
@@ -224,6 +280,7 @@ private fun GroupChatInputArea(
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit
 ) {
+    // 录音按钮脉动动画：isRecording=true 时在 1.0 和 1.15 之间循环缩放
     val infiniteTransition = rememberInfiniteTransition(label = "recording")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -246,6 +303,7 @@ private fun GroupChatInputArea(
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
+            // AnimatedContent：语音/文字之间平滑切换
             AnimatedContent(
                 targetState = inputMode,
                 transitionSpec = {
@@ -264,6 +322,7 @@ private fun GroupChatInputArea(
             ) { mode ->
                 when (mode) {
                     0 -> {
+                        // ── 语音模式：大录音按钮 ──
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally
@@ -288,6 +347,7 @@ private fun GroupChatInputArea(
                         }
                     }
                     1 -> {
+                        // ── 文字模式：输入框 + 发送按钮 ──
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically

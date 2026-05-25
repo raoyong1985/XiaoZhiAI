@@ -24,6 +24,21 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
+/**
+ * 群聊列表界面
+ *
+ * 功能：
+ * - 显示所有群聊（列表 / 空状态）
+ * - 点击进入聊天
+ * - 更多菜单：编辑名称、切换输入模式、添加/删除成员、
+ *   清空记录、导出记录、解散群聊
+ * - FAB 按钮创建新群聊
+ *
+ * 交互：
+ * - 「编辑名称」弹出输入对话框
+ * - 「添加/删除成员」弹出联系人选择列表
+ * - 「清空记录」「解散群聊」弹出确认对话框
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupChatListScreen(
@@ -37,6 +52,7 @@ fun GroupChatListScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    // ── 各对话框的状态（null = 未展示） ──
     var editingGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
     var deletingGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
     var addingMemberGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
@@ -58,6 +74,7 @@ fun GroupChatListScreen(
                 windowInsets = WindowInsets.statusBars
             )
         },
+        // FAB 创建群聊
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onCreateGroupClick,
@@ -68,6 +85,7 @@ fun GroupChatListScreen(
         }
     ) { padding ->
         if (groups.isEmpty()) {
+            // ── 空状态 ──
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -101,6 +119,7 @@ fun GroupChatListScreen(
                 )
             }
         } else {
+            // ── 群聊列表 ──
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(vertical = 8.dp)
@@ -120,6 +139,7 @@ fun GroupChatListScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                // 输入模式图标
                                 Icon(
                                     imageVector = if (group.inputMode == 0) Icons.Default.Mic else Icons.Default.Keyboard,
                                     contentDescription = null,
@@ -150,6 +170,7 @@ fun GroupChatListScreen(
                             }
                         },
                         trailingContent = {
+                            // ── 三点菜单 ──
                             Box(modifier = Modifier.padding(start = 8.dp)) {
                                 var showMenu by remember { mutableStateOf(false) }
                                 IconButton(onClick = { showMenu = true }) {
@@ -221,7 +242,11 @@ fun GroupChatListScreen(
         }
     }
 
-    // 编辑群聊名称对话框
+    // ═══════════════════════════════════════════
+    // 对话框
+    // ═══════════════════════════════════════════
+
+    // ── 编辑群聊名称 ──
     editingGroup?.let { group ->
         var newName by remember(group.id) { mutableStateOf(group.name) }
         AlertDialog(
@@ -256,7 +281,7 @@ fun GroupChatListScreen(
         )
     }
 
-    // 删除群聊确认对话框
+    // ── 删除群聊确认 ──
     deletingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { deletingGroup = null },
@@ -280,7 +305,8 @@ fun GroupChatListScreen(
         )
     }
 
-    // 添加成员对话框
+    // ── 添加成员 ──
+    // 列出所有不在群内的联系人，点击即加入
     addingMemberGroup?.let { group ->
         val available = contacts.filter { c -> !group.botIds.contains(c.id) }
         AlertDialog(
@@ -319,7 +345,8 @@ fun GroupChatListScreen(
         )
     }
 
-    // 删除成员对话框
+    // ── 删除成员 ──
+    // 列出群内所有 bot，点击即移出
     removingMemberGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { removingMemberGroup = null },
@@ -358,7 +385,7 @@ fun GroupChatListScreen(
         )
     }
 
-    // 清空聊天记录确认对话框
+    // ── 清空聊天记录确认 ──
     clearingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { clearingGroup = null },

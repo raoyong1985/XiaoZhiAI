@@ -98,6 +98,7 @@ class OpusEncoder(
                     }
                     } catch (e: Exception) {
                         if (isEncoding) Logger.e(TAG, "编码错误: ${e.message}")
+                        break  // 编码器内部出错，退出循环避免死循环
                     }
             }
         }, "opus-encoder").apply { start() }

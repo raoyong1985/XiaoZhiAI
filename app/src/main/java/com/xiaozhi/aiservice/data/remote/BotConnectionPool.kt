@@ -10,23 +10,51 @@ import java.util.concurrent.ConcurrentHashMap
 private const val TAG = "BotConnectionPool"
 
 /**
- * Bot WebSocket 连接池：管理群聊中多个 bot 的长连接。
+ * Bot WebSocket 连接池
  *
- * 职责：
- * - 创建/缓存 XiaoZhiBackendService 实例
- * - 连接/断开/重连
- * - 死 bot 标记与清理
- * - 批量操作（断开全部、发送 abort）
+ * 管理群聊场景下多个智能体（bot）的 WebSocket 长连接。
  *
- * 不负责：接龙逻辑、音频播放、UI 状态 —— 这些由 GroupChatViewModel/RelayEngine 管理。
+ * ┌─────────────────────────────────────────────────┐
+ * │  核心职责                                        │
+ * │  • 创建/缓存 XiaoZhiBackendService 实例（每个     │
+ * │    bot 一个独立 WebSocket 连接）                 │
+ * │  • 连接/断开/自动重连                           │
+ * │  • 死 bot 标记与清理（连接失败后不再尝试）       │
+ * │  • 批量操作（全部断连、全部发送 abort）          │
+ * └─────────────────────────────────────────────────┘
+ *
+ * 不负责：
+ * - 接龙逻辑（speaker 选择、轮转）→ GroupChatViewModel
+ * - 音频播放 → AudioPlaybackManager
+ * - UI 状态管理 → GroupChatViewModel
+ *
+ * 线程安全：所有内部状态使用 ConcurrentHashMap，
+ * 无需额外同步，适合多协程并发访问。
  */
 class BotConnectionPool(private val gson: Gson) {
 
+    /** botId → XiaoZhiBackendService（WebSocket 连接实例） */
     private val connections = ConcurrentHashMap<String, XiaoZhiBackendService>()
-    private val deadBotIds = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * 获取或创建并连接指定 bot。
+     * 已标记为「死亡」的 bot 集合
+     * 死亡原因：WebSocket 连接无法恢复（Error 状态）
+     * 死亡后的行为：所有涉及该 bot 的接龙操作跳过
+     * 恢复方式：clearDead() 手动清理（每 2 分钟自动清理一次）
+     */
+    private val deadBotIds = ConcurrentHashMap.newKeySet<String>()
+
+    // ── 连接管理 ──
+
+    /**
+     * 获取或创建并连接指定 bot
+     *
+     * 如果 bot 已有连接实例，直接返回；
+     * 否则创建新的 XiaoZhiBackendService 并调用 connect()。
+     *
+     * @param botId 智能体唯一标识
+     * @param contact 包含 serverUrl/otaUrl/deviceId/clientId 的连接配置
+     * @return XiaoZhiBackendService 实例（可能尚未完全 connected）
      */
     fun getOrConnect(botId: String, contact: BotContact): XiaoZhiBackendService {
         return connections.getOrPut(botId) {
@@ -37,20 +65,25 @@ class BotConnectionPool(private val gson: Gson) {
         }
     }
 
-    /**
-     * 获取已有连接，不存在返回 null。
-     */
+    /** 获取已有连接（不存在返回 null，不触发新建） */
     fun get(botId: String): XiaoZhiBackendService? = connections[botId]
 
-    /** 所有连接（只读快照） */
+    /** 所有连接实例的快照（只读） */
     val all: Map<String, XiaoZhiBackendService> get() = connections.toMap()
 
-    /** 连接数 */
+    /** 当前连接数 */
     val size: Int get() = connections.size
 
     /**
-     * 确保 bot 已连接，未连接/断线时尝试重连。
-     * @return 是否处于已连接状态
+     * 确保 bot 已连接，未连接/断线时尝试自动重连
+     *
+     * 重连策略：
+     * 1. 死 bot 直接返回 false
+     * 2. 已有连接且状态 Connected → 直接 true
+     * 3. 已有连接但状态 Error → 标记死，返回 false
+     * 4. 无连接或断线 → 断开旧连接，创建新连接，等待 5s 内连上
+     *
+     * @return 重连后是否处于 Connected 状态
      */
     suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
         if (deadBotIds.contains(botId)) return false
@@ -59,9 +92,9 @@ class BotConnectionPool(private val gson: Gson) {
             return true
         }
         if (service != null && service.connectionState.value is XiaoZhiBackendService.ConnectionState.Error) {
-            Logger.w(TAG, "bot[$botId] 连接失败(Error)，标记死亡")
-            deadBotIds.add(botId)
-            return false
+            Logger.w(TAG, "bot[$botId] 连接失败(Error)，尝试重连覆盖旧连接")
+            // 不直接返回！Error 的 service 可能只是服务器断线后的残留，
+            // 直接走到下面的重连逻辑创建新连接替代它
         }
         Logger.w(TAG, "重新连接: $botId")
         // 覆盖前断开旧连接，防止泄漏
@@ -75,31 +108,41 @@ class BotConnectionPool(private val gson: Gson) {
         } ?: false
     }
 
-    /** 标记 bot 为死亡（不再参与接龙） */
+    // ── 死亡标记管理 ──
+
+    /** 标记 bot 死亡（不再参与接龙） */
     fun markDead(botId: String) {
         deadBotIds.add(botId)
     }
 
-    /** 清除所有死亡标记 */
+    /** 清除所有死亡标记（看门狗每 2 分钟调用一次） */
     fun clearDead() {
         deadBotIds.clear()
     }
 
+    /** 查询 bot 是否已被标记为死亡 */
     fun isDead(botId: String): Boolean = deadBotIds.contains(botId)
 
-    /** 向所有 bot 发送 abort */
+    // ── 批量操作 ──
+
+    /**
+     * 向所有已连接的 bot 发送 abort 信号
+     *
+     * 触发场景：用户开始录音（中断所有 bot 的回复）、用户主动停止
+     * 每个 bot 独立 try-catch，某个 bot 失败不影响其他 bot
+     */
     fun abortAll(reason: String) {
         connections.values.forEach { svc ->
             try { svc.sendAbort(reason) } catch (_: Exception) {}
         }
     }
 
-    /** 断开指定 bot */
+    /** 断开指定 bot 的连接并清理缓存 */
     fun disconnect(botId: String) {
         connections.remove(botId)?.disconnect()
     }
 
-    /** 断开所有 bot */
+    /** 断开所有 bot 连接，清理全部状态 */
     fun disconnectAll() {
         connections.values.forEach { it.disconnect() }
         connections.clear()

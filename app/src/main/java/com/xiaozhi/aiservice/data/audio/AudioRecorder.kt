@@ -22,6 +22,7 @@ class AudioRecorder(
     private val audioService: AudioService
 ) {
     private var opusEncoder: OpusEncoder? = null
+    private var nativeOpusEncoder: NativeOpusEncoder? = null
     private var timeoutJob: Job? = null
     private var scope: CoroutineScope? = null
 
@@ -35,6 +36,7 @@ class AudioRecorder(
     /**
      * 启动录音。
      *
+     * @param owner        调用方标识（"main"=私聊, groupId=群聊）
      * @param scope        协程作用域（viewModelScope）
      * @param enableVAD    是否启用静音自动停止
      * @param maxRecordMs  录音超时（默认 8s）
@@ -43,6 +45,7 @@ class AudioRecorder(
      * @return 是否成功启动
      */
     fun start(
+        owner: String,
         scope: CoroutineScope,
         enableVAD: Boolean = true,
         maxRecordMs: Long = 8_000L,
@@ -54,26 +57,38 @@ class AudioRecorder(
         generation++
         val currentGen = generation
 
-        // 停止上一次残留
+        // 停止上一次残留（传 owner 保护其他调用方的录音不被误停）
         timeoutJob?.cancel()
         timeoutJob = null
-        audioService.stopRecording()
+        audioService.stopRecording(owner)
         opusEncoder?.stop()
         opusEncoder = null
+        nativeOpusEncoder?.stop()
+        nativeOpusEncoder = null
 
         val sampleRate = audioService.getSampleRate()
-        val encoder = OpusEncoder(sampleRate = sampleRate)
-        if (!encoder.init { packet -> onOpusPacket(packet) }) {
-            Logger.e(TAG, "Opus 编码器初始化失败")
-            return false
-        }
-        opusEncoder = encoder
 
-        // 绑定静音检测回调
+        // 优先使用 native Opus 编码器（libopus JNI），适用于 TCL/MTK
+        // 等缺少 MediaCodec OMX Opus 组件的设备。失败时降级到 MediaCodec。
+        val nativeEncoder = NativeOpusEncoder(sampleRate = sampleRate)
+        if (nativeEncoder.init { packet -> onOpusPacket(packet) }) {
+            nativeOpusEncoder = nativeEncoder
+            Logger.i(TAG, "使用 native Opus 编码器")
+        } else {
+            val encoder = OpusEncoder(sampleRate = sampleRate)
+            if (!encoder.init { packet -> onOpusPacket(packet) }) {
+                Logger.e(TAG, "Opus 编码器初始化失败（native + MediaCodec 均失败）")
+                return false
+            }
+            opusEncoder = encoder
+            Logger.i(TAG, "使用 MediaCodec Opus 编码器")
+        }
+
+        // 绑定静音检测回调（按 owner 隔离）
         if (onSilenceDetected != null) {
-            audioService.setOnSilenceDetected {
+            audioService.setOnSilenceDetected(owner) {
                 if (generation == currentGen) {
-                    stop()
+                    stop(owner)
                     onSilenceDetected()
                 }
             }
@@ -81,9 +96,14 @@ class AudioRecorder(
 
         isRecording = true
 
-        if (!audioService.startRecording({ pcmData -> encoder.encode(pcmData) }, enableVAD)) {
+        if (!audioService.startRecording(owner, { pcmData ->
+            if (nativeOpusEncoder != null) nativeOpusEncoder?.encode(pcmData)
+            else opusEncoder?.encode(pcmData)
+        }, enableVAD)) {
             Logger.e(TAG, "AudioService 录音启动失败")
             isRecording = false
+            nativeOpusEncoder?.stop()
+            nativeOpusEncoder = null
             opusEncoder?.stop()
             opusEncoder = null
             return false
@@ -94,7 +114,7 @@ class AudioRecorder(
             delay(maxRecordMs)
             if (isRecording && generation == currentGen) {
                 Logger.w(TAG, "录音超时 ${maxRecordMs}ms，自动停止")
-                stop()
+                stop(owner)
                 onSilenceDetected?.invoke()
             }
         }
@@ -104,12 +124,18 @@ class AudioRecorder(
     }
 
     /** 停止录音和编码器，不清除 state flag（由调用方决定） */
-    fun stop() {
+    fun stop(owner: String? = null) {
         if (!isRecording) return
         isRecording = false
         timeoutJob?.cancel()
         timeoutJob = null
-        audioService.stopRecording()
+        // 先停录音（传 owner 保护其他调用方的录音不被误停）
+        audioService.stopRecording(owner)
+        // 录音线程中的 onAudioData 回调可能还在处理最后一块 PCM，
+        // 延迟释放编码器让回调有机会完成
+        try { Thread.sleep(50) } catch (_: InterruptedException) {}
+        nativeOpusEncoder?.stop()
+        nativeOpusEncoder = null
         opusEncoder?.stop()
         opusEncoder = null
         Logger.i(TAG, "录音已停止")

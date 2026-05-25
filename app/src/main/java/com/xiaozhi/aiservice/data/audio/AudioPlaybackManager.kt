@@ -17,6 +17,10 @@ private const val TAG = "AudioPlaybackManager"
  */
 class AudioPlaybackManager {
 
+    companion object {
+        private const val MAX_DECODERS = 8
+    }
+
     private val decoders = ConcurrentHashMap<String, NativeOpusDecoder>()
 
     /**
@@ -28,6 +32,16 @@ class AudioPlaybackManager {
         channels: Int,
         volume: Int = 100
     ): NativeOpusDecoder {
+        // 超限时淘汰最旧解码器（按插入顺序排）
+        if (decoders.size >= MAX_DECODERS && !decoders.containsKey(sourceId)) {
+            val toEvict = decoders.keys.firstOrNull()
+            if (toEvict != null) {
+                decoders.remove(toEvict)?.let {
+                    if (!it.isReleased) it.release()
+                }
+                Logger.w(TAG, "解码器超限($MAX_DECODERS)，淘汰: $toEvict")
+            }
+        }
         return decoders.getOrPut(sourceId) {
             NativeOpusDecoder(serverRate, 16000, channels, volume).also {
                 it.init()
@@ -113,7 +127,7 @@ class AudioPlaybackManager {
      */
     fun setVolume(level: Int) {
         val clamped = level.coerceIn(0, 100)
-        decoders.values.forEach { decoder ->
+        decoders.entries.toList().forEach { (_, decoder) ->
             if (!decoder.isReleased) decoder.setVolume(clamped)
         }
         Logger.i(TAG, "音量已同步到所有解码器: $clamped%")

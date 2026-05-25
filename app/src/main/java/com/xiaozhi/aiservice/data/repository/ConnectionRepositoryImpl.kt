@@ -133,7 +133,7 @@ class ConnectionRepositoryImpl(
                     if (newAiState == AiState.SPEAKING && oldAiState == AiState.LISTENING && isAutoMode) {
                         Logger.i(TAG, "AUTO 模式：TTS 开始（从 LISTENING → SPEAKING），停止 encoder 防止回声")
                         _deviceState.value = DeviceState.SPEAKING
-                        audioRecorder.stop()
+                        audioRecorder.stop("main")
                         weStartedRecording = false
                         // 不 flush 解码器——AUTO 模式进入 SPEAKING 时前一轮音频已播完，
                         // 解码队列已空，flush AudioTrack 会清空硬件缓冲导致首包延迟输出
@@ -146,7 +146,7 @@ class ConnectionRepositoryImpl(
                     // 注意：不发送 abort/listenStop，服务器已知自己在说话，abort 会打断 AI 回复
                     if (newAiState == AiState.SPEAKING && weStartedRecording && !(oldAiState == AiState.LISTENING && isAutoMode)) {
                         Logger.i(TAG, "AI 开始说话，自动停止录音以避免回声（保留 AI 回复）")
-                        audioRecorder.stop()
+                        audioRecorder.stop("main")
                         audioService.abandonAudioFocus()
                         weStartedRecording = false
                     }
@@ -297,7 +297,7 @@ class ConnectionRepositoryImpl(
             _connectionState.value is ConnectionState.Connecting) {
             Logger.i(TAG, "切换联系人，断开旧连接: currentContactId=$currentContactId")
             backendService.disconnect()
-            audioRecorder.stop()
+            audioRecorder.stop("main")
             playbackManager.releaseAll()
             _connectionState.value = ConnectionState.Disconnected
             _aiState.value = AiState.IDLE
@@ -333,7 +333,7 @@ class ConnectionRepositoryImpl(
     
     override suspend fun disconnect() {
         backendService.disconnect()
-        audioRecorder.stop()
+        audioRecorder.stop("main")
         playbackManager.releaseAll()
         _connectionState.value = ConnectionState.Disconnected
         _aiState.value = AiState.IDLE
@@ -448,6 +448,7 @@ class ConnectionRepositoryImpl(
             val enableVAD = listeningMode != VoiceMode.REALTIME
 
             if (!audioRecorder.start(
+                    owner = "main",
                     scope = scope,
                     enableVAD = enableVAD,
                     onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
@@ -470,7 +471,7 @@ class ConnectionRepositoryImpl(
 
             // AUTO 模式 VAD 自然结束：只停录音和 encoder，保持状态等 TTS
             val isAutoStop = !userExplicitStop && isAutoMode
-            audioRecorder.stop()
+            audioRecorder.stop("main")
             weStartedRecording = false
 
             if (!isAutoStop) {
@@ -516,6 +517,7 @@ class ConnectionRepositoryImpl(
             audioService.setAecEnabled(true)
         }
         if (!audioRecorder.start(
+                owner = "main",
                 scope = scope,
                 enableVAD = enableVAD,
                 onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },

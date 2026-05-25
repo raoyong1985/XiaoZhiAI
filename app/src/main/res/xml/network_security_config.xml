@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 视觉AI API 使用 HTTP，允许明文通信 -->
+    <!-- 允许所有明文通信 -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- 特定域名配置（保留） -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">api.xiaozhi.me</domain>
         <domain includeSubdomains="true">tenclass.net</domain>

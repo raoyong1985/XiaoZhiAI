@@ -106,3 +106,102 @@ Java_com_xiaozhi_aiservice_data_audio_NativeOpusDecoder_nativeDestroyDecoder(
 }
 
 } // extern "C"
+
+// ── Opus Encoder (native fallback for devices without MediaCodec Opus) ──
+
+extern "C" {
+
+JNIEXPORT jlong JNICALL
+Java_com_xiaozhi_aiservice_data_audio_NativeOpusEncoder_nativeCreateEncoder(
+    JNIEnv *env, jobject thiz, jint sampleRate, jint channels, jint bitRate) {
+
+    int error;
+    OpusEncoder *encoder = opus_encoder_create(sampleRate, channels, OPUS_APPLICATION_VOIP, &error);
+
+    if (error != OPUS_OK) {
+        LOGE("opus_encoder_create failed: %d", error);
+        return 0;
+    }
+
+    // Set bitrate
+    error = opus_encoder_ctl(encoder, OPUS_SET_BITRATE(bitRate));
+    if (error != OPUS_OK) {
+        LOGW("opus_encoder_ctl OPUS_SET_BITRATE failed: %d", error);
+    }
+
+    // Set complexity (lower for mobile)
+    opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(5));
+    // Enable VBR
+    opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
+    // Set packet loss resilience
+    opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
+    // Use 20ms frame size (default)
+    opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(0));
+
+    LOGI("Opus encoder created: %dHz, %dch, %dbps", sampleRate, channels, bitRate);
+    return reinterpret_cast<jlong>(encoder);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_xiaozhi_aiservice_data_audio_NativeOpusEncoder_nativeEncode(
+    JNIEnv *env, jobject thiz, jlong encoderPtr,
+    jshortArray input, jint inputSamples,
+    jbyteArray output, jint maxOutputSize) {
+
+    if (encoderPtr == 0) {
+        LOGE("encode: encoderPtr is 0");
+        return 0;
+    }
+
+    OpusEncoder *encoder = reinterpret_cast<OpusEncoder *>(encoderPtr);
+
+    jshort *inputShorts = env->GetShortArrayElements(input, nullptr);
+    jbyte *outputBytes = env->GetByteArrayElements(output, nullptr);
+
+    if (inputShorts == nullptr || outputBytes == nullptr) {
+        if (inputShorts) env->ReleaseShortArrayElements(input, inputShorts, 0);
+        if (outputBytes) env->ReleaseByteArrayElements(output, outputBytes, 0);
+        LOGE("encode: Failed to get array elements");
+        return 0;
+    }
+
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
+    int encodedBytes = opus_encode(
+        encoder,
+        inputShorts,
+        inputSamples,
+        reinterpret_cast<unsigned char *>(outputBytes),
+        maxOutputSize
+    );
+    gettimeofday(&t1, NULL);
+    long encodeUs = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_usec - t0.tv_usec);
+
+    env->ReleaseShortArrayElements(input, inputShorts, 0);
+    env->ReleaseByteArrayElements(output, outputBytes, 0);
+
+    if (encodedBytes < 0) {
+        LOGE("opus_encode failed: %d", encodedBytes);
+        return 0;
+    }
+
+    if (encodeUs > 10000) {
+        LOGW("opus_encode 慢: %lldus, %d samples → %d bytes",
+             (long long)encodeUs, inputSamples, encodedBytes);
+    }
+
+    return encodedBytes;
+}
+
+JNIEXPORT void JNICALL
+Java_com_xiaozhi_aiservice_data_audio_NativeOpusEncoder_nativeDestroyEncoder(
+    JNIEnv *env, jobject thiz, jlong encoderPtr) {
+
+    if (encoderPtr != 0) {
+        OpusEncoder *encoder = reinterpret_cast<OpusEncoder *>(encoderPtr);
+        opus_encoder_destroy(encoder);
+        LOGI("Opus encoder destroyed");
+    }
+}
+
+} // extern "C"

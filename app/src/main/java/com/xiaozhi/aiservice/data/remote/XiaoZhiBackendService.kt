@@ -271,12 +271,9 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 Logger.i(TAG, "WebSocket关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
-                if (code == 1005) {
-                    Logger.w(TAG, "服务器要求激活设备，停止重连。请在 xiaozhi.me 完成设备激活。")
-                    isDisconnecting = true
-                    reconnectAttempt = 0
-                    _connectionState.value = ConnectionState.Error
-                } else {
+                // code 1005 = 服务器未发送关闭原因，可能是服务器重启/不稳定
+                // 不要误判为"要求激活设备"——实际激活走 OTA 注册流程的 activation 字段
+                if (code != 1000 && code != 1001) {
                     scheduleReconnect()
                 }
             }
@@ -285,12 +282,7 @@ class XiaoZhiBackendService(private val gson: Gson) {
                 Logger.i(TAG, "WebSocket已关闭: $code $reason")
                 isConnected = false
                 _connectionState.value = ConnectionState.Disconnected
-                if (code == 1005) {
-                    Logger.w(TAG, "服务器要求激活设备，停止重连")
-                    isDisconnecting = true
-                    reconnectAttempt = 0
-                    _connectionState.value = ConnectionState.Error
-                } else if (code != 1000 && code != 1001) {
+                if (code != 1000 && code != 1001) {
                     scheduleReconnect()
                 }
             }
@@ -488,6 +480,14 @@ class XiaoZhiBackendService(private val gson: Gson) {
     /**
      * 发送静音状态到服务器
      */
+    /**
+     * 判断当前连接是否为本地服务器
+     */
+    fun isLocalServer(): Boolean {
+        return serverUrl.contains("192.168.") || serverUrl.contains("localhost")
+            || serverUrl.contains("127.0.0.1") || serverUrl.contains("10.")
+    }
+
     fun sendMute(muted: Boolean) {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)

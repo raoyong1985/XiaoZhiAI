@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XiaoZhiAI 安卓项目 - 完整架构思维导图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0f0f13;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+  }
+  
+  #header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    background: rgba(15,15,19,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    z-index: 100;
+    gap: 16px;
+  }
+  
+  #header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e8e8e8;
+    letter-spacing: 0.3px;
+  }
+  
+  #header .version {
+    font-size: 11px;
+    color: #888;
+    background: rgba(255,255,255,0.06);
+    padding: 2px 10px;
+    border-radius: 10px;
+  }
+  
+  #header .stats {
+    display: flex;
+    gap: 16px;
+    margin-left: auto;
+    font-size: 12px;
+    color: #999;
+  }
+  
+  #header .stats span { display: flex; align-items: center; gap: 4px; }
+  #header .stats .num { color: #7c9; font-weight: 600; }
+  
+  #controls {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 100;
+    background: rgba(15,15,19,0.85);
+    backdrop-filter: blur(12px);
+    padding: 8px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  
+  #controls button {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #ccc;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  #controls button:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+  }
+  
+  #controls .zoom { color: #888; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  
+  #svg-container {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+  
+  svg text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+  
+  .node-group { cursor: pointer; }
+  .node-bg { transition: fill 0.2s; }
+  .node-group:hover .node-bg { filter: brightness(1.3); }
+  
+  .legend {
+    position: fixed;
+    right: 16px;
+    top: 64px;
+    z-index: 50;
+    background: rgba(15,15,19,0.85);
+    backdrop-filter: blur(8px);
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.06);
+    font-size: 11px;
+    color: #aaa;
+  }
+  
+  .legend-item { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>🧠 XiaoZhiAI 安卓项目</h1>
+  <span class="version">v1.2.7</span>
+  <div class="stats">
+    <span>📦 <span class="num">60+</span> 源文件</span>
+    <span>🏗️ <span class="num">4</span> 层 + C++</span>
+    <span>🔌 <span class="num">49+</span> MCP工具</span>
+  </div>
+</div>
+
+<div id="svg-container"></div>
+
+<div id="controls">
+  <button onclick="zoomIn()">🔍 +</button>
+  <span class="zoom" id="zoomLevel">100%</span>
+  <button onclick="zoomOut()">🔍 −</button>
+  <button onclick="resetView()">⟲ 重置</button>
+  <button onclick="expandAll()">📂 全部展开</button>
+  <button onclick="collapseAll()">📁 全部折叠</button>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:#e74c3c"></span> Domain</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#3498db"></span> Data</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#2ecc71"></span> Presentation</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#f39c12"></span> DI/资源</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#9b59b6"></span> MCP/原生</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#e67e22"></span> 🚩架构问题</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script>
+const data = {
+  name: "XiaoZhiAI",
+  children: [
+    { 
+      name: "🎯 domain/ 领域层",
+      color: "#e74c3c",
+      children: [
+        {
+          name: "📦 model/ 模型",
+          children: [
+            { name: "ChatMessage - 单聊消息" },
+            { name: "GroupChat - 群聊元信息" },
+            { name: "GroupMessage - 群聊消息" },
+            { name: "BotContact - 智能体联系人" },
+            { name: "ConnectionConfig - 连接配置" },
+            { name: "Device - 设备实体" },
+            { name: "MessageType(TEXT/VOICE/IMAGE)" },
+            { name: "MessageDirection(SENT/RECEIVED)" },
+            { name: "MessageStatus(SENDING/SENT/FAILED)" },
+            { name: "VoiceMode(AUTO/MANUAL/REALTIME)" },
+            { name: "InputMode(VOICE/TEXT)" },
+            { name: "DeviceStatus(ONLINE/OFFLINE/BUSY)" },
+            { name: "AiState(IDLE/LISTENING/SPEAKING/PROCESSING)" },
+            { name: "AiStateStr - 魔法字符串常量" }
+          ]
+        },
+        {
+          name: "📋 repository/ 接口 ✅",
+          children: [
+            { name: "ConnectionRepository - 连接/音频/控制" },
+            { name: "MessageRepository - 消息CRUD/流式" },
+            { name: "GroupChatRepository - 群聊CRUD" },
+            { name: "ContactsRepository - 联系人" },
+            { name: "DeviceRepository - 设备扫描" }
+          ]
+        },
+        {
+          name: "🚩 (缺少 usecase/) ❌",
+          color: "#e67e22",
+          children: [
+            { name: "ViewModel直接依赖Repository实现" },
+            { name: "违反CA: Present→Domain←Data" },
+            { name: "业务逻辑散落在ViewModel(1000行)" }
+          ]
+        },
+        {
+          name: "🚩 状态定义问题",
+          color: "#e67e22",
+          children: [
+            { name: "ConnectionState/DeviceState 定义在接口文件" },
+            { name: "应独立为 domain/model/state/ 包" },
+            { name: "AiState + AiStateStr 重复(枚举vs字符串)" },
+            { name: "应统一为 sealed class/interface" }
+          ]
+        },
+        {
+          name: "🚩 消息模型未统一",
+          color: "#e67e22",
+          children: [
+            { name: "ChatMessage + GroupMessage 独立存在" },
+            { name: "缺少 Message 父接口" },
+            { name: "多态处理困难" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "⚙️ data/ 数据层",
+      color: "#3498db",
+      children: [
+        {
+          name: "🔊 audio/ 音频管线",
+          children: [
+            { name: "AudioRecorder - 录音→Opus→WS" },
+            { name: "AudioPlaybackManager - Opus解码→AudioTrack" },
+            { name: "AudioService - 前台通知+音频焦点+模式切换" },
+            { name: "AudioEnhancer - 音频处理" },
+            { name: "NativeOpusEncoder - JNI C++ Opus编码" },
+            { name: "NativeOpusDecoder - JNI C++ Opus解码" },
+            { name: "OpusEncoder - Android MediaCodec编码(另一路径)" },
+            { name: "SileroVAD - ONNX Runtime语音活动检测" },
+            { name: "WakeWordDetector - Picovoice Porcupine" }
+          ]
+        },
+        {
+          name: "🌐 remote/ 网络层",
+          children: [
+            {
+              name: "XiaoZhiBackendService",
+              children: [
+                { name: "WebSocket: OTA注册→握手→通信" },
+                { name: "JSON消息(hello/listen/stt/tts/llm/mcp/abort等18种)" },
+                { name: "二进制Opus帧(协议头剥离)" },
+                { name: "SharedFlow: ttsText/chatMessage/aiState/audioData" },
+                { name: "连接管理/重连/ABORT中断" }
+              ]
+            },
+            {
+              name: "BotConnectionPool",
+              children: [
+                { name: "多Bot WebSocket连接池" },
+                { name: "群聊: 每个bot独立连接" },
+                { name: "事件路由→Channel<BotEvent>" }
+              ]
+            },
+            { name: "LocalCommandRouter - 本地MCP命令拦截" },
+            { name: "MCPTool - MCPRegistry" }
+          ]
+        },
+        {
+          name: "🚩 MCP工具放错了层",
+          color: "#e67e22",
+          children: [
+            { name: "MCP工具是业务逻辑→应放domain/usecase" },
+            { name: "当前在 data/remote/mcp/ (实现层)" },
+            { name: "分类Basic/Extra/Intent 模糊" },
+            { name: "应重新按功能域组织" }
+          ]
+        },
+        {
+          name: "🗄️ repository/ 实现 ✅",
+          children: [
+            { name: "ConnectionRepositoryImpl - WS状态机+音频+VAD" },
+            { name: "MessageRepositoryImpl - DataStore+StateFlow+脏刷" },
+            { name: "GroupChatRepositoryImpl - 群聊持久化" },
+            { name: "ContactsRepositoryImpl - DataStore" },
+            { name: "DeviceRepositoryImpl - 运行时状态(轻量)" }
+          ]
+        },
+        {
+          name: "⚙️ settings/ 配置",
+          children: [
+            { name: "Settings - SharedPreferences封装" },
+            { name: "DeviceSettings - 设备参数" },
+            { name: "AudioSettings - 音频参数" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "🖥️ presentation/ 表现层",
+      color: "#2ecc71",
+      children: [
+        {
+          name: "viewmodel/",
+          children: [
+            { 
+              name: "🚩 GroupChatViewModel(~1000行) ❌",
+              color: "#e67e22",
+              children: [
+                { name: "🚩 直接依赖data/audio/ + data/remote/ 具体类" },
+                { name: "应只依赖domain抽象接口" },
+                { name: "包含6种业务逻辑→应提usecase" },
+                { name: "RelayEngine(接龙引擎) → domain/usecase" },
+                { name: "SpeakerScoringService → domain/usecase" },
+                { name: "AudioForwardingHandler → domain/usecase" },
+                { name: "DeadloopDetector → domain/usecase" },
+                { name: "StuckRelayWatcher(看门狗) → domain/usecase" },
+                { name: "Bot事件合并→observeBotEvents" },
+                { name: "去重→isDuplicateReply" }
+              ]
+            },
+            { 
+              name: "ChatViewModel(176行) ✅",
+              children: [
+                { name: "连接/断连管理" },
+                { name: "消息发送/接收" },
+                { name: "录音/文字控制" }
+              ]
+            },
+            { 
+              name: "ContactsViewModel(72行)",
+              children: [
+                { name: "联系人CRUD" },
+                { name: "⚠️ exportMessages()直接访问AppContainer" }
+              ]
+            },
+            { name: "BotEvent - TtsText/Message/AiState(sealed)" },
+            { name: "RelayState - 接龙不可变状态机" }
+          ]
+        },
+        {
+          name: "ui/ Compose界面",
+          children: [
+            { name: "MainActivity - 主入口" },
+            { name: "ChatScreen - 单聊界面" },
+            { name: "ContactsScreen - 联系人列表" },
+            { name: "GroupChatListScreen - 群聊列表" },
+            { name: "GroupChatScreen - 群聊聊天" },
+            { name: "CreateGroupScreen - 创建群聊" },
+            { name: "CameraCaptureActivity - 透明拍照" }
+          ]
+        },
+        {
+          name: "🎨 theme/",
+          children: [
+            { name: "Theme.kt - Compose主题" },
+            { name: "Type.kt - 字体排版" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "🔗 di/ 依赖注入(反模式)",
+      color: "#f39c12",
+      children: [
+        { 
+          name: "🚩 AppContainer(Service Locator) ❌",
+          color: "#e67e22",
+          children: [
+            { name: "全局 object 单例" },
+            { name: "创建所有Repository实例" },
+            { name: "ViewModel静态访问→无法Mock测试" },
+            { name: "不会随Activity/Fragment销毁" },
+            { name: "应该改为: Hilt/Koin + 构造函数注入" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "🧰 utils/",
+      color: "#f39c12",
+      children: [
+        { name: "Logger - 日志封装" },
+        { name: "DeviceIdHelper - 设备ID生成" }
+      ]
+    },
+    {
+      name: "⚡ 原生 C++ 层",
+      color: "#9b59b6",
+      children: [
+        { name: "jni/native_opus_decoder.cpp - Opus解码JNI" },
+        { name: "jniLibs/arm64-v8a/libopus.so - 预编译" },
+        { name: "jniLibs/armeabi-v7a/libopus.so - 预编译" },
+        { name: "CMakeLists.txt - CMake 3.22.1" },
+        { name: "🚩 缺少arm64/armv7实际编译验证" },
+        { name: "🚩 缺少JNI错误处理" }
+      ]
+    },
+    {
+      name: "📱 Android配置",
+      color: "#f39c12",
+      children: [
+        {
+          name: "AndroidManifest",
+          children: [
+            { name: "ACTIVITY: MainActivity + CameraCapture(透明)" },
+            { name: "PROVIDER: FileProvider(照片)" },
+            { name: "RECEIVER: AlarmReceiver" },
+            { name: "usesCleartextTraffic: true" },
+            { name: "networkSecurityConfig" },
+            { name: "hardwareAccelerated: true" }
+          ]
+        },
+        {
+          name: "🔐 权限(24个)",
+          children: [
+            { name: "🌐 网络: INTERNET/NETWORK/WIFI/BLUETOOTH..." },
+            { name: "🎤 音频: RECORD_AUDIO/MODIFY_AUDIO" },
+            { name: "📷 相机: CAMERA" },
+            { name: "📍 位置: ACCESS_FINE/COARSE_LOCATION" },
+            { name: "📞 电话: CALL_PHONE/READ_PHONE_STATE" },
+            { name: "💬 联系人/SMS: READ_CONTACTS/SEND_SMS" },
+            { name: "🔔 通知: POST_NOTIFICATIONS" },
+            { name: "⏰ 闹钟: SCHEDULE_EXACT_ALARM" },
+            { name: "🔋 其他: WAKE_LOCK/VIBRATE/WRITE_SETTINGS" }
+          ]
+        },
+        {
+          name: "build.gradle",
+          children: [
+            { name: "compileSdk 34 / minSdk 26 / targetSdk 34" },
+            { name: "Kotlin 1.9 + Compose BOM 2023.10" },
+            { name: "OkHttp 4.12 (WebSocket)" },
+            { name: "Gson 2.10 / Coil 2.5 / CameraX 1.3" },
+            { name: "ONNX Runtime 1.17 (VAD)" },
+            { name: "Porcupine 3.0 (唤醒词)" },
+            { name: "Google Location 21.1" },
+            { name: "DataStore Preferences 1.0" },
+            { name: "CMake 3.22.1 / C++17" },
+            { name: "R8/Proguard" }
+          ]
+        },
+        {
+          name: "res/ 资源",
+          children: [
+            { name: "values/colors.xml, strings.xml, themes.xml" },
+            { name: "drawable/ic_launcher_foreground" },
+            { name: "mipmap-{hdpi~xxxhdpi}/图标" },
+            { name: "xml/network_security_config.xml" },
+            { name: "xml/file_paths.xml" }
+          ]
+        },
+        {
+          name: "assets/",
+          children: [
+            { name: "silero_vad.onnx - VAD模型" },
+            { name: "silero_vad.onnx.bak" }
+          ]
+        },
+        {
+          name: "根目录文档",
+          children: [
+            { name: "SPEC.md - 规格说明书" },
+            { name: "ARCHITECTURE_REVIEW.md - 架构审查" },
+            { name: "GROUP_CHAT_WORKFLOW.md - 群聊流程" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "🔌 协议细节",
+      children: [
+        {
+          name: "WebSocket协议(18种消息)",
+          children: [
+            { name: "hello(双向) - 会话建立+参数协商" },
+            { name: "listen(发送) - 监听控制(start/stop/detect)" },
+            { name: "stt(接收) - 语音识别结果" },
+            { name: "tts(接收) - 合成状态(sentence_start/end)" },
+            { name: "llm(接收) - 情感状态" },
+            { name: "mcp(双向) - MCP调用请求/响应" },
+            { name: "abort(双向) - 中断会话" },
+            { name: "alert(接收) - 弹窗通知" },
+            { name: "activation(双向) - 设备激活" }
+          ]
+        },
+        {
+          name: "二进制帧协议",
+          children: [
+            { name: "BinaryProtocol3: type(1)+reserved(1)+size(2)+payload" },
+            { name: "小智1字节协议: type(1)+payload" },
+            { name: "剥离协议头→纯Opus payload" }
+          ]
+        },
+        {
+          name: "音频参数",
+          children: [
+            { name: "录音: 16kHz / 60ms帧 / Opus / 单声道" },
+            { name: "服务器: 24kHz / PCM / 单声道" },
+            { name: "播放: 16kHz(重采样) / AudioTrack" }
+          ]
+        },
+        {
+          name: "MCP协议集成",
+          children: [
+            { name: "initialize → tools/list → tools/call" },
+            { name: "本地拦截: LocalCommandRouter(2ms)" },
+            { name: "群聊: 音频转发+文字兜底" }
+          ]
+        },
+        {
+          name: "群聊接龙引擎",
+          children: [
+            { name: "多Bot独立WS连接" },
+            { name: "Channel<BotEvent>顺序处理" },
+            { name: "Speaker评分(提及+30/+100/轮转惩罚/随机)" },
+            { name: "死循环检测(hints+candidates双维度)" },
+            { name: "看门狗(30s超时自动reset)" },
+            { name: "去重(相似度检测)" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "📊 MCP工具目录(49+)",
+      color: "#9b59b6",
+      children: [
+        {
+          name: "🚩 McpToolsBasic ❌",
+          color: "#e67e22",
+          children: [
+            { name: "get_time/set_alarm/calculator" },
+            { name: "分类模糊→Basic含义不明" }
+          ]
+        },
+        {
+          name: "🚩 McpToolsExtra ❌",
+          color: "#e67e22",
+          children: [
+            { name: "news/joke/translate/poem/quote/reminder" },
+            { name: "Extra太宽泛→应重新归类" }
+          ]
+        },
+        {
+          name: "McpToolsIntent",
+          children: [
+            { name: "open_app/make_call/send_sms" },
+            { name: "open_url/open_settings" }
+          ]
+        },
+        {
+          name: "McpToolsLocation",
+          children: [
+            { name: "get_location/nearby_places/navigation" }
+          ]
+        },
+        {
+          name: "McpToolsNetwork",
+          children: [
+            { name: "wifi_status/network_speed/bluetooth" }
+          ]
+        },
+        {
+          name: "McpToolsPhoto",
+          children: [
+            { name: "take_photo(CameraX)/gallery" }
+          ]
+        },
+        {
+          name: "McpToolsXiaozhi",
+          children: [
+            { name: "device_info/system_control/voice_settings" }
+          ]
+        },
+        {
+          name: "McpHelpers",
+          children: [
+            { name: "CalendarHelper" },
+            { name: "短信/通话/联系人查询" },
+            { name: "AlarmReceiver" }
+          ]
+        },
+        {
+          name: "🚩 应重新组织:",
+          color: "#e67e22",
+          children: [
+            { name: "按功能域: 通信/多媒体/系统/工具" },
+            { name: "MCP业务逻辑→domain/usecase" }
+          ]
+        }
+      ]
+    },
+    {
+      name: "🎯 架构评估",
+      children: [
+        {
+          name: "✅ Clean Architecture骨架",
+          children: [
+            { name: "domain/data/presentation三层分离" },
+            { name: "domain无Android依赖 ✅" },
+            { name: "Repository接口定义在domain ✅" }
+          ]
+        },
+        {
+          name: "🔴 P0 立即处理",
+          color: "#e67e22",
+          children: [
+            { name: "Service Locator→DI框架(Hilt/Koin)" },
+            { name: "GroupChatViewModel拆分(1000→≤300行)" },
+            { name: "提取usecase: RelayEngine/SpeakerScoring" }
+          ]
+        },
+        {
+          name: "🟠 P1 尽快处理",
+          color: "#e67e22",
+          children: [
+            { name: "统一Message模型(父接口)" },
+            { name: "audio/remote抽象接口化" },
+            { name: "ConnectionState/DeviceState移至模型包" },
+            { name: "MCP工具重新分类" }
+          ]
+        },
+        {
+          name: "🟡 P2 后续优化",
+          color: "#e67e22",
+          children: [
+            { name: "C++层编译验证+错误处理" },
+            { name: "统一AiState枚举sealed class" },
+            { name: "BaseDataStoreRepository消除重复" }
+          ]
+        },
+        {
+          name: "✅ 已做优化",
+          children: [
+            { name: "RelayState不可变状态(取代15个var)" },
+            { name: "Channel<BotEvent>保证事件顺序" },
+            { name: "音频走独立协程不阻塞事件" },
+            { name: "看门狗防卡死+死循环检测" }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
+// ─── Layout ─────────────────────────────────────────────
+const width = 2800;
+const height = 2600;
+
+const svg = d3.select("#svg-container")
+  .append("svg")
+  .attr("width", width)
+  .attr("height", height)
+  .style("cursor", "grab");
+
+const g = svg.append("g").attr("transform", "translate(320,60)");
+
+let zoomScale = 1;
+const zoom = d3.zoom()
+  .scaleExtent([0.25, 3.5])
+  .on("zoom", (event) => {
+    g.attr("transform", event.transform);
+    zoomScale = event.transform.k;
+    document.getElementById("zoomLevel").textContent = Math.round(zoomScale * 100) + "%";
+  });
+
+svg.call(zoom);
+
+window.zoomIn = () => { svg.transition().duration(300).call(zoom.scaleBy, 1.3); };
+window.zoomOut = () => { svg.transition().duration(300).call(zoom.scaleBy, 0.7); };
+window.resetView = () => { svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(320,60).scale(1)); };
+
+const treeLayout = d3.tree().nodeSize([34, 240]).separation((a,b) => (a.parent===b.parent ? 1 : 1.2));
+const root = d3.hierarchy(data);
+root.x0 = 0; root.y0 = 0;
+
+function getNodeColor(d) {
+  if (d.data.color) return d.data.color;
+  const n = (d.data.name || "").toLowerCase();
+  if (n.includes("domain")||n.includes("model")||n.includes("repository")) return "#e74c3c";
+  if (n.includes("data")||n.includes("audio")||n.includes("remote")||n.includes("settings")) return "#3498db";
+  if (n.includes("presentation")||n.includes("viewmodel")||n.includes("compose")||n.includes("theme")) return "#2ecc71";
+  if (n.includes("di")||n.includes("utils")||n.includes("构建")||n.includes("android")||n.includes("res/")||n.includes("assets")) return "#f39c12";
+  if (n.includes("mcp")||n.includes("工具")||n.includes("原生")||n.includes("c++")||n.includes("jni")) return "#9b59b6";
+  if (n.includes("协议")||n.includes("网络")||n.includes("websocket")) return "#1abc9c";
+  if (n.includes("架构")||n.includes("评估")||n.includes("p0")||n.includes("p1")) return "#e67e22";
+  return "#666";
+}
+
+function getIcon(d) {
+  const n = (d.data.name || "").toLowerCase();
+  if (d.depth===0) return "📱";
+  if (d.depth===1) {
+    if (n.includes("domain")) return "🎯";
+    if (n.includes("data")) return "⚙️";
+    if (n.includes("presentation")) return "🖥️";
+    if (n.includes("di")||n.includes("utils")) return "🔗";
+    if (n.includes("原生")||n.includes("c++")) return "⚡";
+    if (n.includes("android")) return "📱";
+    if (n.includes("协议")) return "🔌";
+    if (n.includes("mcp")) return "📊";
+    if (n.includes("架构")) return "🎯";
+    return "📦";
+  }
+  if (d.depth===2) {
+    if (n.includes("model")) return "📦";
+    if (n.includes("repository")) return "📋";
+    if (n.includes("audio")) return "🔊";
+    if (n.includes("remote")) return "🌐";
+    if (n.includes("mcp")||n.includes("工具")) return "🔧";
+    if (n.includes("viewmodel")) return "📄";
+    if (n.includes("compose")||n.includes("ui/")) return "🖥️";
+    if (n.includes("theme")) return "🎨";
+    if (n.includes("settings")) return "⚙️";
+    if (n.includes("manifest")) return "📋";
+    if (n.includes("权限")) return "🔐";
+    if (n.includes("gradle")||n.includes("构建")) return "🏗️";
+    if (n.includes("res/")||n.includes("资源")) return "🎨";
+    if (n.includes("assets")) return "🗄️";
+    if (n.includes("文档")||n.includes("根目录")) return "📄";
+    return "📄";
+  }
+  return "•";
+}
+
+function update(source) {
+  const treeData = treeLayout(root);
+  const nodes = treeData.descendants();
+  const links = treeData.links();
+  nodes.forEach(d => { d.y = d.depth * 240; });
+
+  const link = g.selectAll("path.link")
+    .data(links, d => d.target.data.name);
+  link.exit().transition().duration(300).attr("stroke-opacity",0).remove();
+  const linkEnter = link.enter().append("path")
+    .attr("class","link").attr("fill","none")
+    .attr("stroke",d=>d3.color(getNodeColor(d.target)).formatHex())
+    .attr("stroke-opacity",0.25).attr("stroke-width",1.5)
+    .attr("d",d=>{const o={x:source.x0,y:source.y0};return diag(o,o);});
+  link.merge(linkEnter).transition().duration(500)
+    .attr("stroke-opacity",0.25).attr("d",d=>diag(d.source,d.target));
+
+  const node = g.selectAll("g.node")
+    .data(nodes, d => d.data.name);
+  node.exit().transition().duration(300).attr("opacity",0).remove();
+  const nodeEnter = node.enter().append("g")
+    .attr("class","node-group")
+    .attr("transform",d=>`translate(${source.y0},${source.x0})`)
+    .on("click",(event,d)=>{if(d.children||d._children) toggle(d);});
+
+  nodeEnter.append("rect").attr("class","node-bg")
+    .attr("rx",d=>d.depth===0?10:d.depth===1?8:6)
+    .attr("ry",d=>d.depth===0?10:d.depth===1?8:6)
+    .attr("fill",d=>d.depth===0?"#1a1a24":getBgColor(d))
+    .attr("stroke",d=>d.depth===0?"#444":getBorderColor(d))
+    .attr("stroke-width",d=>d.depth===0?2:1).attr("stroke-opacity",0.6);
+
+  nodeEnter.append("text").attr("class","collapse-indicator")
+    .attr("text-anchor","middle").attr("font-size",11).attr("fill","#888")
+    .attr("x",d=>tw(d)+16).text(d=>d.children?"−":(d._children?"+":""));
+
+  nodeEnter.append("text").attr("class","node-icon")
+    .attr("text-anchor","middle")
+    .attr("font-size",d=>d.depth===0?18:d.depth===1?14:12).attr("x",-20).text(d=>getIcon(d));
+
+  nodeEnter.append("text").attr("class","node-text")
+    .attr("dy",4)
+    .attr("font-size",d=>d.depth===0?15:d.depth===1?13:d.depth===2?11.5:11)
+    .attr("fill",d=>d.depth===0?"#fff":getTextColor(d))
+    .attr("font-weight",d=>d.depth<=1?600:400)
+    .text(d=>trunc(d.data.name,d.depth===0?35:d.depth===1?30:28));
+
+  const nodeMerge = nodeEnter.merge(node);
+  nodeMerge.transition().duration(500).attr("transform",d=>`translate(${d.y},${d.x})`);
+  nodeMerge.select("rect")
+    .attr("width",d=>tw(d)+44).attr("height",d=>d.depth===0?36:30)
+    .attr("x",d=>-(tw(d)+34)/2).attr("y",d=>d.depth===0?-18:-15);
+  nodeMerge.select(".collapse-indicator")
+    .text(d=>d.children?"−":(d._children?"+":"")).attr("x",d=>(tw(d)+44)/2+4);
+
+  nodes.forEach(d=>{d.x0=d.x;d.y0=d.y;});
+}
+
+function diag(s,t) {
+  const dx=t.x-s.x, dy=t.y-s.y, midY=s.y+dy*0.5;
+  return `M${s.y},${s.x}C${midY},${s.x} ${midY},${t.x} ${t.y},${t.x}`;
+}
+
+function tw(d) {
+  const len = trunc(d.data.name, d.depth===0?35:d.depth===1?30:28).length;
+  return Math.max(len*(d.depth===0?8.5:d.depth===1?7:6.5),30);
+}
+
+function trunc(str, max) {
+  if (!str) return "";
+  return str.length > max ? str.substring(0, max-1) + "…" : str;
+}
+
+function getBgColor(d) {
+  const c = getNodeColor(d);
+  const col = d3.color(c);
+  col.opacity = 0.12;
+  return col.formatHex();
+}
+
+function getBorderColor(d) {
+  const c = getNodeColor(d);
+  return d3.color(c).darker(0.5).formatHex();
+}
+
+function getTextColor(d) {
+  const c = getNodeColor(d);
+  return d3.color(c).brighter(0.5).formatHex();
+}
+
+function toggle(d) {
+  if (d.children) { d._children = d.children; d.children = null; }
+  else { d.children = d._children; d._children = null; }
+  update(d);
+}
+
+window.collapseAll = () => {
+  root.descendants().forEach((d,i)=>{if(i>0&&d.children){d._children=d.children;d.children=null;}});
+  update(root);
+};
+window.expandAll = () => {
+  root.descendants().forEach(d=>{if(d._children){d.children=d._children;d._children=null;}});
+  update(root);
+};
+
+// Initial expand to depth 2
+root.descendants().forEach((d,i)=>{
+  if(d.depth>=2&&d.children){d._children=d.children;if(d.depth>=3)d.children=null;}
+});
+update(root);
+</script>
+</body>
+</html>
