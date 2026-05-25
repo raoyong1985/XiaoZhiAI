@@ -15,6 +15,7 @@ import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.usecase.relay.AudioForwardHandler
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
 import kotlinx.coroutines.Job
@@ -151,6 +152,11 @@ class GroupChatViewModel : ViewModel() {
 
     // 防死循环（Thread-safe：DeadloopDetector 内部使用 synchronized）
     private val deadloopDetector = DeadloopDetector()
+    private val audioForwardHandler = AudioForwardHandler(
+        audioForwardBuffer,
+        { _isRecording.value },
+        { _contacts.value }
+    )
     /** 用于音频过滤的 grace 窗口：bot 进入 speaking 状态后 N 毫秒内允许音频通过 */
     private val botSpeakingTime = ConcurrentHashMap<String, Long>()
 
@@ -1114,41 +1120,7 @@ class GroupChatViewModel : ViewModel() {
      * @return true=音频转发成功（服务端开始处理）
      */
     private suspend fun forwardAudioToBot(prevBotId: String?, service: XiaoZhiBackendService): Boolean {
-        // 用户正在录音时禁止转发音频，避免录音与音频发送冲突
-        if (_isRecording.value) {
-            android.util.Log.w(TAG, "用户正在录音，跳过音频转发")
-            return false
-        }
-        // 检查WebSocket连接状态，断线时直接返回false
-        if (service.connectionState.value !is XiaoZhiBackendService.ConnectionState.Connected) {
-            android.util.Log.w(TAG, "音频转发失败：WebSocket未连接")
-            return false
-        }
-        if (prevBotId == null) return false
-        val cachedList = audioForwardBuffer[prevBotId] ?: return false
-        if (cachedList.isEmpty()) return false
-        val cachedOpus = cachedList.toList()
-        android.util.Log.i(TAG, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
-        try {
-            service.sendListenStart("auto")
-            // 攒批发送：每 5 包合并后一次发，减少 WebSocket 消息数
-            val batchSize = 5
-            cachedOpus.chunked(batchSize).forEachIndexed { batchIdx, batch ->
-                batch.forEach { packet -> service.sendAudio(packet) }
-                // 前 2 批给宽松延迟，后面每 4 批给 10ms
-                when {
-                    batchIdx < 2 -> delay(40)
-                    batchIdx % 4 == 0 -> delay(10)
-                }
-            }
-            delay(200)
-            service.sendListenStopOnly()
-            // 转发完成后再次检查连接，防止转发过程中断线
-            return service.connectionState.value is XiaoZhiBackendService.ConnectionState.Connected
-        } catch (e: Exception) {
-            android.util.Log.w(TAG, "音频转发失败: ${e.message}")
-            return false
-        }
+        return audioForwardHandler.forwardAudioToBot(prevBotId, service)
     }
 
     // ── 文字兜底 ──
@@ -1171,12 +1143,7 @@ class GroupChatViewModel : ViewModel() {
      * 不得使用 truncated 的 originalUserQuery（那里存的是截断版历史，会丢失上下文）
      */
     private fun buildForwardMessage(previousReply: String, prevBotId: String? = null): String {
-        if (previousReply.isBlank()) return ""
-        val name = prevBotId?.let { id ->
-            _contacts.value.find { id == it.id }?.name
-        } ?: return "$previousReply"
-        // JSON 格式，服务器端 startToChat 会解析 speaker/content 字段
-        return "{\"speaker\":\"${name}\",\"content\":\"${previousReply.replace("\"", "\\\"")}\"}"
+        return audioForwardHandler.buildForwardMessage(previousReply, prevBotId)
     }
 
     // ── 死循环检测 ──
@@ -1213,14 +1180,7 @@ class GroupChatViewModel : ViewModel() {
      * 最后硬截断到 maxLen 字符。
      */
     private fun truncateReply(text: String, maxLen: Int = 24): String {
-        if (text.isBlank()) return ""
-        val clean = text.trim()
-        if (clean.length <= maxLen) return clean
-        val sentenceEnd = clean.indexOfAny(charArrayOf('。', '！', '？', '\n'))
-        if (sentenceEnd in 1..maxLen) return clean.substring(0, sentenceEnd)
-        val boundary = clean.lastIndexOfAny(charArrayOf('，', '、', '；', '：', ' ', ','), maxLen)
-        if (boundary > 3) return clean.substring(0, boundary)
-        return clean.substring(0, maxLen)
+        return audioForwardHandler.truncateReply(text, maxLen)
     }
 
     // ── 去重 ──
