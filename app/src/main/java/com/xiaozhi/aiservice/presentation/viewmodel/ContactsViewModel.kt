@@ -1,19 +1,23 @@
 package com.xiaozhi.aiservice.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
+import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
+import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
-class ContactsViewModel(
-    private val contactsRepository: ContactsRepository
+@HiltViewModel
+class ContactsViewModel @Inject constructor(
+    private val contactsRepository: ContactsRepository,
+    private val messageRepository: MessageRepository
 ) : ViewModel() {
 
     val contacts: StateFlow<List<BotContact>> = contactsRepository.getContacts()
@@ -33,16 +37,16 @@ class ContactsViewModel(
 
     fun clearMessages(contactId: String) {
         viewModelScope.launch {
-            AppContainer.messageRepository.clearMessages(contactId)
+            messageRepository.clearMessages(contactId)
         }
     }
     
     fun exportMessages(contactId: String, context: android.content.Context) {
         viewModelScope.launch {
-            val messages = AppContainer.messageRepository.getMessages(contactId).value
+            val messages = messageRepository.getMessages(contactId).value
             if (messages.isEmpty()) return@launch
             val text = messages.joinToString("\n") { msg ->
-                val sender = if (msg.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT) "我" else "AI"
+                val sender = if (msg.direction == MessageDirection.SENT) "我" else "AI"
                 "[${sender}]: ${msg.content}"
             }
             val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
@@ -55,18 +59,10 @@ class ContactsViewModel(
     }
     
     fun toggleInputMode(contact: BotContact) {
-        val newMode = if (contact.inputMode == com.xiaozhi.aiservice.domain.model.InputMode.VOICE)
-            com.xiaozhi.aiservice.domain.model.InputMode.TEXT
+        val newMode = if (contact.inputMode == InputMode.VOICE)
+            InputMode.TEXT
         else
-            com.xiaozhi.aiservice.domain.model.InputMode.VOICE
+            InputMode.VOICE
         saveContact(contact.copy(inputMode = newMode))
     }
-
-    class Factory : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ContactsViewModel(AppContainer.contactsRepository) as T
-        }
-    }
 }
-

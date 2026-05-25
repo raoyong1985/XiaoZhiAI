@@ -10,13 +10,17 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.contactsDataStore: DataStore<Preferences> by preferencesDataStore(name = "contacts")
 
-class ContactsRepositoryImpl(
-    private val context: Context,
+@Singleton
+class ContactsRepositoryImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val gson: Gson
 ) : ContactsRepository {
 

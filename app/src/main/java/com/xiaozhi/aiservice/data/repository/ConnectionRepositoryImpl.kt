@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.data.repository
 
+import android.content.Context
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.utils.Logger
@@ -30,13 +31,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 private const val TAG = "ConnectionRepo"
 
-class ConnectionRepositoryImpl(
+@Singleton
+class ConnectionRepositoryImpl @Inject constructor(
     private val backendService: XiaoZhiBackendService,
     private val audioService: AudioService,
-    private val messageRepository: MessageRepository
+    private val messageRepository: MessageRepository,
+    @ApplicationContext private val context: Context
 ) : ConnectionRepository {
     
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -276,7 +282,7 @@ class ConnectionRepositoryImpl(
                 val t0 = System.nanoTime()
                 val serverRate = backendService.getServerSampleRate()
                 val serverCh = backendService.getServerChannels()
-                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                val volume = AudioSettings.getOutputVolume(context)
                 playbackManager.decodeAndPlay("main", serverRate, serverCh, audioData, volume)
                 val dt = (System.nanoTime() - t0) / 1000
                 if (dt > 5000) {
@@ -316,7 +322,7 @@ class ConnectionRepositoryImpl(
         _deviceState.value = DeviceState.CONNECTING
 
         // 初始化设备标识（从持久化存储读取，参考 ESP32 settings.cc）
-        AppContainer.initDeviceIds(AppContainer.context)
+        AppContainer.initDeviceIds(context)
 
         return try {
             _connectionState.value = ConnectionState.Connecting

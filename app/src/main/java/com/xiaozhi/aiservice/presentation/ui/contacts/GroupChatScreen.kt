@@ -30,7 +30,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -76,10 +76,7 @@ val botBubbleColors = listOf(
 @Composable
 fun GroupChatScreen(
     groupId: String,
-    viewModel: GroupChatViewModel = viewModel(
-        key = groupId,  // key 确保每个群聊有独立的 ViewModel 实例
-        factory = GroupChatViewModel.Factory()
-    ),
+    viewModel: GroupChatViewModel = hiltViewModel(key = groupId),
     onNavigateBack: () -> Unit
 ) {
     val groups by viewModel.groups.collectAsState()

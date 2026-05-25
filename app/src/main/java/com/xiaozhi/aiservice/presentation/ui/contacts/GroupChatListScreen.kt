@@ -20,7 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupChatListScreen(
-    viewModel: GroupChatViewModel = viewModel(factory = GroupChatViewModel.Factory()),
+    viewModel: GroupChatViewModel = hiltViewModel(),
     onGroupClick: (String) -> Unit,
     onCreateGroupClick: () -> Unit,
     onNavigateBack: () -> Unit

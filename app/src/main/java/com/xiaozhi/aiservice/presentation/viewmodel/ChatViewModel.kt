@@ -2,11 +2,8 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
 import com.xiaozhi.aiservice.BuildConfig
-import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
@@ -14,12 +11,15 @@ import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.ConnectionState
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 private const val TAG = "ChatViewModel"
 
-class ChatViewModel(
+@HiltViewModel
+class ChatViewModel @Inject constructor(
     private val connectionRepository: ConnectionRepository,
     private val messageRepository: MessageRepository
 ) : ViewModel() {
@@ -150,16 +150,6 @@ class ChatViewModel(
     fun clearMessages() {
         viewModelScope.launch {
             messageRepository.clearMessages(currentContactId)
-        }
-    }
-
-    class Factory(private val gson: Gson) : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(
-                AppContainer.connectionRepository,
-                AppContainer.messageRepository
-            ) as T
         }
     }
 }

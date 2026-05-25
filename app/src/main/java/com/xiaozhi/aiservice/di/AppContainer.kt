@@ -44,7 +44,7 @@ object AppContainer {
     fun getGroupConnectionRepository(groupId: String): ConnectionRepository {
         return groupConnections.getOrCreate(groupId) {
             val service = XiaoZhiBackendService(gson)
-            ConnectionRepositoryImpl(service, audioService, messageRepository)
+            ConnectionRepositoryImpl(service, audioService, messageRepository, context)
         }
     }
     fun removeGroupConnection(groupId: String) {
@@ -64,7 +64,7 @@ object AppContainer {
     }
     
     val connectionRepository: ConnectionRepository by lazy {
-        ConnectionRepositoryImpl(getBackendService("default"), audioService, messageRepository)
+        ConnectionRepositoryImpl(getBackendService("default"), audioService, messageRepository, context)
     }
 
     /** 默认后端服务实例 */

@@ -3,11 +3,14 @@ package com.xiaozhi.aiservice.data.repository
 import com.xiaozhi.aiservice.domain.model.Device
 import com.xiaozhi.aiservice.domain.model.DeviceStatus
 import com.xiaozhi.aiservice.domain.repository.DeviceRepository
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class DeviceRepositoryImpl : DeviceRepository {
+@Singleton
+class DeviceRepositoryImpl @Inject constructor() : DeviceRepository {
     
     private val _devices = MutableStateFlow<List<Device>>(emptyList())
     private val _connectedDevice = MutableStateFlow<Device?>(null)

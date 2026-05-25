@@ -10,6 +10,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,8 +29,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val Context.messagesDataStore: DataStore<Preferences> by preferencesDataStore(name = "messages")
 
-class MessageRepositoryImpl(
-    private val context: Context,
+@Singleton
+class MessageRepositoryImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val gson: Gson
 ) : MessageRepository {
 

@@ -11,6 +11,9 @@ import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,7 +43,11 @@ import java.util.concurrent.ConcurrentHashMap
  * - group_chats DataStore：存储所有群聊的元信息列表（同一 key）
  * - group_messages DataStore：每个群聊的消息独立存储，key = "messages_{groupId}"
  */
-class GroupChatRepositoryImpl(private val context: Context, private val gson: Gson) : GroupChatRepository {
+@Singleton
+class GroupChatRepositoryImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val gson: Gson
+) : GroupChatRepository {
 
     /**
      * IO 协程作用域

@@ -1,26 +1,29 @@
 package com.xiaozhi.aiservice.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
-import com.xiaozhi.aiservice.data.audio.AudioPlaybackManagerImpl
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
-import com.xiaozhi.aiservice.data.remote.BotConnectionPoolImpl
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.data.settings.AudioSettings
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.GroupChat
 import com.xiaozhi.aiservice.domain.model.GroupMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
+import com.xiaozhi.aiservice.domain.repository.ContactsRepository
+import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import com.xiaozhi.aiservice.domain.usecase.relay.AudioForwardHandler
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
 import com.xiaozhi.aiservice.domain.usecase.relay.DeduplicationUtil
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayEngine
 import com.xiaozhi.aiservice.domain.usecase.relay.SpeakerScorer
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -31,6 +34,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
 
 /**
  * 群聊 ViewModel —— 多智能体语音聊天核心
@@ -65,22 +69,20 @@ import java.util.concurrent.ConcurrentHashMap
  * - ❌ Service Locator 模式（AppContainer 全局访问）
  * - ❌ 代码过长（~1000 行，应拆分为 RelayEngine + GroupChatUseCase）
  */
-class GroupChatViewModel : ViewModel() {
+@HiltViewModel
+class GroupChatViewModel @Inject constructor(
+    private val groupChatRepository: GroupChatRepository,
+    private val contactsRepository: ContactsRepository,
+    private val botConnectionPool: BotConnectionPoolRepository,
+    private val playbackManager: AudioPlaybackManager,
+    private val audioService: AudioService,
+    @ApplicationContext private val context: Context
+) : ViewModel() {
 
     // ═══════════════════════════════════════════
-    // 依赖注入（直接引用 AppContainer - Service Locator 模式）
+    // Bot 事件监听协程 Job 表：botId → Job，用于清理
     // ═══════════════════════════════════════════
 
-    private val groupChatRepository = AppContainer.groupChatRepository
-    private val contactsRepository = AppContainer.contactsRepository
-
-    // ── WebSocket 连接池：管理所有 bot 的长连接 ──
-    private val botConnectionPool = BotConnectionPoolImpl(AppContainer.gson)
-
-    // ── 音频播放管理器：解码 Opus 并播放 ──
-    private val playbackManager = AudioPlaybackManagerImpl()
-
-    // ── Bot 事件监听协程 Job 表：botId → Job，用于清理 ──
     private val botObserverJobs = ConcurrentHashMap<String, Job>()
 
     // ═══════════════════════════════════════════
@@ -135,7 +137,6 @@ class GroupChatViewModel : ViewModel() {
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
     // ── 录音相关 ──
-    private val audioService = AppContainer.audioService
     private val audioRecorder = AudioRecorder(audioService)
     private var currentGroupId = ""
 
@@ -515,7 +516,7 @@ class GroupChatViewModel : ViewModel() {
 
                 val serverRate = service.getServerSampleRate()
                 val serverCh = service.getServerChannels()
-                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                val volume = AudioSettings.getOutputVolume(context)
                 // 群聊所有 bot 共享单个解码器（OPPO/MTK 多个 AudioTrack 同时存在会无声）
                 // 切换 bot 时释放旧解码器，用新参数创建共享解码器
                 val currentSourceId = "${groupId}_shared"
@@ -650,7 +651,7 @@ class GroupChatViewModel : ViewModel() {
                             if (!playbackManager.contains(currentSourceId)) {
                                 val serverRate = service.getServerSampleRate()
                                 val serverCh = service.getServerChannels()
-                                val volume = AudioSettings.getOutputVolume(AppContainer.context)
+                                val volume = AudioSettings.getOutputVolume(context)
                                 playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
                                 android.util.Log.i(TAG, "[$botName] 预创建共享解码器 (${serverRate}Hz, 音量=$volume%)")
                             }
@@ -887,15 +888,5 @@ class GroupChatViewModel : ViewModel() {
         super.onCleared()
         disconnectGroup()
         audioRecorder.release()
-    }
-
-    class Factory : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            if (modelClass.isAssignableFrom(GroupChatViewModel::class.java)) {
-                return GroupChatViewModel() as T
-            }
-            throw IllegalArgumentException("Unknown ViewModel class")
-        }
     }
 }

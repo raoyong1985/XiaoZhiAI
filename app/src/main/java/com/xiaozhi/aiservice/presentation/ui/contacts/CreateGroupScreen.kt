@@ -12,7 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateGroupScreen(
-    viewModel: GroupChatViewModel = viewModel(factory = GroupChatViewModel.Factory()),
+    viewModel: GroupChatViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit,
     onGroupCreated: (String) -> Unit
 ) {

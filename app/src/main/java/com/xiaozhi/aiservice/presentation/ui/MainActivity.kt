@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.WindowManager
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.activity.ComponentActivity
@@ -18,7 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModelProvider
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.di.AppContainer
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
@@ -38,16 +37,12 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
     }
 
-    private lateinit var chatViewModel: ChatViewModel
-    private lateinit var contactsViewModel: ContactsViewModel
-
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         Logger.i(TAG, "权限结果: RECORD_AUDIO=$audioGranted")
-        // 网络类权限安装时已授权，只要有 RECORD_AUDIO 结果就继续
-        initializeViewModels()
+        setContent { MainNavigation() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,44 +98,17 @@ class MainActivity : ComponentActivity() {
         }
 
         if (permissionsToRequest.isEmpty()) {
-            initializeViewModels()
+            setContent { MainNavigation() }
         } else {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
-        }
-    }
-
-    private fun initializeViewModels() {
-        chatViewModel = ViewModelProvider(
-            this,
-            ChatViewModel.Factory(AppContainer.gson)
-        )[ChatViewModel::class.java]
-
-        contactsViewModel = ViewModelProvider(
-            this,
-            ContactsViewModel.Factory()
-        )[ContactsViewModel::class.java]
-
-        setContent {
-            XiaoZhiTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    MainNavigation(
-                        chatViewModel = chatViewModel,
-                        contactsViewModel = contactsViewModel
-                    )
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun MainNavigation(
-    chatViewModel: ChatViewModel,
-    contactsViewModel: ContactsViewModel
-) {
+private fun MainNavigation() {
+    val chatViewModel: ChatViewModel = hiltViewModel()
+    val contactsViewModel: ContactsViewModel = hiltViewModel()
     var selectedContactId by rememberSaveable { mutableStateOf<String?>(null) }
     var showGroupChatList by rememberSaveable { mutableStateOf(false) }
     var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
