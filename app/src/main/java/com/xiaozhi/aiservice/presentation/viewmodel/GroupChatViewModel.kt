@@ -17,6 +17,7 @@ import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.usecase.relay.AudioForwardHandler
 import com.xiaozhi.aiservice.domain.usecase.relay.DeadloopDetector
+import com.xiaozhi.aiservice.domain.usecase.relay.DeduplicationUtil
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayConfig
 import com.xiaozhi.aiservice.domain.usecase.relay.RelayEngine
 import com.xiaozhi.aiservice.domain.usecase.relay.SpeakerScorer
@@ -167,8 +168,7 @@ class GroupChatViewModel : ViewModel() {
     private val botSpeakingTime = ConcurrentHashMap<String, Long>()
 
     // ── 消息去重 ──
-    private val recentReplyKeys = java.util.concurrent.ConcurrentLinkedDeque<String>()
-    private val MAX_RECENT_REPLIES = 40  // 最多保留 40 条最近回复的 key
+    private val deduplicationUtil = DeduplicationUtil()
 
     companion object {
         private const val TAG = "GroupChatVM"
@@ -216,7 +216,7 @@ class GroupChatViewModel : ViewModel() {
         _relayState.value = RelayState()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
-        recentReplyKeys.clear()
+        deduplicationUtil.clear()
         currentGroupId = groupId
         _isConnecting.value = true
 
@@ -362,7 +362,7 @@ class GroupChatViewModel : ViewModel() {
             forwardRound = 0, currentSpeakerIndex = 0,
             waitingSpeakerIndex = 0, originalUserQuery = ""
         ) }
-        recentReplyKeys.clear()
+        deduplicationUtil.clear()
 
         service.sendListenStart("auto")
 
@@ -870,13 +870,7 @@ class GroupChatViewModel : ViewModel() {
      * 不处理会导致 UI 大量重复消息 + 死循环。
      */
     private fun isDuplicateReply(botId: String, content: String): Boolean {
-        val key = "$botId|$content"
-        synchronized(recentReplyKeys) {
-            if (recentReplyKeys.contains(key)) return true
-            recentReplyKeys.addFirst(key)
-            if (recentReplyKeys.size > MAX_RECENT_REPLIES) recentReplyKeys.removeLast()
-        }
-        return false
+        return deduplicationUtil.isDuplicate(botId, content)
     }
 
     // ═══════════════════════════════════════════
@@ -923,7 +917,7 @@ class GroupChatViewModel : ViewModel() {
             originalUserQuery = content
         ) }
         audioForwardBuffer.clear()
-        recentReplyKeys.clear()
+        deduplicationUtil.clear()
         deadloopDetector.reset()
 
         if (_relayState.value.botIds.isNotEmpty()) {
@@ -1000,7 +994,7 @@ class GroupChatViewModel : ViewModel() {
         playbackManager.releaseAll()
         audioForwardBuffer.clear()
         botLastAudioTime.clear()
-        recentReplyKeys.clear()
+        deduplicationUtil.clear()
         _relayState.value = RelayState()
         android.util.Log.i(TAG, "disconnectGroup: 群聊资源已全部释放")
     }
