@@ -143,7 +143,7 @@ data class BotContact(
  * - botIds: 群内智能体列表（按顺序排列，决定接龙流转方向）
  * - inputMode: 当前输入模式（0=语音录音, 1=键盘文字），群聊级别独立设置
  *
- * 群聊本身不存储消息，消息由 GroupMessage 通过 groupId 关联。
+ * 群聊本身不存储消息，消息由 ChatMessage 通过 groupId 关联。
  * 接龙流转信息由 RelayState（运行时状态，不持久化）管理。
  */
 data class GroupChat(

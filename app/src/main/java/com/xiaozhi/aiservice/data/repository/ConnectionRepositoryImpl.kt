@@ -6,7 +6,7 @@ import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
-import com.xiaozhi.aiservice.data.audio.AudioPlaybackManagerImpl
+import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 import com.xiaozhi.aiservice.data.audio.WakeWordDetector
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.model.AiState
@@ -42,6 +42,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     private val backendService: XiaoZhiBackendService,
     private val audioService: AudioService,
     private val messageRepository: MessageRepository,
+    private val playbackManager: AudioPlaybackManager,
     @ApplicationContext private val context: Context
 ) : ConnectionRepository {
     
@@ -89,7 +90,6 @@ class ConnectionRepositoryImpl @Inject constructor(
     override val deviceState: StateFlow<DeviceState> = _deviceState.asStateFlow()
 
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
-    private val playbackManager = AudioPlaybackManagerImpl()
     private val audioRecorder = AudioRecorder(audioService)
 
     // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
