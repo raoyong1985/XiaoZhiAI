@@ -17,7 +17,8 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.di.GlobalServices
 import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
@@ -35,7 +36,7 @@ fun registerIntentTools() {
         val pkg = (args["package_name"] as? String)?.takeIf { it.isNotBlank() }
             ?: throw Exception("package_name 不能为空")
         val fallback = (args["fallback_search"] as? Boolean) ?: true
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         try {
             ctx.packageManager.getLaunchIntentForPackage(pkg)?.let {
                 it.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -67,7 +68,7 @@ fun registerIntentTools() {
         val finalUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
         Intent(Intent.ACTION_VIEW, android.net.Uri.parse(finalUrl)).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            AppContainer.context.startActivity(this)
+            AppContext.context.startActivity(this)
         }
         JsonObject().apply { addProperty("success", true); addProperty("url", finalUrl) }
     }
@@ -83,7 +84,7 @@ fun registerIntentTools() {
     ) { args ->
         val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100) ?: throw Exception("level 必须为 0-100")
         val type = (args["type"] as? String)?.lowercase() ?: "media"
-        val audioManager = AppContainer.context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+        val audioManager = AppContext.context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
         val streamType = when (type) {
             "media" -> android.media.AudioManager.STREAM_MUSIC
@@ -111,7 +112,7 @@ fun registerIntentTools() {
             required = listOf("hour", "minute")
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val hour = (args["hour"] as? Number)?.toInt() ?: throw Exception("hour 必须为 0-23 的数字")
         val minute = (args["minute"] as? Number)?.toInt() ?: throw Exception("minute 必须为 0-59 的数字")
         require(hour in 0..23) { "hour 必须在 0-23 之间" }
@@ -205,7 +206,7 @@ fun registerIntentTools() {
                     putExtra(AlarmClock.EXTRA_MESSAGE, label)
                     putExtra(AlarmClock.EXTRA_SKIP_UI, false)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    AppContainer.context.startActivity(this)
+                    AppContext.context.startActivity(this)
                 }
                 JsonObject().apply { addProperty("success", true); addProperty("seconds", seconds); addProperty("display", display) }
             } catch (e: Exception) { throw Exception("无法设置倒计时: ${e.message}") }
@@ -224,7 +225,7 @@ fun registerIntentTools() {
     ) { args ->
         val duration = (args["duration_ms"] as? Number)?.toLong() ?: 500L
         val pattern = (args["pattern"] as? String)?.lowercase() ?: "once"
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
 
         // 检查震动权限
         val vibratePerm = checkPermissionWithGuide(
@@ -266,7 +267,7 @@ fun registerIntentTools() {
 
         ensureNotificationChannel(channelId)
 
-        val notification = NotificationCompat.Builder(AppContainer.context, channelId)
+        val notification = NotificationCompat.Builder(AppContext.context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(content)
@@ -278,7 +279,7 @@ fun registerIntentTools() {
             Manifest.permission.POST_NOTIFICATIONS, permissionName = "通知"
         )
         if (notifPerm != null) return@registerTool notifPerm
-        NotificationManagerCompat.from(AppContainer.context).notify(
+        NotificationManagerCompat.from(AppContext.context).notify(
             System.currentTimeMillis().toInt(), notification
         )
         JsonObject().apply {
@@ -295,7 +296,7 @@ fun registerIntentTools() {
             "level" to jsonNumberProp("设置亮度 0-100（百分比），不传则只读取当前亮度"),
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val resolver = ctx.contentResolver
         try {
             val current = android.provider.Settings.System.getInt(resolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
@@ -342,7 +343,7 @@ fun registerIntentTools() {
         val lon = (args["longitude"] as? Number)?.toDouble()
         val mode = (args["mode"] as? String)?.lowercase() ?: "driving"
         val app = (args["app"] as? String)?.lowercase() ?: "auto"
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
 
         val dlat = args["dlat"] as? Double
         val dlon = args["dlon"] as? Double
@@ -417,7 +418,7 @@ fun registerIntentTools() {
             "name" to jsonStringProp("联系人姓名（可选，自动从通讯录查找号码）"),
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         var number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
 
@@ -472,7 +473,7 @@ fun registerIntentTools() {
             required = listOf("message")
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         var number = (args["phone_number"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val name = (args["name"] as? String)?.takeIf { it.isNotBlank() } ?: ""
         val message = (args["message"] as? String)?.takeIf { it.isNotBlank() }
@@ -537,7 +538,7 @@ fun registerIntentTools() {
         )
     ) { args ->
         val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
 
         // 检查相机权限（手电筒使用相机闪光灯需要 CAMERA 权限）
         val flashlightPerm = checkPermissionWithGuide(
@@ -578,7 +579,7 @@ fun registerIntentTools() {
         )
     ) { args ->
         val enable = (args["enable"] as? Boolean) ?: throw Exception("enable 必须为布尔值")
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val wifiManager = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
             ?: throw Exception("此设备不支持 WiFi")
 
@@ -614,7 +615,7 @@ fun registerIntentTools() {
         description = "对手机当前屏幕进行截图（需要 Android 11+ 或辅助功能权限）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             try {
                 // Use MediaProjection for screenshot on Android 11+
@@ -657,7 +658,7 @@ fun registerIntentTools() {
         )
     ) { args ->
         val muted = (args["muted"] as? Boolean) ?: throw Exception("muted 必须为布尔值")
-        val backend = AppContainer.xiaozhiBackend
+        val backend = GlobalServices.xiaozhiBackend
         backend.sendMute(muted)
         JsonObject().apply {
             addProperty("success", true)
@@ -676,7 +677,7 @@ fun registerIntentTools() {
     ) { args ->
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 200) ?: 30
         val keyword = (args["keyword"] as? String)?.lowercase() ?: ""
-        val pm = AppContainer.context.packageManager
+        val pm = AppContext.context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val apps = pm.queryIntentActivities(intent, 0)
             .map { it.activityInfo }

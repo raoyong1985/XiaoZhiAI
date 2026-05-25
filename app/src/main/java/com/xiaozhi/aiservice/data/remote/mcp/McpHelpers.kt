@@ -14,7 +14,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -163,7 +163,7 @@ fun ensureNotificationChannel(channelId: String) {
         enableLights(true)
         enableVibration(true)
     }
-    val nm = AppContainer.context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+    val nm = AppContext.context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
     nm?.createNotificationChannel(channel)
     createdChannels.add(channelId)
 }
@@ -205,7 +205,7 @@ fun reverseGeoCode(lat: Double, lon: Double): String {
 }
 
 suspend fun getCurrentLocation(): Pair<Double, Double>? {
-    val context = AppContainer.context
+    val context = AppContext.context
     if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
         ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
     ) { return null }
@@ -323,7 +323,7 @@ object CalendarHelper {
     )
 
     fun getEvents(startDate: String?, endDate: String?, maxResults: Int): List<CalendarEvent> {
-        val context = AppContainer.context
+        val context = AppContext.context
         val calPerm = checkPermissionWithGuide(
             Manifest.permission.READ_CALENDAR, permissionName = "日历"
         )
@@ -397,7 +397,7 @@ object CalendarHelper {
  * 在后台服务中无法可靠地 startActivity，用通知替代
  */
 fun sendPermissionGuideNotification(permissionName: String): JsonObject {
-    val ctx = AppContainer.context
+    val ctx = AppContext.context
     val channelId = "permission_guide"
     ensureNotificationChannel(channelId)
 
@@ -442,7 +442,7 @@ fun checkPermissionWithGuide(
     vararg permissions: String,
     permissionName: String
 ): JsonObject? {
-    val ctx = AppContainer.context
+    val ctx = AppContext.context
     val allGranted = (listOf(permission) + permissions).all { p ->
         ActivityCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
     }
@@ -454,7 +454,7 @@ fun checkPermissionWithGuide(
  * 旧版兼容：跳转到应用权限设置页面（只在应用可见时有效）
  */
 fun openAppPermissionSettings(message: String): Nothing {
-    val ctx = AppContainer.context
+    val ctx = AppContext.context
     try {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = android.net.Uri.fromParts("package", ctx.packageName, null)
@@ -469,7 +469,7 @@ fun openAppPermissionSettings(message: String): Nothing {
  * 检查并引导 WRITE_SETTINGS 特殊权限
  */
 fun ensureWriteSettingsOrGuide(): Boolean {
-    val ctx = AppContainer.context
+    val ctx = AppContext.context
     if (Settings.System.canWrite(ctx)) return true
     // 引导用户去系统设置中开启
     val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {

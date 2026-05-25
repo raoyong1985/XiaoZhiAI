@@ -2,7 +2,7 @@ package com.xiaozhi.aiservice.data.repository
 
 import android.content.Context
 import com.xiaozhi.aiservice.data.settings.AudioSettings
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
@@ -322,7 +322,7 @@ class ConnectionRepositoryImpl @Inject constructor(
         _deviceState.value = DeviceState.CONNECTING
 
         // 初始化设备标识（从持久化存储读取，参考 ESP32 settings.cc）
-        AppContainer.initDeviceIds(context)
+        AppContext.initDeviceIds(context)
 
         return try {
             _connectionState.value = ConnectionState.Connecting

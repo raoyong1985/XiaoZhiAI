@@ -4,7 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.di.GlobalServices
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import java.io.File
@@ -20,7 +21,7 @@ fun registerCameraTool() {
         inputSchema = jsonSchema(),
         readOnly = true
     ) { _ ->
-        val context = AppContainer.context
+        val context = AppContext.context
 
         // 检查相机权限
         val permCheck = checkPermissionWithGuide(
@@ -45,9 +46,9 @@ fun registerCameraTool() {
             val photoFile = File(photoDir, "photo_${System.currentTimeMillis()}.jpg")
             FileOutputStream(photoFile).use { it.write(jpegBytes) }
 
-            val contactId = (AppContainer.connectionRepository as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
+            val contactId = (GlobalServices.connectionRepository as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
             if (contactId.isNotEmpty()) {
-                AppContainer.messageRepository.addSentMessage(
+                GlobalServices.messageRepository.addSentMessage(
                     contactId,
                     com.xiaozhi.aiservice.domain.model.ChatMessage(
                         id = java.util.UUID.randomUUID().toString(),
@@ -94,8 +95,8 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
 
         val request = okhttp3.Request.Builder()
             .url(visionUrl)
-            .header("Device-Id", com.xiaozhi.aiservice.di.AppContainer.deviceId)
-            .header("Client-Id", com.xiaozhi.aiservice.di.AppContainer.clientId)
+            .header("Device-Id", AppContext.deviceId)
+            .header("Client-Id", AppContext.clientId)
             .apply {
                 if (!token.isNullOrBlank()) {
                     header("Authorization", "Bearer $token")

@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.BatteryManager
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -44,7 +44,7 @@ fun registerBasicTools() {
         description = "获取当前设备的电池电量百分比",
         inputSchema = jsonSchema()
     ) { _ ->
-        val bm = AppContainer.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val bm = AppContext.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         JsonObject().apply {
             addProperty("level", level)
@@ -114,7 +114,7 @@ fun registerBasicTools() {
         description = "获取设备当前的屏幕方向和旋转角度",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val display = (ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager)?.defaultDisplay
         val rotation = display?.rotation ?: -1
         val orientation = ctx.resources.configuration.orientation
@@ -165,7 +165,7 @@ fun registerBasicTools() {
         description = "获取设备的完整系统信息，一次性返回厂商、型号、电量、内存、存储、时间等",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val batteryLevel = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         val stats = android.os.StatFs("/data")

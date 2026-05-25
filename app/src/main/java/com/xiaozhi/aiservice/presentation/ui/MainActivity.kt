@@ -19,7 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.BuildConfig
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
 import com.xiaozhi.aiservice.presentation.ui.chat.ChatScreen
 import com.xiaozhi.aiservice.presentation.ui.contacts.ContactsScreen
@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        AppContainer.initDeviceIds(this)
+        AppContext.initDeviceIds(this)
         checkAndRequestPermissions()
     }
 

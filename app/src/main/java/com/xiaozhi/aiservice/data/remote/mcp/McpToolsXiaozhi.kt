@@ -4,7 +4,8 @@ import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.di.GlobalServices
 
 fun registerXiaozhiTools() {
     MCPToolRegistry.registerTool(
@@ -17,9 +18,9 @@ fun registerXiaozhiTools() {
     ) { args ->
         val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100)
             ?: throw Exception("level 必须为 0-100 的整数")
-        AudioSettings.setOutputVolume(AppContainer.context, level)
+        AudioSettings.setOutputVolume(AppContext.context, level)
         // 立即应用到所有活跃解码器（私聊 + 群聊各 bot）
-        AppContainer.connectionRepository.let { repo ->
+        GlobalServices.connectionRepository.let { repo ->
             if (repo is com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl) {
                 repo.setVolume(level)
             }
@@ -36,7 +37,7 @@ fun registerXiaozhiTools() {
         description = "获取当前小智 AI 的语音输出音量（0-100）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val level = AudioSettings.getOutputVolume(AppContainer.context)
+        val level = AudioSettings.getOutputVolume(AppContext.context)
         JsonObject().apply {
             addProperty("level", level)
         }
@@ -54,7 +55,7 @@ fun registerXiaozhiTools() {
             ?: throw Exception("mode 必须为 auto/manual/realtime")
         val validModes = setOf("auto", "manual", "realtime")
         if (mode !in validModes) throw Exception("mode 必须为 auto/manual/realtime，当前值: $mode")
-        AudioSettings.setListeningMode(AppContainer.context,
+        AudioSettings.setListeningMode(AppContext.context,
             com.xiaozhi.aiservice.domain.model.VoiceMode.fromServerValue(mode))
         JsonObject().apply {
             addProperty("success", true)
@@ -68,7 +69,7 @@ fun registerXiaozhiTools() {
         description = "获取当前小智 AI 的监听模式",
         inputSchema = jsonSchema()
     ) { _ ->
-        val mode = AudioSettings.getListeningMode(AppContainer.context)
+        val mode = AudioSettings.getListeningMode(AppContext.context)
         JsonObject().apply {
             addProperty("mode", mode.serverValue)
             addProperty("display_name", mode.displayName)
@@ -86,10 +87,10 @@ fun registerXiaozhiTools() {
         val validModes = setOf("off", "device")
         if (mode !in validModes) throw Exception("mode 必须为 off/device")
         val aecMode = DeviceSettings.AecMode.fromValue(mode)
-        DeviceSettings.setAecMode(AppContainer.context, aecMode)
+        DeviceSettings.setAecMode(AppContext.context, aecMode)
         // 立即应用 AEC 状态
-        AppContainer.audioService.setAecEnabled(aecMode != DeviceSettings.AecMode.OFF)
-        val isSupported = AppContainer.audioService.isAecSupported()
+        GlobalServices.audioService.setAecEnabled(aecMode != DeviceSettings.AecMode.OFF)
+        val isSupported = GlobalServices.audioService.isAecSupported()
         JsonObject().apply {
             addProperty("success", true)
             addProperty("mode", aecMode.value)
@@ -107,7 +108,7 @@ fun registerXiaozhiTools() {
         description = "获取小智 AI 设备的当前状态（设备状态机）",
         inputSchema = jsonSchema()
     ) { _ ->
-        val connRepo = AppContainer.connectionRepository
+        val connRepo = GlobalServices.connectionRepository
         val aiState = connRepo.aiState.value
         val deviceState = connRepo.deviceState.value
         JsonObject().apply {

@@ -16,7 +16,7 @@ import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -36,7 +36,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val action = (args["action"] as? String)?.lowercase() ?: "read"
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             ?: throw Exception("此设备不支持剪贴板")
 
@@ -76,7 +76,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val mode = (args["mode"] as? String)?.lowercase() ?: throw Exception("mode 不能为空")
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
 
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: throw Exception("无法获取 AudioManager")
@@ -116,7 +116,7 @@ fun registerExtraTools() {
             "duration_seconds" to jsonNumberProp("响铃持续时间（秒），默认 15，最大 60"),
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val duration = (args["duration_seconds"] as? Number)?.toInt()?.coerceIn(1, 60) ?: 15
 
         val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
@@ -185,7 +185,7 @@ fun registerExtraTools() {
             "max_results" to jsonNumberProp("最多返回数量，默认 20"),
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 20
         val wifiManager = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: throw Exception("此设备不支持 WiFi")
@@ -246,7 +246,7 @@ fun registerExtraTools() {
             "max_results" to jsonNumberProp("最多返回数量，默认 20"),
         )
     ) { args ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
 
         // 检查权限
         if (Build.VERSION.SDK_INT >= 31) {
@@ -320,7 +320,7 @@ fun registerExtraTools() {
         )
     ) { args ->
         val sensorType = (args["type"] as? String)?.lowercase() ?: "all"
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val sensorManager = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
             ?: throw Exception("此设备不支持传感器")
 
@@ -386,7 +386,7 @@ fun registerExtraTools() {
         description = "检测设备是否正在使用 VPN 连接",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = AppContainer.context
+        val ctx = AppContext.context
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         var vpnActive = false
         var vpnName = ""

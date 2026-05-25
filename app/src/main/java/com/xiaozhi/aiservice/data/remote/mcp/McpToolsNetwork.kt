@@ -7,7 +7,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
 
 fun registerNetworkTools() {
     MCPToolRegistry.registerTool(
@@ -15,7 +15,7 @@ fun registerNetworkTools() {
         description = "获取当前设备的网络状态，包括 WiFi/移动网络、IP 地址、信号强度等",
         inputSchema = jsonSchema()
     ) { _ ->
-        val context = AppContainer.context
+        val context = AppContext.context
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val network = cm?.activeNetwork

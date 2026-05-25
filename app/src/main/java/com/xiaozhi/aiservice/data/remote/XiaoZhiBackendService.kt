@@ -11,7 +11,8 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.AiStateStr
 import com.xiaozhi.aiservice.data.settings.AudioSettings
-import com.xiaozhi.aiservice.di.AppContainer
+import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.di.GlobalServices
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -910,13 +911,13 @@ class XiaoZhiBackendService(private val gson: Gson) {
                     addProperty("name", "volume")
                     addProperty("type", "number")
                     addProperty("description", "输出音量 0-100")
-                    addProperty("value", AudioSettings.getOutputVolume(AppContainer.context))
+                    addProperty("value", AudioSettings.getOutputVolume(AppContext.context))
                 })
                 add(JsonObject().apply {
                     addProperty("name", "aec")
                     addProperty("type", "binary")
                     addProperty("description", "声学回声消除")
-                    addProperty("value", AppContainer.audioService.isAecEnabled())
+                    addProperty("value", GlobalServices.audioService.isAecEnabled())
                 })
                 add(JsonObject().apply {
                     addProperty("name", "device_name")
