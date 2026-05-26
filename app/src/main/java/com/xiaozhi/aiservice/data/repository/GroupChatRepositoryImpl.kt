@@ -353,7 +353,16 @@ class GroupChatRepositoryImpl @Inject constructor(
             val preferences = context.messagesDataStore.data.first()
             val json = preferences[messagesKey(groupId)] ?: "[]"
             val type = object : TypeToken<List<ChatMessage>>() {}.type
-            gson.fromJson(json, type) ?: emptyList()
+            val messages: List<ChatMessage> = gson.fromJson(json, type) ?: emptyList()
+            // 安全处理：Gson 反序列化可能把 Kotlin 非空字段设为 null
+            messages.map { msg ->
+                msg.copy(
+                    content = msg.content ?: "",
+                    botName = msg.botName ?: "",
+                    id = msg.id ?: "",
+                    botId = msg.botId ?: ""
+                )
+            }
         } catch (e: Exception) {
             emptyList()
         }

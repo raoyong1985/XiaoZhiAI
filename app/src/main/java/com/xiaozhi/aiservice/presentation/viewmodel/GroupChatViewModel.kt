@@ -148,6 +148,8 @@ class GroupChatViewModel @Inject constructor(
     private var sttCollectorJob: Job? = null   // 语音转文字结果收集
     private var observeJob: Job? = null        // 主监听协程
     private var stuckRelayWatcher: Job? = null // 看门狗
+    /** 监听 service 重建事件，重建 bot 事件观察者 */
+    private var serviceReplacedJob: Job? = null
 
     /** speakerMutex：保护 speaker 切换操作，避免并发触发两次触发下一 bot */
     private val speakerMutex = Mutex()
@@ -229,9 +231,10 @@ class GroupChatViewModel @Inject constructor(
     fun connectGroup(groupId: String) {
         observeJob?.cancel()
         observeJob = null
-        botConnectionPool.disconnectAll()
+        // 先 cancel 所有观察者，再断开连接（防止旧事件通道消费断线状态变更）
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()
+        botConnectionPool.disconnectAll()
         playbackManager.releaseAll()
         _relayState.value = RelayState()
         audioForwardBuffer.clear()
@@ -267,6 +270,23 @@ class GroupChatViewModel @Inject constructor(
                 }
             } finally {
                 _isConnecting.value = false
+            }
+        }
+
+        // ── 监听 service 重建（断线重连时重建观察者） ──
+        serviceReplacedJob?.cancel()
+        serviceReplacedJob = viewModelScope.launch {
+            botConnectionPool.serviceReplaced.collect { (botId, newService) ->
+                val contact = _contacts.value.find { it.id == botId }
+                if (contact == null) {
+                    android.util.Log.w(TAG, "serviceReplaced: 找不到 bot[$botId] 的联系人信息")
+                    return@collect
+                }
+                android.util.Log.i(TAG, "serviceReplaced: bot[$botId] 连接已重建，重建事件观察者")
+                // 取消旧观察者
+                botObserverJobs[botId]?.cancel()
+                // 注册新观察者
+                observeBotEvents(botId, currentGroupId, contact.name, newService)
             }
         }
 
@@ -866,6 +886,7 @@ class GroupChatViewModel @Inject constructor(
         stopVoiceInput()
         sttCollectorJob?.cancel()
         stuckRelayWatcher?.cancel()
+        serviceReplacedJob?.cancel()
         botConnectionPool.disconnectAll()
         botObserverJobs.values.forEach { it.cancel() }
         botObserverJobs.clear()

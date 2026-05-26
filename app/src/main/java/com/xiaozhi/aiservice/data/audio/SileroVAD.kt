@@ -121,7 +121,10 @@ class SileroVAD(
      * 2. 双阈值带 hangover 判断
      * 3. temp_end：语音中短暂停顿不切断
      * 4. triggered 状态：仅语音段填入滑动窗口
+     *
+     * 线程安全：@Synchronized 防止多线程并发 ONNX 推理（OrtSession 非线程安全）
      */
+    @Synchronized
     fun isVoice(pcmData: ByteArray): Boolean {
         if (!initialized || session == null || env == null) {
             return false
