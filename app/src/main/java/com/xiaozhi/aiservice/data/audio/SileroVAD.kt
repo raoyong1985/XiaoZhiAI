@@ -65,7 +65,7 @@ class SileroVAD(
     // 滑动窗口去抖动（仅 triggered 时有效）
     private val voiceWindow = java.util.ArrayDeque<Boolean>()
 
-    fun isInitialized(): Boolean = initialized
+    fun isInitialized(): Boolean = false // ONNX Runtime 在 OPPO/MTK 上有 JNI class 引用丢失 bug (SIGABRT)，改用 RMS 能量兜底
 
     /**
      * 初始化 ONNX 会话

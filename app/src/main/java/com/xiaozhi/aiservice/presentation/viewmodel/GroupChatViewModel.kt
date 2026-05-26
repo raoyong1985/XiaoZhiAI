@@ -452,8 +452,10 @@ class GroupChatViewModel @Inject constructor(
         // 这里收集文本用于 UI 显示和死循环检测
         sttCollectorJob?.cancel()
         sttCollectorJob = viewModelScope.launch {
-            service.textMessage.drop(1).collect { text ->
-                if (text.isNotBlank()) {
+            var lastCollectedText = ""
+            service.textMessage.collect { text ->
+                if (text.isNotBlank() && text != lastCollectedText) {
+                    lastCollectedText = text
                     if (_relayState.value.lastForwardedText.isEmpty()) {
                         _relayState.update { it.copy(lastForwardedText = text) }
                     }

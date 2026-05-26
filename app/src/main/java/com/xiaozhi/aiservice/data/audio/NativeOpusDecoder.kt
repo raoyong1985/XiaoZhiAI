@@ -592,13 +592,13 @@ class NativeOpusDecoder(
      * 全部计入，因为 playbackHeadPosition 包含所有已播放字节
      */
     fun getRemainingBytes(): Long {
-        val track = audioTrackRef.get() ?: return 0L
-        val playedFrames = track.playbackHeadPosition.toLong()
-        val playedBytes = playedFrames * 2L * channels
-        return try {
-            (totalBytesWritten.get() - playedBytes).coerceAtLeast(0L)
+        try {
+            val track = audioTrackRef.get() ?: return 0L
+            val playedFrames = track.playbackHeadPosition.toLong()
+            val playedBytes = playedFrames * 2L * channels
+            return (totalBytesWritten.get() - playedBytes).coerceAtLeast(0L)
         } catch (e: Exception) {
-            0L
+            return 0L
         }
     }
     /**

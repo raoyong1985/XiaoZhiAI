@@ -89,10 +89,8 @@ class AudioService {
     fun init(context: Context) {
         appContext = context
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        // 异步初始化 Silero VAD（ONNX 模型加载约 50-100ms）
-        Thread {
-            sileroVad.init(context)
-        }.apply { start() }
+        // Silero VAD 已禁用（ONNX Runtime JNI 在 OPPO/MTK 上 java_class 引用丢失导致 SIGABRT）
+        // 改用 AudioService.calculateRmsEnergy() RMS 能量阈值兜底
     }
 
     /**
