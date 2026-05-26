@@ -9,7 +9,7 @@ import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
@@ -34,16 +34,13 @@ class BotConnectionPoolImpl @Inject constructor(
     /** botId → BotConnection（WebSocket 连接实例） */
     private val connections = ConcurrentHashMap<String, BotConnection>()
 
-    /** 已标记为「死亡」的 bot 集合
+    /**
+     * 已标记为「死亡」的 bot 集合
      * 死亡原因：WebSocket 连接无法恢复（Error 状态）
      * 死亡后的行为：所有涉及该 bot 的接龙操作跳过
      * 恢复方式：clearDead() 手动清理（每 2 分钟自动清理一次）
      */
     private val deadBotIds = ConcurrentHashMap.newKeySet<String>()
-
-    /** service 被重建时的事件流 */
-    private val _serviceReplaced = MutableSharedFlow<Pair<String, BotConnection>>(extraBufferCapacity = 4)
-    override val serviceReplaced: SharedFlow<Pair<String, BotConnection>> = _serviceReplaced.asSharedFlow()
 
     // ── 连接管理 ──
 
@@ -89,33 +86,24 @@ class BotConnectionPoolImpl @Inject constructor(
     override suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
         if (deadBotIds.contains(botId)) return false
         val service = connections[botId]
-        // 已连接 → 直接返回
         if (service != null && service.connectionState.value is BotConnectionState.Connected) {
             return true
         }
-        // 正在连接中 → 等待完成，不重建
-        if (service != null && service.connectionState.value is BotConnectionState.Connecting) {
-            Logger.i(TAG, "bot[$botId] 正在连接中，等待完成")
-            return withTimeoutOrNull(5000) {
-                service.connectionState.first { it is BotConnectionState.Connected }
-                true
-            } ?: false
+        if (service != null && service.connectionState.value is BotConnectionState.Error) {
+            Logger.w(TAG, "bot[$botId] 连接失败(Error)，尝试重连覆盖旧连接")
+            // 不直接返回！Error 的 service 可能只是服务器断线后的残留，
+            // 直接走到下面的重连逻辑创建新连接替代它
         }
-        // Error / Disconnected / null → 重建连接
-        Logger.w(TAG, "重新连接: $botId (state=${service?.connectionState?.value})")
+        Logger.w(TAG, "重新连接: $botId")
+        // 覆盖前断开旧连接，防止泄漏（不等待关闭完成）
         CoroutineScope(Dispatchers.IO).launch { connections[botId]?.disconnect() }
         val newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
         connections[botId] = newService
         newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
-        val result = withTimeoutOrNull(5000) {
+        return withTimeoutOrNull(5000) {
             newService.connectionState.first { it is BotConnectionState.Connected }
             true
         } ?: false
-        // 重建成功 → 通知 ViewModel 重建观察者
-        if (result) {
-            _serviceReplaced.tryEmit(botId to newService)
-        }
-        return result
     }
 
     // ── 死亡标记管理 ──
