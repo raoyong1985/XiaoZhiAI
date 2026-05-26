@@ -95,10 +95,10 @@ fun ChatScreen(
     // 顶部栏状态
     val connectionColor by animateColorAsState(
         targetValue = when (uiState.connectionState) {
-            is BotConnectionState.Connected -> Color(0xFF4CAF50)
-            is BotConnectionState.Connecting -> Color(0xFFFFC107)
-            is BotConnectionState.Error -> Color(0xFFF44336)
-            else -> Color(0xFF9E9E9E)
+            is BotConnectionState.Connected -> MaterialTheme.colorScheme.primary
+            is BotConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
+            is BotConnectionState.Error -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
         },
         label = "connection_color"
     )

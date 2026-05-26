@@ -40,38 +40,6 @@ import kotlinx.coroutines.launch
 
 // ── 气泡颜色盘 ──
 // 每个 bot 在群聊中有独立的背景色，帮助用户区分不同的智能体
-val botBubbleColors = listOf(
-    Color(0xFFE8F5E9),  // 浅绿
-    Color(0xFFE3F2FD),  // 浅蓝
-    Color(0xFFFFF3E0),  // 浅橙
-    Color(0xFFF3E5F5),  // 浅紫
-    Color(0xFFE0F7FA),  // 浅青
-    Color(0xFFFFEBEE),  // 浅红
-)
-
-/**
- * 群聊聊天界面（对话屏幕）
- *
- * 功能：
- * - 消息列表（LazyColumn 自动滚动到最新消息）
- * - 底部输入区（语音按钮 / 文字输入框，根据 group.inputMode 切换）
- * - 进入时自动连接群聊（connectGroup），离开时断开（disconnectGroup）
- *
- * 界面布局：
- * ┌─────────────────────────┐
- * │  TopAppBar：群聊名称+成员数  │
- * ├─────────────────────────┤
- * │  消息列表                  │
- * │  ┌───┐  ┌──────┐       │
- * │  │bot│→│回复内容│       │
- * │  └───┘  └──────┘       │
- * │           ┌──────┐     │
- * │           │我的消息│←── │
- * │           └──────┘     │
- * ├─────────────────────────┤
- * │  输入区（语音/文字切换）   │
- * └─────────────────────────┘
- */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun GroupChatScreen(
@@ -205,9 +173,17 @@ fun GroupChatScreen(
 fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
 
+    val botColors = listOf(
+        MaterialTheme.colorScheme.primaryContainer,
+        MaterialTheme.colorScheme.secondaryContainer,
+        MaterialTheme.colorScheme.tertiaryContainer,
+        MaterialTheme.colorScheme.surfaceVariant,
+        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.8f),
+    )
     val bubbleColor = when {
         isFromMe -> MaterialTheme.colorScheme.primary
-        botColorIndex >= 0 && botColorIndex < botBubbleColors.size -> botBubbleColors[botColorIndex]
+        botColorIndex >= 0 && botColorIndex < botColors.size -> botColors[botColorIndex]
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
