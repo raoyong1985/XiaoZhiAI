@@ -7,7 +7,10 @@ import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.domain.repository.BotConnectionPoolRepository
 import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -92,8 +95,8 @@ class BotConnectionPoolImpl @Inject constructor(
             // 直接走到下面的重连逻辑创建新连接替代它
         }
         Logger.w(TAG, "重新连接: $botId")
-        // 覆盖前断开旧连接，防止泄漏
-        connections[botId]?.disconnect()
+        // 覆盖前断开旧连接，防止泄漏（不等待关闭完成）
+        CoroutineScope(Dispatchers.IO).launch { connections[botId]?.disconnect() }
         val newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
         connections[botId] = newService
         newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
