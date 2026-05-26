@@ -4,6 +4,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -173,14 +174,26 @@ fun GroupChatScreen(
 fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((String) -> Unit)? = null) {
     val isFromMe = message.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.SENT
 
-    val botColors = listOf(
-        MaterialTheme.colorScheme.primaryContainer,
-        MaterialTheme.colorScheme.secondaryContainer,
-        MaterialTheme.colorScheme.tertiaryContainer,
-        MaterialTheme.colorScheme.surfaceVariant,
-        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.8f),
-    )
+    val isDark = isSystemInDarkTheme()
+    val botColors = if (isDark) {
+        listOf(
+            Color(0xFF2D5A3A),  // 深绿
+            Color(0xFF2A3F6B),  // 深蓝
+            Color(0xFF5C4A1F),  // 深琥珀
+            Color(0xFF4A2D5C),  // 深紫
+            Color(0xFF1F4A5C),  // 深青
+            Color(0xFF5C2A2A),  // 深红
+        )
+    } else {
+        listOf(
+            Color(0xFFE8F5E9),  // 浅绿
+            Color(0xFFE3F2FD),  // 浅蓝
+            Color(0xFFFFF3E0),  // 浅橙
+            Color(0xFFF3E5F5),  // 浅紫
+            Color(0xFFE0F7FA),  // 浅青
+            Color(0xFFFFEBEE),  // 浅红
+        )
+    }
     val bubbleColor = when {
         isFromMe -> MaterialTheme.colorScheme.primary
         botColorIndex >= 0 && botColorIndex < botColors.size -> botColors[botColorIndex]
