@@ -139,7 +139,7 @@ fun GroupChatScreen(
         // ── 消息列表示 ──
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(vertical = 2.dp),
             state = listState
         ) {
             items(messages, key = { it.id }) { message ->

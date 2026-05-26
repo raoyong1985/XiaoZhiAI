@@ -122,7 +122,7 @@ fun GroupChatListScreen(
             // ── 群聊列表 ──
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                contentPadding = PaddingValues(vertical = 2.dp)
             ) {
                 items(groups) { group ->
                     ListItem(
