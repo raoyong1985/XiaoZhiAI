@@ -91,7 +91,7 @@ fun ContactsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                contentPadding = PaddingValues(vertical = 2.dp)
             ) {
                 items(contacts, key = { it.id }) { contact ->
                     ContactItem(
