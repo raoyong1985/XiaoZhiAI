@@ -4,15 +4,15 @@ package com.xiaozhi.aiservice.domain.usecase.relay
  * 死循环检测器 —— 检测 bot 接龙中的重复发言模式
  *
  * 检测策略（双维度）：
- * 1. hint 维度：连续 3 次 hint 完全相同 → 疑似死循环
- * 2. speaker 维度：连续 3 次候选 speaker 是同一个 bot → 疑似死循环
- * 3. 触发条件连续出现 ≥3 次才终止（对数衰减：连续越多阈值越低）
+ * 1. hint 维度：连续 5 次 hint 完全相同 → 疑似死循环
+ * 2. speaker 维度：连续 5 次候选 speaker 是同一个 bot → 疑似死循环
+ * 3. 触发条件连续出现 ≥8 次才终止（调高减少误杀）
  *
  * 线程安全：全部操作在 synchronized(lock) 保护下
  */
 class DeadloopDetector(
-    private val maxDeadloop: Int = 3,
-    private val maxCount: Int = 3
+    private val maxDeadloop: Int = 5,
+    private val maxCount: Int = 8
 ) {
     private val lock = Any()
     private val recentHints = mutableListOf<String>()
@@ -43,9 +43,8 @@ class DeadloopDetector(
             }
             if (isDead) {
                 deadloopCount++
-                // 对数衰减：连续次数越多，触发阈值越低（至少为1）
-                val effectiveThreshold = maxOf(1, maxCount - deadloopCount / 2)
-                if (deadloopCount >= effectiveThreshold) {
+                // 触发条件连续出现 ≥8 次才终止
+                if (deadloopCount >= maxCount) {
                     deadloopCount = 0
                     recentHints.clear()
                     recentCandidates.clear()

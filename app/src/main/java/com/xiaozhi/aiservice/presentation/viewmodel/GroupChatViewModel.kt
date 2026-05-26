@@ -167,16 +167,10 @@ class GroupChatViewModel @Inject constructor(
         botConnectionPool, audioForwardBuffer, _relayState,
         { _contacts.value }, { _isRecording.value }, botLastAudioTime,
         playbackManager, speakerMutex, audioForwardHandler, speakerScorer, deadloopDetector,
-        tag = TAG, scope = viewModelScope
+        tag = TAG
     )
     /** 用于音频过滤的 grace 窗口：bot 进入 speaking 状态后 N 毫秒内允许音频通过 */
     private val botSpeakingTime = ConcurrentHashMap<String, Long>()
-    /** 等待 speaker 索引最后变更的时间戳（ms），用于 grace 窗口计算 */
-    private var lastWaitingChangeMs = 0L
-    /** 空闲自动恢复连续计数，达到阈值后停止恢复 */
-    private var continuousIdleRecoveries = 0
-    /** 解码器缓存：采样率 → sourceId，避免采样率变化时频繁重建 */
-    private val decoderCache = ConcurrentHashMap<Int, String>()
 
     // ── 消息去重 ──
     private val deduplicationUtil = DeduplicationUtil()
@@ -207,9 +201,8 @@ class GroupChatViewModel @Inject constructor(
         viewModelScope.launch { _groups.value = groupChatRepository.getGroups() }
     }
 
-    /** 从仓库加载联系人列表（可用的智能体，仅首次加载） */
+    /** 从仓库加载联系人列表（可用的智能体） */
     private fun loadContacts() {
-        if (_contacts.value.isNotEmpty()) return
         viewModelScope.launch {
             contactsRepository.getContacts().collect { _contacts.value = it }
         }
@@ -304,15 +297,7 @@ class GroupChatViewModel @Inject constructor(
                         android.util.Log.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超${timeoutMs/1000}s），清除等待状态并重启接龙")
                         _relayState.update { it.clearWaiting() }
                         botConnectionPool.clearDead()
-                        viewModelScope.launch {
-                            var retries = 0
-                            while (retries < 5) {
-                                triggerNextSpeaker("")
-                                if (_relayState.value.waitingSpeakerIndex >= 0) break
-                                delay(1000)
-                                retries++
-                            }
-                        }
+                        viewModelScope.launch { triggerNextSpeaker("") }
                     }
                 } else if (rs.forwardRound >= 0 && rs.botIds.isNotEmpty()) {
                     // 模式2：无等待 bot 但对话未结束——所有 bot 静默 >30s，自动恢复
@@ -321,32 +306,11 @@ class GroupChatViewModel @Inject constructor(
                         t > 0 && System.currentTimeMillis() - t < 30_000
                     }
                     if (!anyAudioRecently) {
-                        // 检测是否包含结束语，避免无限接龙
-                        val lastText = _relayState.value.lastForwardedText.lowercase()
-                        val endKeywords = listOf("再见", "拜拜", "下次", "结束", "bye", "goodbye")
-                        if (endKeywords.any { lastText.contains(it) }) {
-                            continuousIdleRecoveries = 0
-                            android.util.Log.i(TAG, "检测到结束语，跳过空闲恢复")
-                            continue
-                        }
-                        continuousIdleRecoveries++
-                        if (continuousIdleRecoveries >= 3) {
-                            android.util.Log.w(TAG, "连续空闲恢复≥3次，停止自动恢复")
-                            continue
-                        }
                         android.util.Log.w(TAG, "接龙空闲恢复：所有bot静默 >30s，清理死bot并重启接龙")
                         botConnectionPool.clearDead()
                         // 重置轮次，防止卡在"已达最大轮次"
                         _relayState.update { it.copy(forwardRound = 0) }
-                        viewModelScope.launch {
-                            var retries = 0
-                            while (retries < 5) {
-                                triggerNextSpeaker("")
-                                if (_relayState.value.waitingSpeakerIndex >= 0) break
-                                delay(1000)
-                                retries++
-                            }
-                        }
+                        viewModelScope.launch { triggerNextSpeaker("") }
                     }
                 }
             }
@@ -403,7 +367,6 @@ class GroupChatViewModel @Inject constructor(
             forwardRound = 0, currentSpeakerIndex = 0,
             waitingSpeakerIndex = 0, lastForwardedText = ""
         ) }
-        lastWaitingChangeMs = System.currentTimeMillis()
         deduplicationUtil.clear()
 
         service.sendListenStart("auto")
@@ -545,9 +508,10 @@ class GroupChatViewModel @Inject constructor(
                 val rs = _relayState.value
                 val idx = rs.botIds.indexOf(botId)
                 if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) {
-                    // 放宽过滤：grace 窗口内允许非预期 bot 的音频通过
+                    // 放宽过滤：如果该 bot 刚在 3 秒内进入 speaking 状态，允许音频通过
                     // 解决 triggerNextSpeaker 还没更新 ws、但 bot 已经开始推音频的竞态
-                    if (System.currentTimeMillis() - lastWaitingChangeMs > 800) {
+                    val recentSpeaking = botSpeakingTime[botId] ?: 0L
+                    if (System.currentTimeMillis() - recentSpeaking > 3000) {
                         android.util.Log.w(TAG, "[$botName] 音频被ws过滤(idx=$idx, ws=${rs.waitingSpeakerIndex}), ${audioData.size}B")
                         return@collect
                     }
@@ -557,17 +521,24 @@ class GroupChatViewModel @Inject constructor(
                 val serverRate = service.getServerSampleRate()
                 val serverCh = service.getServerChannels()
                 val volume = AudioSettings.getOutputVolume(context)
-                // 按采样率缓存解码器，避免频繁重建导致短暂无声
-                val currentSourceId = "${groupId}_shared_${serverRate}"
+                // 群聊所有 bot 共享单个解码器（OPPO/MTK 多个 AudioTrack 同时存在会无声）
+                // 切换 bot 时释放旧解码器，用新参数创建共享解码器
+                val currentSourceId = "${groupId}_shared"
                 if (!playbackManager.contains(currentSourceId)) {
-                    // 先等旧解码器的队列排空再持锁释放，避免切换时丢失音频首帧
-                    val oldCached = decoderCache[serverRate]
-                    if (oldCached != null && playbackManager.contains(oldCached)) {
-                        playbackManager.waitForQueueEmpty(oldCached, 500)
-                    }
                     speakerMutex.withLock {
                         if (!playbackManager.contains(currentSourceId)) {
-                            decoderCache[serverRate] = currentSourceId
+                            playbackManager.releaseAll()
+                            playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
+                        }
+                    }
+                } else {
+                    // 采样率变化时重建解码器（不同 bot 可能用不同采样率）
+                    val existingRate = playbackManager.getServerSampleRate(currentSourceId)
+                    if (existingRate != 0 && existingRate != serverRate) {
+                        speakerMutex.withLock {
+                            // 先等旧解码器的队列排空再释放，避免切换时丢失 bot 的音频首帧
+                            playbackManager.waitForQueueEmpty(currentSourceId, 500)
+                            playbackManager.release(currentSourceId)
                             playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
                         }
                     }
@@ -679,13 +650,12 @@ class GroupChatViewModel @Inject constructor(
                                 sttCollectorJob?.cancel()
                             }
                             // 预创建共享解码器（减少音频到达时的首帧延迟）
-                            // 注意：按采样率区分 sourceId，避免切换 bot 时频繁重建
-                            val serverRate = service.getServerSampleRate()
-                            val serverCh = service.getServerChannels()
-                            val volume = AudioSettings.getOutputVolume(context)
-                            val currentSourceId = "${groupId}_shared_${serverRate}"
+                            // 注意：用 groupId_shared 而非 botId，audioData 实际解码用的是共享解码器
+                            val currentSourceId = "${groupId}_shared"
                             if (!playbackManager.contains(currentSourceId)) {
-                                decoderCache[serverRate] = currentSourceId
+                                val serverRate = service.getServerSampleRate()
+                                val serverCh = service.getServerChannels()
+                                val volume = AudioSettings.getOutputVolume(context)
                                 playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
                                 android.util.Log.i(TAG, "[$botName] 预创建共享解码器 (${serverRate}Hz, 音量=$volume%)")
                             }
@@ -758,7 +728,6 @@ class GroupChatViewModel @Inject constructor(
      */
     private suspend fun triggerNextSpeaker(previousReply: String = "") {
         relayEngine.triggerNextSpeaker(previousReply)
-        lastWaitingChangeMs = System.currentTimeMillis()
     }
 
     // ── 连接保活 ──
