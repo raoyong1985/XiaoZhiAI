@@ -252,15 +252,25 @@ private fun ContactItem(
                 }
                 DropdownMenu(
                     expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
                 ) {
+                    // 基本设置
+                    Text(
+                        "基本设置",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
                     DropdownMenuItem(
                         text = { Text("编辑联系人") },
                         onClick = {
                             showMenu = false
                             onEdit()
                         },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2196F3)) }
                     )
                     DropdownMenuItem(
                         text = {
@@ -275,18 +285,27 @@ private fun ContactItem(
                         leadingIcon = {
                             Icon(
                                 if (contact.inputMode == InputMode.VOICE) Icons.Default.Keyboard else Icons.Default.Mic,
-                                contentDescription = null
+                                contentDescription = null,
+                                tint = Color(0xFF4CAF50)
                             )
                         }
                     )
-                    Divider()
+                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // 数据管理
+                    Text(
+                        "数据管理",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
                     DropdownMenuItem(
                         text = { Text("清空聊天记录") },
                         onClick = {
                             showMenu = false
                             onClearMessages()
                         },
-                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) }
+                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF9800)) }
                     )
                     DropdownMenuItem(
                         text = { Text("导出聊天记录") },
@@ -294,9 +313,11 @@ private fun ContactItem(
                             showMenu = false
                             onExportMessages()
                         },
-                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF9C27B0)) }
                     )
-                    Divider()
+                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // 危险操作
                     DropdownMenuItem(
                         text = { Text("删除联系人", color = MaterialTheme.colorScheme.error) },
                         onClick = {

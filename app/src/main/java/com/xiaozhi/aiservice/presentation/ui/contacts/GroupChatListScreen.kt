@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -172,12 +173,22 @@ fun GroupChatListScreen(
                                 }
                                 DropdownMenu(
                                     expanded = showMenu,
-                                    onDismissRequest = { showMenu = false }
+                                    onDismissRequest = { showMenu = false },
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surface)
                                 ) {
+                                    // 基本设置
+                                    Text(
+                                        "基本设置",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("编辑名称") },
                                         onClick = { showMenu = false; editingGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2196F3)) }
                                     )
                                     DropdownMenuItem(
                                         text = {
@@ -193,25 +204,43 @@ fun GroupChatListScreen(
                                         leadingIcon = {
                                             Icon(
                                                 if (group.inputMode == 0) Icons.Default.Keyboard else Icons.Default.Mic,
-                                                contentDescription = null
+                                                contentDescription = null,
+                                                tint = Color(0xFF4CAF50)
                                             )
                                         }
+                                    )
+                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                                    // 成员管理
+                                    Text(
+                                        "成员管理",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                                     )
                                     DropdownMenuItem(
                                         text = { Text("添加成员") },
                                         onClick = { showMenu = false; addingMemberGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null) }
+                                        leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null, tint = Color(0xFF4CAF50)) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("删除成员") },
                                         onClick = { showMenu = false; removingMemberGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.PersonRemove, contentDescription = null) }
+                                        leadingIcon = { Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFFF9800)) }
                                     )
-                                    Divider()
+                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                                    // 数据管理
+                                    Text(
+                                        "数据管理",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("清空群聊记录") },
                                         onClick = { showMenu = false; clearingGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) }
+                                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF9800)) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("导出群聊记录") },
@@ -219,9 +248,11 @@ fun GroupChatListScreen(
                                             showMenu = false
                                             viewModel.exportGroupMessages(group.id, context)
                                         },
-                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF9C27B0)) }
                                     )
-                                    Divider()
+                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+                                    // 危险操作
                                     DropdownMenuItem(
                                         text = { Text("解散该群", color = MaterialTheme.colorScheme.error) },
                                         onClick = { showMenu = false; deletingGroup = group },
