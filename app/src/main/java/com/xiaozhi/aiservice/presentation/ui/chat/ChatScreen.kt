@@ -44,6 +44,9 @@ import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.presentation.ui.components.InputBar
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -253,37 +256,49 @@ private fun MessageBubble(message: ChatMessage, onCopy: ((String) -> Unit)? = nu
 
 @Composable
 private fun ImageBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float) {
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeText = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(message.content)  // 本地文件路径
-                .crossfade(true)
-                .build(),
-            contentDescription = "照片",
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .heightIn(max = 360.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isFromMe) 16.dp else 4.dp,
-                        bottomEnd = if (isFromMe) 4.dp else 16.dp
-                    )
-                ),
-            contentScale = ContentScale.Fit
-        )
+        Column(horizontalAlignment = if (isFromMe) Alignment.End else Alignment.Start) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(message.content)  // 本地文件路径
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "照片",
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .heightIn(max = 360.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isFromMe) 16.dp else 4.dp,
+                            bottomEnd = if (isFromMe) 4.dp else 16.dp
+                        )
+                    ),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = timeText,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                fontSize = 11.sp
+            )
+        }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: Float, onCopy: ((String) -> Unit)? = null) {
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeText = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -313,11 +328,20 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
                 )
                 .padding(12.dp)
         ) {
-            Text(
-                text = message.content,
-                color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 15.sp
-            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = message.content,
+                    color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 15.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = timeText,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
+                )
+            }
         }
     }
 }

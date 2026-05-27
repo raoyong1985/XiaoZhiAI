@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
@@ -162,12 +163,22 @@ private fun EmptyContactsView(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = Icons.Default.PersonAdd,
-            contentDescription = null,
-            modifier = Modifier.size(72.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
+        // 两个重叠的对话气泡
+        Canvas(modifier = Modifier.size(80.dp)) {
+            val c = androidx.compose.ui.graphics.Color(0xFFBDBDBD).copy(alpha = 0.4f)
+            drawRoundRect(
+                color = c,
+                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.05f, size.height * 0.25f),
+                size = androidx.compose.ui.geometry.Size(size.width * 0.65f, size.height * 0.5f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.12f)
+            )
+            drawRoundRect(
+                color = c,
+                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.3f, size.height * 0.1f),
+                size = androidx.compose.ui.geometry.Size(size.width * 0.65f, size.height * 0.5f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.12f)
+            )
+        }
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "暂无智能体",

@@ -32,6 +32,11 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.presentation.ui.components.InputBar
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.lazy.itemsIndexed
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 // ── 气泡颜色盘 ──
 // 每个 bot 在群聊中有独立的背景色，帮助用户区分不同的智能体
@@ -123,14 +128,17 @@ fun GroupChatScreen(
                 onStopRecording = { viewModel.stopVoiceInput() }
             )
         }
-    ) { padding ->
+        ) { padding ->
         // ── 消息列表示 ──
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(vertical = 2.dp),
             state = listState
         ) {
-            items(messages, key = { it.id }) { message ->
+            itemsIndexed(messages, key = { _, msg -> msg.id }) { index, message ->
+                if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
+                    DateSeparator(message.timestamp)
+                }
                 // 根据 botId 在群聊成员列表中的位置分配颜色
                 val botIndex = group?.botIds?.indexOf(message.botId) ?: -1
                 ChatMessageItem(
@@ -165,12 +173,12 @@ fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((Str
     val isDark = isSystemInDarkTheme()
     val botColors = if (isDark) {
         listOf(
-            Color(0xFF2D5A3A),  // 深绿
-            Color(0xFF2A3F6B),  // 深蓝
-            Color(0xFF5C4A1F),  // 深琥珀
-            Color(0xFF4A2D5C),  // 深紫
-            Color(0xFF1F4A5C),  // 深青
-            Color(0xFF5C2A2A),  // 深红
+            Color(0xFF3D7A4A),  // 深绿
+            Color(0xFF3A5F8B),  // 深蓝
+            Color(0xFF7C6A3F),  // 深琥珀
+            Color(0xFF6A4D7C),  // 深紫
+            Color(0xFF3F6A7C),  // 深青
+            Color(0xFF7C4A4A),  // 深红
         )
     } else {
         listOf(
@@ -188,6 +196,8 @@ fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((Str
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeText = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
@@ -212,7 +222,7 @@ fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((Str
                 )
                 .padding(12.dp)
         ) {
-            Column {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 // bot 回复显示名称（用户消息不显示）
                 if (!isFromMe) {
                     Text(
@@ -228,9 +238,39 @@ fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((Str
                     color = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 15.sp
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = timeText,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
+                )
             }
         }
     }
+}
+
+@Composable
+private fun DateSeparator(timestamp: Long) {
+    val dateFormat = remember { SimpleDateFormat("M月d日", Locale.getDefault()) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = dateFormat.format(Date(timestamp)),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
+    }
+}
+
+private fun isSameDay(t1: Long, t2: Long): Boolean {
+    val a = Calendar.getInstance().apply { timeInMillis = t1 }
+    val b = Calendar.getInstance().apply { timeInMillis = t2 }
+    return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
 }
 
 

@@ -21,6 +21,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 @Composable
 fun InputBar(
@@ -33,6 +35,13 @@ fun InputBar(
 ) {
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(inputMode) {
+        if (inputMode == 1) {
+            focusRequester.requestFocus()
+        }
+    }
 
     LaunchedEffect(sending) {
         if (sending) {
@@ -124,7 +133,7 @@ fun InputBar(
                                 OutlinedTextField(
                                     value = text,
                                     onValueChange = { text = it },
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
                                     placeholder = { Text("输入消息...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                                     singleLine = true,
                                     colors = OutlinedTextFieldDefaults.colors(

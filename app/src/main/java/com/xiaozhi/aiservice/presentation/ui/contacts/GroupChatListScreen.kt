@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -91,19 +92,12 @@ fun GroupChatListScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Group,
-                        contentDescription = null,
-                        modifier = Modifier.size(36.dp),
-                        tint = Color.White
-                    )
+                // 多个圆形组合表示群组
+                Canvas(modifier = Modifier.size(80.dp)) {
+                    val c = androidx.compose.ui.graphics.Color(0xFFBDBDBD).copy(alpha = 0.4f)
+                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.35f, size.height * 0.35f))
+                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.65f, size.height * 0.35f))
+                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.6f))
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
