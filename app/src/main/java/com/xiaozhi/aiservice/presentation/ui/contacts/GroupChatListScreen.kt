@@ -156,11 +156,11 @@ fun GroupChatListScreen(
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Group,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
-                                    tint = Color.White
+                                Text(
+                                    text = group.name.firstOrNull()?.toString() ?: "群",
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         },
