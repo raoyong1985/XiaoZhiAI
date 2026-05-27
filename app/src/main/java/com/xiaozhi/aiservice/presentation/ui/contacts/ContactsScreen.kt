@@ -27,8 +27,6 @@ import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.VoiceMode
@@ -236,9 +234,9 @@ private fun ContactItem(
                 tint = MaterialTheme.colorScheme.primary
             )
         },
-                    trailingContent = {
-                        Box(modifier = Modifier.padding(start = 8.dp)) {
-                            IconButton(onClick = { showMenu = true }) {
+        trailingContent = {
+            Box(modifier = Modifier.padding(start = 8.dp)) {
+                IconButton(onClick = { showMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
                 DropdownMenu(

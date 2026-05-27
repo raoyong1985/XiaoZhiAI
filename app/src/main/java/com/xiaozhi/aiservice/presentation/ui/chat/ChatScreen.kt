@@ -9,10 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -22,14 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -37,7 +32,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -47,9 +41,8 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageType
-import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
-import com.xiaozhi.aiservice.presentation.viewmodel.ChatUiState
+import com.xiaozhi.aiservice.presentation.ui.components.InputBar
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
@@ -144,10 +137,8 @@ fun ChatScreen(
     Scaffold(
         modifier = Modifier.imePadding().navigationBarsPadding(),
         bottomBar = {
-            ChatInputArea(
+            InputBar(
                 isRecording = uiState.isRecording,
-                aiState = uiState.aiState,
-                connectionState = uiState.connectionState,
                 inputMode = inputMode,
                 onSendText = { text ->
                     viewModel.sendTextMessage(text)
@@ -331,186 +322,4 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
     }
 }
 
-@Composable
-private fun ChatInputArea(
-    isRecording: Boolean,
-    aiState: AiState,
-    connectionState: BotConnectionState,
-    inputMode: Int, // 0=麦克风模式, 1=文本输入模式
-    onSendText: (String) -> Unit,
-    onStartRecording: () -> Unit,
-    onStopRecording: () -> Unit,
-    onTryReconnect: () -> Unit
-) {
-    var text by remember { mutableStateOf("") }
-    var sending by remember { mutableStateOf(false) }
 
-    // 发送后重置 sending 状态
-    LaunchedEffect(sending) {
-        if (sending) {
-            kotlinx.coroutines.delay(500)
-            sending = false
-        }
-    }
-
-    // AI 正在工作时禁用录音
-    val isAiWorking = aiState == AiState.LISTENING || aiState == AiState.SPEAKING || aiState == AiState.PROCESSING
-
-    val infiniteTransition = rememberInfiniteTransition(label = "recording")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "recording_scale"
-    )
-
-    // 根据状态决定按钮颜色
-    val buttonColor = if (isRecording) Color(0xFFF44336) else MaterialTheme.colorScheme.primary
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shadowElevation = 8.dp,
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                AnimatedContent(
-                    targetState = inputMode,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInHorizontally { it } + fadeIn(animationSpec = tween(200))).togetherWith(
-                                slideOutHorizontally { -it } + fadeOut(animationSpec = tween(200))
-                            )
-                        } else {
-                            (slideInHorizontally { -it } + fadeIn(animationSpec = tween(200))).togetherWith(
-                                slideOutHorizontally { it } + fadeOut(animationSpec = tween(200))
-                            )
-                        }
-                    },
-                    label = "input_mode",
-                    modifier = Modifier.fillMaxWidth()
-                ) { mode ->
-                    when (mode) {
-                        0 -> {
-                            // 麦克风模式 - 点击按钮
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                // 录音图标：录音中=停止，平时=麦克风
-                                val micIcon = if (isRecording) Icons.Default.Stop else Icons.Default.Mic
-
-                                val contentDesc = if (isRecording) "停止录音" else "开始录音/中断"
-
-                                IconButton(
-                                    onClick = {
-                                        val isOffline = connectionState is BotConnectionState.Disconnected ||
-                                                connectionState is BotConnectionState.Error
-                                        if (isOffline) {
-                                            onTryReconnect()
-                                            return@IconButton
-                                        }
-                                        if (isRecording) {
-                                            onStopRecording()
-                                        } else {
-                                            onStartRecording()
-                                        }
-                                    },
-                                    enabled = true,
-                                    modifier = Modifier
-                                        .size(72.dp)
-                                        .scale(if (isRecording) scale else 1f)
-                                        .clip(CircleShape)
-                                        .background(buttonColor)
-                                ) {
-                                    Icon(
-                                        imageVector = micIcon,
-                                        contentDescription = contentDesc,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                }
-                            }
-                        }
-                        1 -> {
-                            // 文本输入模式
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = text,
-                                    onValueChange = { text = it },
-                                    modifier = Modifier.weight(1f),
-                                    placeholder = { Text("输入消息...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                                        cursorColor = MaterialTheme.colorScheme.primary,
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                    ),
-                                    shape = RoundedCornerShape(12.dp),
-                                    textStyle = MaterialTheme.typography.bodyMedium,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                    keyboardActions = KeyboardActions(
-                                        onSend = {
-                                            val isOffline = connectionState is BotConnectionState.Disconnected ||
-                                                    connectionState is BotConnectionState.Error
-                                            if (isOffline) {
-                                                onTryReconnect()
-                                                return@KeyboardActions
-                                            }
-                                            if (text.isNotBlank() && !sending) {
-                                                sending = true
-                                                onSendText(text.trim())
-                                                text = ""
-                                            }
-                                        }
-                                    )
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                FilledIconButton(
-                                    onClick = {
-                                        val isOffline = connectionState is BotConnectionState.Disconnected ||
-                                                connectionState is BotConnectionState.Error
-                                        if (isOffline) {
-                                            onTryReconnect()
-                                            return@FilledIconButton
-                                        }
-                                        if (text.isNotBlank() && !sending) {
-                                            sending = true
-                                            onSendText(text.trim())
-                                            text = ""
-                                        }
-                                    },
-                                    enabled = text.isNotBlank() && !isAiWorking && !sending,
-                                    modifier = Modifier.size(52.dp),
-                                    shape = RoundedCornerShape(14.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Send,
-                                        contentDescription = "发送",
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
