@@ -903,6 +903,8 @@ class GroupChatViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         disconnectGroup()
-        audioRecorder.release()
+        // 不 release audioRecorder — 它是 Hilt @Singleton，
+        // ViewModel 无权释放全局单例的底层资源。
+        // disconnectGroup() 已通过 stopVoiceInput() 停止录音。
     }
 }

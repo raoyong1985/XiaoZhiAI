@@ -56,14 +56,12 @@ fun GroupChatScreen(
     val coroutineScope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // ── lifecycle：进入时连接，离开时断开 ──
+    // ── lifecycle：进入时连接 ──
+    // 断开由 ViewModel.onCleared() 管理（用户按返回键 → ViewModel 销毁 → disconnectGroup）
+    // 不在此处用 DisposableEffect.onDispose 断开——Android 回收后台 Activity 时
+    // onDispose 也会触发，导致切后台再回来时 WebSocket 全断、音频丢失。
     LaunchedEffect(groupId) {
         viewModel.connectGroup(groupId)
-    }
-    DisposableEffect(groupId) {
-        onDispose {
-            viewModel.disconnectGroup()
-        }
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
