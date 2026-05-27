@@ -191,7 +191,7 @@ fun ChatMessageItem(message: ChatMessage, botColorIndex: Int = -1, onCopy: ((Str
         )
     }
     val bubbleColor = when {
-        isFromMe -> MaterialTheme.colorScheme.primary
+        isFromMe -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
         botColorIndex >= 0 && botColorIndex < botColors.size -> botColors[botColorIndex]
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
