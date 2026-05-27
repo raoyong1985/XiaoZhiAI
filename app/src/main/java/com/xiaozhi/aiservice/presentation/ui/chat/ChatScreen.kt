@@ -319,7 +319,7 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
                     )
                 )
                 .background(
-                    if (isFromMe) MaterialTheme.colorScheme.primary.copy(alpha = streamingAlpha)
+                    if (isFromMe) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (message.isStreaming) streamingAlpha else 1f)
                 )
                 .combinedClickable(

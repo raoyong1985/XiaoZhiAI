@@ -151,7 +151,7 @@ fun GroupChatListScreen(
                         leadingContent = {
                             Box(
                                 modifier = Modifier
-                                    .size(42.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
@@ -159,7 +159,7 @@ fun GroupChatListScreen(
                                 Icon(
                                     imageVector = Icons.Default.Group,
                                     contentDescription = null,
-                                    modifier = Modifier.size(36.dp),
+                                    modifier = Modifier.size(32.dp),
                                     tint = Color.White
                                 )
                             }
