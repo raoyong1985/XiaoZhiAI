@@ -142,7 +142,7 @@ fun ChatScreen(
     }
 
     Scaffold(
-        modifier = Modifier.navigationBarsPadding(),
+        modifier = Modifier.imePadding().navigationBarsPadding(),
         bottomBar = {
             ChatInputArea(
                 isRecording = uiState.isRecording,

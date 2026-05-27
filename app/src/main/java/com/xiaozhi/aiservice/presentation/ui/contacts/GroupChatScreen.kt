@@ -279,7 +279,7 @@ private fun GroupChatInputArea(
     )
 
     Surface(
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+        modifier = Modifier.fillMaxWidth(),
         shadowElevation = 8.dp,
         color = MaterialTheme.colorScheme.surface
     ) {
