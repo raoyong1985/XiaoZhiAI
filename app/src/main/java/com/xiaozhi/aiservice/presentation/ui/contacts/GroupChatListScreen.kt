@@ -264,6 +264,10 @@ fun GroupChatListScreen(
                             }
                         }
                     )
+                    Divider(
+                        modifier = Modifier.padding(start = 80.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
                 }
             }
         }
