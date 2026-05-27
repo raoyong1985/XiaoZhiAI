@@ -31,7 +31,8 @@ fun InputBar(
     onSendText: (String) -> Unit,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
-    onTryReconnect: (() -> Unit)? = null
+    onTryReconnect: (() -> Unit)? = null,
+    isOffline: Boolean = false
 ) {
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
@@ -105,8 +106,9 @@ fun InputBar(
                                     onClick = {
                                         if (isRecording) {
                                             onStopRecording()
-                                        } else {
+                                        } else if (isOffline) {
                                             onTryReconnect?.invoke()
+                                        } else {
                                             onStartRecording()
                                         }
                                     },

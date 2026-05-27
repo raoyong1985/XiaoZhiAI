@@ -149,7 +149,9 @@ fun ChatScreen(
                 },
                 onStartRecording = { viewModel.startListening() },
                 onStopRecording = { viewModel.stopListening() },
-                onTryReconnect = { viewModel.tryReconnect() }
+                onTryReconnect = { viewModel.tryReconnect() },
+                isOffline = uiState.connectionState is BotConnectionState.Disconnected ||
+                        uiState.connectionState is BotConnectionState.Error
             )
         },
         topBar = {
