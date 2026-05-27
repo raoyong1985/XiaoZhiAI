@@ -111,7 +111,7 @@ class XiaoZhiBackendService(
     private var deviceId = ""
     private var clientId = ""
     @Volatile private var sessionId = ""
-    private var serverSampleRate = 16000
+    private var serverSampleRate = 24000
     private var serverChannels = 1
     private var accessToken = ""
     private var wsToken = ""
@@ -365,7 +365,7 @@ class XiaoZhiBackendService(
             })
             add("audio_params", JsonObject().apply {
                 addProperty("format", "opus")
-                addProperty("sample_rate", 16000)
+                addProperty("sample_rate", 24000)
                 addProperty("channels", 1)
                 addProperty("frame_duration", 60)
             })
