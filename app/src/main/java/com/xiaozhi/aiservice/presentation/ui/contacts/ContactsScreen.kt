@@ -425,10 +425,10 @@ fun AddEditContactDialog(
                     OutlinedTextField(
                         value = serverUrl,
                         onValueChange = { serverUrl = it },
-                        label = { Text("WebSocket 服务器") },
+                        label = { Text("服务器地址") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("wss://api.tenclass.net/xiaozhi/v1/") }
+                        placeholder = { Text("wss:// 或 ws:// 或 https:// 或 http://") }
                     )
                     OutlinedTextField(
                         value = otaUrl,

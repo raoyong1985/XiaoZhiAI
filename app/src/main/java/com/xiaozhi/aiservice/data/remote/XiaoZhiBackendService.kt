@@ -133,7 +133,12 @@ class XiaoZhiBackendService(
      * @param accessToken 访问令牌 (用于Authorization header)
      */
     override fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String) {
-        serverUrl = url
+        // 自动转换 HTTP/HTTPS 为 WebSocket 协议
+        serverUrl = when {
+            url.startsWith("https://") -> "wss://" + url.removePrefix("https://")
+            url.startsWith("http://") -> "ws://" + url.removePrefix("http://")
+            else -> url
+        }
         this.otaUrl = otaUrl
         this.deviceId = deviceId
         this.clientId = clientId
@@ -141,7 +146,7 @@ class XiaoZhiBackendService(
         this.reconnectAttempt = 0
         this.isDisconnecting = false
         _connectionState.value = BotConnectionState.Connecting
-        Logger.i(TAG, "连接中: $url")
+        Logger.i(TAG, "连接中: $serverUrl")
 
         // 先进行OTA注册（设备激活），注册完成后建立WebSocket连接
         scope.launch {
@@ -151,7 +156,7 @@ class XiaoZhiBackendService(
             } catch (e: Exception) {
                 Logger.e(TAG, "OTA注册失败: ${e.message}，但仍尝试连接")
             }
-            doConnect(url, deviceId, clientId, accessToken)
+            doConnect(serverUrl, deviceId, clientId, accessToken)
         }
     }
 
@@ -348,7 +353,12 @@ class XiaoZhiBackendService(
             delay(delay)
             Logger.i(TAG, "执行重连... (第 $reconnectAttempt 次)")
             _connectionState.value = BotConnectionState.Connecting
-            doConnect(serverUrl, deviceId, clientId, accessToken)
+            val wsUrl = when {
+                serverUrl.startsWith("https://") -> "wss://" + serverUrl.removePrefix("https://")
+                serverUrl.startsWith("http://") -> "ws://" + serverUrl.removePrefix("http://")
+                else -> serverUrl
+            }
+            doConnect(wsUrl, deviceId, clientId, accessToken)
         }
     }
 
@@ -478,13 +488,7 @@ class XiaoZhiBackendService(
     /**
      * 发送静音状态到服务器
      */
-    /**
-     * 判断当前连接是否为本地服务器
-     */
-    override fun isLocalServer(): Boolean {
-        return serverUrl.contains("192.168.") || serverUrl.contains("localhost")
-            || serverUrl.contains("127.0.0.1") || serverUrl.contains("10.")
-    }
+
 
     fun sendMute(muted: Boolean) {
         val message = JsonObject().apply {

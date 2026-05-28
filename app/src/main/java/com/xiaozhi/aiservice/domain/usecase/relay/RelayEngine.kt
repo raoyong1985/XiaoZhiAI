@@ -175,13 +175,10 @@ class RelayEngine(
                 relayState.update { it.clearWaiting() }
             }
 
-            // 文本转发（备用路径）
-            val isLocal = service.isLocalServer()
-            val textToSend = if (isLocal) {
+            // 文本转发（备用路径）— 统一 JSON 格式
+            val textToSend = if (previousReply.isNotBlank()) {
                 audioForwardHandler.buildForwardMessage(previousReply, prevBotId)
-            } else {
-                if (previousReply.isNotBlank()) audioForwardHandler.truncateReply(previousReply, 8) else ""
-            }
+            } else ""
             if (checkAndClearOnDeadloop(textToSend, speakerId)) {
                 logger.i(tag, "死循环终止，跳过本轮转发")
                 relayState.update { it.clearWaiting() }
@@ -194,7 +191,7 @@ class RelayEngine(
                     continue
                 }
                 if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
-                val logText = if (isLocal) "JSON(${textToSend.length}字)" else "短文本(${textToSend.length}字)"
+                val logText = "JSON(${textToSend.length}字)"
                 logger.i(tag, "文本转发 $logText → $speakerId: '${textToSend.take(60)}'")
                 try {
                     service.sendTextContent(textToSend)

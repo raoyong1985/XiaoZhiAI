@@ -23,7 +23,6 @@ interface BotConnection {
     fun sendAbort(reason: String = "")
     fun sendAudio(audioData: ByteArray)
     fun sendTextContent(text: String)
-    fun isLocalServer(): Boolean
     fun getServerSampleRate(): Int
     fun getServerChannels(): Int
     fun sendIotDescriptors()
