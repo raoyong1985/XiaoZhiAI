@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,12 +19,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.xiaozhi.aiservice.R
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -151,20 +155,14 @@ fun GroupChatListScreen(
                             }
                         },
                         leadingContent = {
-                            Box(
+                            Image(
+                                painter = painterResource(R.drawable.ic_group_avatar),
+                                contentDescription = "群聊头像",
                                 modifier = Modifier
                                     .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = group.name.firstOrNull()?.toString() ?: "群",
-                                    color = Color.White,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
                         },
                         trailingContent = {
                             // ── 三点菜单 ──

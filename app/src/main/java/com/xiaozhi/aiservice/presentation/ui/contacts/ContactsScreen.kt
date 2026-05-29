@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
@@ -18,7 +19,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -29,6 +32,7 @@ import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import com.xiaozhi.aiservice.R
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.VoiceMode
@@ -239,20 +243,14 @@ private fun ContactItem(
             }
         },
         leadingContent = {
-            Box(
+            Image(
+                painter = painterResource(R.drawable.ic_contact_avatar),
+                contentDescription = "联系人头像",
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = contact.name.firstOrNull()?.toString() ?: "?",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
         },
         trailingContent = {
             Box(modifier = Modifier.padding(start = 8.dp)) {
