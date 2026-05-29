@@ -153,8 +153,10 @@ class RelayOrchestrator(
                 return
             }
 
-            val prevIndex = current.currentSpeakerIndex
-            val prevBotId = current.botIds.getOrNull(prevIndex)
+            // 在 mutex 内重新读 relayState，避免竞态
+            val freshState = relayState.value
+            val prevIndex = freshState.currentSpeakerIndex
+            val prevBotId = freshState.botIds.getOrNull(prevIndex)
 
             // 死循环检测
             val hint = current.currentReplyText.take(8)
@@ -166,7 +168,7 @@ class RelayOrchestrator(
 
             // 选人
             val (candidates, newRs) = speakerScorer.resolveCandidates(
-                prevIndex, current.currentReplyText, current.botIds, current
+                prevIndex, freshState.currentReplyText, freshState.botIds, freshState
             )
             relayState.value = newRs
 
@@ -190,7 +192,7 @@ class RelayOrchestrator(
 
                 val audioBuf = audioForwardBuffer[prevBotId]?.toList()
                 val result = smartForwarder.forward(
-                    prevBotId, current.currentReplyText, audioBuf,
+                    prevBotId, freshState.currentReplyText, audioBuf,
                     SmartForwarder.BotSession(speakerId, service)
                 )
 
