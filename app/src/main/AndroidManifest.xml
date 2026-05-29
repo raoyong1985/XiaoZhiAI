@@ -77,6 +77,28 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Android 11+ package visibility: declare map apps for resolveActivity() -->
+    <queries>
+        <!-- Amap (高德) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="androidamap" />
+        </intent>
+        <!-- Baidu Maps (百度) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="baidumap" />
+        </intent>
+        <!-- Tencent Maps (腾讯) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="qqmap" />
+        </intent>
+        <package android:name="com.tencent.map" />
+        <!-- Google Maps -->
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
     <application
         android:name=".XiaoZhiApplication"
         android:allowBackup="true"
