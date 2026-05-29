@@ -82,11 +82,8 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
     }
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.disconnect()
-        }
-    }
+    // 断开由 ViewModel.onCleared() 管理（用户按返回键 → ViewModel 销毁 → disconnect）
+    // 不在 DisposableEffect.onDispose 中断连，保活 WebSocket 以支持服务器主动唤醒（speak_request）
 
     // 顶部栏状态
     val connectionColor by animateColorAsState(

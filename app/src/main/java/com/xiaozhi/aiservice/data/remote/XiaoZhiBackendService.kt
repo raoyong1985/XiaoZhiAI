@@ -89,6 +89,10 @@ class XiaoZhiBackendService(
     private val _audioData = MutableSharedFlow<ByteArray>(replay = 0)
     override val audioData: SharedFlow<ByteArray> = _audioData.asSharedFlow()
 
+    // 服务器主动唤醒请求（speak_request）
+    private val _speakRequest = MutableSharedFlow<String>(replay = 0)
+    override val speakRequest: SharedFlow<String> = _speakRequest.asSharedFlow()
+
     // 服务器返回的TTS文本
     private val _ttsText = MutableStateFlow("")
     override val ttsText: StateFlow<String> = _ttsText.asStateFlow()
@@ -536,6 +540,7 @@ class XiaoZhiBackendService(
                 "alert" -> handleAlert(json)
                 "iot" -> handleIot(json)
                 "server" -> handleServer(json)
+                "speak_request" -> handleSpeakRequest(json)
             }
         } catch (e: Exception) {
             Logger.e(TAG, "处理文本消息失败: ${e.message}")
@@ -896,6 +901,33 @@ class XiaoZhiBackendService(
             }
             else -> Logger.i(TAG, "Server 消息 (未处理): $action")
         }
+    }
+
+    /**
+     * 处理服务器主动唤醒请求（speak_request）
+     * 服务器通过此消息让设备进入 speaking 状态，接收 TTS 音频并播放
+     * 协议参考: xiaozhi-esp32 PR #1939
+     */
+    private fun handleSpeakRequest(json: JsonObject) {
+        val text = json.get("text")?.asString ?: ""
+        Logger.i(TAG, "收到服务器主动唤醒: text=$text")
+        // 发送 speak_ready 响应
+        sendSpeakReady()
+        // 通知上层启动语音流程
+        scope.launch { _speakRequest.emit(text) }
+    }
+
+    /**
+     * 发送 speak_ready 响应，告知服务器设备已准备好接收音频
+     */
+    private fun sendSpeakReady() {
+        val message = JsonObject().apply {
+            addProperty("session_id", sessionId)
+            addProperty("type", "speak_ready")
+            addProperty("state", "ready")
+        }
+        sendTextMessage(message.toString())
+        Logger.i(TAG, "已发送 speak_ready")
     }
 
     /**

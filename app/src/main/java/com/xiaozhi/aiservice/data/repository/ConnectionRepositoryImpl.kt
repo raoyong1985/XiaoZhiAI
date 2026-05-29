@@ -116,6 +116,24 @@ class ConnectionRepositoryImpl @Inject constructor(
             }
         }
 
+        // 服务器主动唤醒（speak_request）：收到后切到 SPEAKING 状态接收 TTS 音频
+        scope.launch {
+            backendService.speakRequest.collect { text ->
+                Logger.i(TAG, "服务器主动唤醒: text=$text")
+                stateMutex.withLock {
+                    // 停止当前录音（如果有）
+                    if (weStartedRecording) {
+                        audioRecorder.stop("main")
+                        weStartedRecording = false
+                    }
+                    // 切到 SPEAKING 状态，等待服务器发 TTS 音频
+                    _deviceState.value = DeviceState.SPEAKING
+                    _aiState.value = AiState.SPEAKING
+                    playbackManager.flushSource("main")
+                }
+            }
+        }
+
         scope.launch {
             backendService.aiState.collect { state ->
                 stateMutex.withLock {

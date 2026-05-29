@@ -13,6 +13,7 @@ interface BotConnection {
     val emotion: StateFlow<String>
     val alert: SharedFlow<String>
     val streamingEnd: SharedFlow<String>
+    val speakRequest: SharedFlow<String>
 
     fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String = "")
     fun disconnect()
