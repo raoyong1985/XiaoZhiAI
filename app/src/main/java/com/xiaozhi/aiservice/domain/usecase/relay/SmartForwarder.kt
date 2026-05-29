@@ -7,62 +7,95 @@ import com.xiaozhi.aiservice.domain.PlatformLogger
 import kotlinx.coroutines.delay
 
 /**
- * 智能转发器 —— 音频优先 + 文本兜底
+ * 智能转发器 —— 根据服务器类型选择转发策略
  *
- * 转发策略：
- * 1. 首选：转发 Opus 音频（官方服务器）
- * 2. 兜底：转发文本摘要（带说话人标识）
- * 3. 跳过：转发失败且无文本
+ * 官方服务器 (api.tenclass.net / xiaozhi.me)：
+ *   音频优先 → 文字兜底（服务器能处理转发音频生成 TTS）
  *
- * 音频预处理：
- * - 过滤过小的音频包（静音段）
+ * 第三方/本地服务器：
+ *   文字优先 → 音频兜底（服务器不支持音频转发，文字更可靠）
  */
-class SmartForwarder(
-    private val getContacts: () -> List<BotContact>,
-    private val logger: PlatformLogger = PlatformLogger.EMPTY
-) {
-    private val tag = "SmartForwarder"
+ class SmartForwarder(
+     private val getContacts: () -> List<BotContact>,
+     private val logger: PlatformLogger = PlatformLogger.EMPTY
+ ) {
+     private val tag = "SmartForwarder"
 
-    /** 最小音频包大小（字节），小于此值视为静音 */
-    private val MIN_AUDIO_PACKET_SIZE = 50
+     /** 最小音频包大小（字节），小于此值视为静音 */
+     private val MIN_AUDIO_PACKET_SIZE = 50
+
+     /** 官方服务器域名关键词 */
+     private val OFFICIAL_HOSTS = listOf("api.tenclass.net", "xiaozhi.me")
+
+     /** 判断目标 bot 是否为官方服务器 */
+     fun isOfficialServer(targetBotId: String): Boolean {
+         val contact = getContacts().find { it.id == targetBotId }
+         val url = contact?.serverUrl?.lowercase() ?: return false
+         return OFFICIAL_HOSTS.any { url.contains(it) }
+     }
 
     /**
      * 转发上一位 bot 的回复到下一位 bot
+     *
+     * @param isOfficial true=官方服务器(音频优先), false=第三方(文字优先)
      */
     suspend fun forward(
         prevBotId: String?,
         previousReply: String,
         audioBuffer: List<ByteArray>?,
-        nextBot: BotSession
+        nextBot: BotSession,
+        isOfficial: Boolean
     ): ForwardResult {
         if (prevBotId == null) return ForwardResult.SKIPPED
 
-        // 1. 尝试音频转发
-        if (!audioBuffer.isNullOrEmpty()) {
-            val filtered = filterSilence(audioBuffer)
-            if (filtered.isNotEmpty()) {
-                val audioOk = sendAudio(filtered, nextBot.connection)
-                if (audioOk) {
-                    logger.i(tag, "音频转发成功(${filtered.size}包) → ${nextBot.botId}")
-                    return ForwardResult.AUDIO_SENT
+        if (isOfficial) {
+            // ── 官方服务器：音频优先 → 文字兜底 ──
+            if (!audioBuffer.isNullOrEmpty()) {
+                val filtered = filterSilence(audioBuffer)
+                if (filtered.isNotEmpty()) {
+                    val audioOk = sendAudio(filtered, nextBot.connection)
+                    if (audioOk) {
+                        logger.i(tag, "[官方] 音频转发成功(${filtered.size}包) → ${nextBot.botId}")
+                        return ForwardResult.AUDIO_SENT
+                    }
                 }
             }
-        }
-
-        // 2. 音频转发失败/为空 → 文本兜底
-        if (previousReply.isNotBlank()) {
-            val textMsg = buildForwardMessage(previousReply, prevBotId)
-            if (textMsg.isNotBlank() && nextBot.connection.connectionState.value is BotConnectionState.Connected) {
-                try {
-                    nextBot.connection.sendTextContent(textMsg)
-                    logger.i(tag, "文本兜底转发 → ${nextBot.botId}: '${previousReply.take(30)}'")
-                    return ForwardResult.TEXT_SENT
-                } catch (e: Exception) {
-                    logger.w(tag, "文本转发失败: ${e.message}")
+            // 音频失败 → 文字兜底
+            return sendTextFallback(previousReply, prevBotId, nextBot)
+        } else {
+            // ── 第三方/本地服务器：文字优先 → 音频兜底 ──
+            val textResult = sendTextFallback(previousReply, prevBotId, nextBot)
+            if (textResult == ForwardResult.TEXT_SENT) {
+                return textResult
+            }
+            // 文字失败 → 尝试音频兜底
+            if (!audioBuffer.isNullOrEmpty()) {
+                val filtered = filterSilence(audioBuffer)
+                if (filtered.isNotEmpty()) {
+                    val audioOk = sendAudio(filtered, nextBot.connection)
+                    if (audioOk) {
+                        logger.i(tag, "[第三方] 音频兜底转发成功(${filtered.size}包) → ${nextBot.botId}")
+                        return ForwardResult.AUDIO_SENT
+                    }
                 }
             }
+            return ForwardResult.FAILED
         }
+    }
 
+    /** 文字转发辅助方法 */
+    private suspend fun sendTextFallback(previousReply: String, prevBotId: String?, nextBot: BotSession): ForwardResult {
+        if (previousReply.isBlank()) return ForwardResult.FAILED
+        val textMsg = buildForwardMessage(previousReply, prevBotId)
+        if (textMsg.isNotBlank() && nextBot.connection.connectionState.value is BotConnectionState.Connected) {
+            try {
+                nextBot.connection.sendTextContent(textMsg)
+                logger.i(tag, "文字转发 → ${nextBot.botId}: '${previousReply.take(30)}'")
+                return ForwardResult.TEXT_SENT
+            } catch (e: Exception) {
+                logger.w(tag, "文字转发失败: ${e.message}")
+            }
+        }
         return ForwardResult.FAILED
     }
 

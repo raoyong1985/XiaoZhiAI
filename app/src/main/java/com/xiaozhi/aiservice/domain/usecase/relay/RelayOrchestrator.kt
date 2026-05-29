@@ -49,7 +49,9 @@ class RelayOrchestrator(
      * 处理状态转换事件（唯一入口）
      */
     suspend fun onEvent(event: RelayEvent) {
+        // 不用快照，直接读最新状态。多 bot 并发事件时快照可能过时
         val current = relayState.value
+        android.util.Log.d(TAG, "onEvent: ${event::class.simpleName} phase=${current.phase} speaker=${current.expectedSpeakerId.take(8)}")
         when (event) {
             is RelayEvent.UserStartSpeaking -> handleUserStartSpeaking(current)
             is RelayEvent.UserStopSpeaking -> handleUserStopSpeaking(current)
@@ -115,7 +117,13 @@ class RelayOrchestrator(
 
     private suspend fun handleBotStopSpeaking(current: RelayState) {
         cancelTimeout()
-        if (current.phase != RelayPhase.BOT_SPEAKING) return
+        if (current.phase != RelayPhase.BOT_SPEAKING) {
+            // BOT_SPEAKING 或 RELAY_SWITCH 都允许触发 relay（处理 phase 被提前修改的竞态）
+            if (current.phase != RelayPhase.RELAY_SWITCH) {
+                android.util.Log.w(TAG, "BotStopSpeaking 跳过: phase=${current.phase}")
+                return
+            }
+        }
 
         val reply = current.currentReplyText
 
@@ -191,9 +199,11 @@ class RelayOrchestrator(
                 relayState.update { it.moveToSpeaker(targetIndex, speakerId) }
 
                 val audioBuf = audioForwardBuffer[prevBotId]?.toList()
+                val isOfficial = smartForwarder.isOfficialServer(speakerId)
                 val result = smartForwarder.forward(
                     prevBotId, freshState.currentReplyText, audioBuf,
-                    SmartForwarder.BotSession(speakerId, service)
+                    SmartForwarder.BotSession(speakerId, service),
+                    isOfficial
                 )
 
                 if (result == SmartForwarder.ForwardResult.SKIPPED ||
