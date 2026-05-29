@@ -51,6 +51,8 @@ class AudioRouter(
             if (System.currentTimeMillis() - lastSpeakerChangeMs > RelayConfig.SPEAKER_GRACE_MS) {
                 Log.w(TAG, "音频被过滤: $botId != expected=$expectedSpeakerId")
                 return false
+            } else {
+                Log.d(TAG, "音频grace通过: $botId (grace中)")
             }
         }
 

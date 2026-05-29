@@ -141,13 +141,6 @@ class RelayOrchestrator(
             return
         }
 
-        // 2人群连续说 3 轮检测
-        if (current.isTwoPersonMode && current.spokenRoundCounter >= current.botIds.size * 3) {
-            logger.i(TAG, "2人群对话过长，结束")
-            onEvent(RelayEvent.ConversationFinished)
-            return
-        }
-
         // 切换到下一个 bot
         relayState.update { it.copy(phase = RelayPhase.RELAY_SWITCH) }
         triggerNextSpeaker(current)

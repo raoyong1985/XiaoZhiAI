@@ -404,7 +404,13 @@ class GroupChatViewModel @Inject constructor(
                                     }
                                     sttCollectorJob?.cancel()
                                 }
-                                orchestrator.onEvent(RelayEvent.BotStartSpeaking)
+                                // 只有预期 speaker 的 BotStartSpeaking 才触发 relay
+                                val expected = orchestrator.getExpectedSpeakerId()
+                                if (expected.isEmpty() || botId == expected) {
+                                    orchestrator.onEvent(RelayEvent.BotStartSpeaking)
+                                } else {
+                                    Log.d(TAG, "[$botName] BotStartSpeaking 跳过(非预期speaker)")
+                                }
                             }
                             AiStateStr.IDLE -> {
                                 // IDLE 不再触发 relay，由 TtsStopped 驱动
@@ -412,8 +418,14 @@ class GroupChatViewModel @Inject constructor(
                         }
                     }
                     is BotEvent.TtsStopped -> {
-                        Log.i(TAG, "[$botName] ttsStopped")
-                        orchestrator.onEvent(RelayEvent.BotStopSpeaking)
+                        // 只有预期 speaker 的 TtsStopped 才触发 relay
+                        val expected = orchestrator.getExpectedSpeakerId()
+                        if (expected.isEmpty() || botId == expected) {
+                            Log.i(TAG, "[$botName] ttsStopped")
+                            orchestrator.onEvent(RelayEvent.BotStopSpeaking)
+                        } else {
+                            Log.d(TAG, "[$botName] ttsStopped 跳过(非预期speaker=$expected)")
+                        }
                     }
                 }
             }
