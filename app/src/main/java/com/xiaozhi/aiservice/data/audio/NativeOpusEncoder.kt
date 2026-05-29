@@ -32,8 +32,8 @@ class NativeOpusEncoder(
     private var onOpusData: ((ByteArray) -> Unit)? = null
     private var presentationTimeUs = 0L
 
-    /** 每帧 PCM 样本数（20ms @ 16kHz = 320 样本） */
-    private val frameSamples = sampleRate * 20 / 1000
+    /** 每帧 PCM 样本数（60ms @ 16kHz = 960 样本，与 ESP32 和服务器 VAD 对齐） */
+    private val frameSamples = sampleRate * 60 / 1000
 
     fun init(onOpusPacket: (ByteArray) -> Unit): Boolean {
         this.onOpusData = onOpusPacket
