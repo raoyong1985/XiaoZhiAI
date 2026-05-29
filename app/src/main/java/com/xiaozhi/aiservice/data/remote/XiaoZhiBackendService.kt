@@ -375,7 +375,7 @@ class XiaoZhiBackendService(
             })
             add("audio_params", JsonObject().apply {
                 addProperty("format", "opus")
-                addProperty("sample_rate", 24000)
+                addProperty("sample_rate", 16000)
                 addProperty("channels", 1)
                 addProperty("frame_duration", 60)
             })
