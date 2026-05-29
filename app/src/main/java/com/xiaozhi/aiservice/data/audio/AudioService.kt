@@ -23,7 +23,7 @@ class AudioService {
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val SILENCE_RMS_THRESHOLD = 1200
-        private const val SILENCE_TIMEOUT_MS = 3000L
+        private const val SILENCE_TIMEOUT_MS = 4000L  // 4s静音才停止（原来3s太早，容易截断句尾）
         private const val SILENCE_CONSECUTIVE_BUFFERS = 2
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
         private const val MIN_SPEECH_DURATION_MS = 300L

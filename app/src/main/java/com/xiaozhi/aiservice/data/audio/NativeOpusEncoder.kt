@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 class NativeOpusEncoder(
     private val sampleRate: Int = 16000,
     private val channels: Int = 1,
-    private val bitRate: Int = 32000
+    private val bitRate: Int = 64000  // 64kbps，与 OpusEncoder 一致
 ) {
     companion object {
         private const val TAG = "NativeOpusEncoder"
