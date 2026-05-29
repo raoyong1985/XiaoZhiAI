@@ -669,7 +669,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "get_installed_apps",
-        description = "列出手机上安装的应用包名和名称（非系统应用）",
+        description = "列出手机上安装的应用包名、名称和版本号（非系统应用）",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回数量，默认 30"),
             "keyword" to jsonStringProp("搜索关键词，只返回名称或包名包含此关键词的应用"),
@@ -686,9 +686,11 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             .take(maxResults)
         val arr = JsonArray()
         apps.forEach { a ->
+            val pkgInfo = try { pm.getPackageInfo(a.packageName, 0) } catch (_: Exception) { null }
             arr.add(JsonObject().apply {
                 addProperty("name", a.loadLabel(pm).toString())
                 addProperty("package", a.packageName)
+                pkgInfo?.versionName?.let { addProperty("version", it) }
             })
         }
         JsonObject().apply { add("apps", arr); addProperty("count", arr.size()) }
