@@ -40,6 +40,16 @@ class SpeakerScorer(
         val aliveBotIds = botIds.filter { !isDead(it) }
         if (aliveBotIds.isEmpty()) return emptyList<Pair<Int, String>>() to rs
 
+        // ── 2人群乒乓模式：直接交替，不需要评分 ──
+        if (aliveBotIds.size == 2) {
+            val prevBotId = botIds.getOrNull(prevIndex)
+            val nextId = if (prevBotId == aliveBotIds[0]) aliveBotIds[1] else aliveBotIds[0]
+            val nextIndex = botIds.indexOf(nextId)
+            logger.i(tag, "2人群乒乓: [$prevBotId → $nextId]")
+            return listOf(nextIndex to nextId) to rs
+        }
+
+        // ── 多人群：走评分逻辑 ──
         val prevBotId = botIds.getOrNull(prevIndex)
         val compactedPrevIndex = if (prevBotId != null) aliveBotIds.indexOf(prevBotId) else -1
         val compactedSpoken = rs.spokenInThisRound.mapNotNull { i ->

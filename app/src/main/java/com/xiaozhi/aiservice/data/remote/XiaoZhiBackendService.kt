@@ -93,6 +93,10 @@ class XiaoZhiBackendService(
     private val _speakRequest = MutableSharedFlow<String>(replay = 0)
     override val speakRequest: SharedFlow<String> = _speakRequest.asSharedFlow()
 
+    // 仅在 tts stop 时 emit，群聊 relay 用此判断 TTS 真正结束（不受 sentence_end 超时干扰）
+    private val _ttsStopped = MutableSharedFlow<Unit>(replay = 0)
+    override val ttsStopped: SharedFlow<Unit> = _ttsStopped.asSharedFlow()
+
     // 服务器返回的TTS文本
     private val _ttsText = MutableStateFlow("")
     override val ttsText: StateFlow<String> = _ttsText.asStateFlow()
@@ -697,6 +701,10 @@ class XiaoZhiBackendService(
                     Logger.i(TAG, "tts stop received, setting aiState=idle")
                     _aiState.value = AiStateStr.IDLE
                 }
+                // ttsStopped 无条件 emit：群聊 relay 靠此精确判断 TTS 结束
+                android.util.Log.i(TAG, "ttsStopped emit 前")
+                scope.launch { _ttsStopped.emit(Unit) }
+                android.util.Log.i(TAG, "ttsStopped emit 后")
             }
             "sentence_start" -> {
                 idleDebounceJob?.cancel()

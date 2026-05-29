@@ -543,10 +543,19 @@ class GroupChatViewModel @Inject constructor(
 
         // ── 流 3：aiState（AI 状态变化） ──
         // idle → listening → speaking → idle
-        // 关键点：speaking→idle 过渡触发 speaker 切换
+        // 注意：relay 切换改由 TtsStopped 驱动，不再依赖 aiState IDLE
         viewModelScope.launch(parentJob) {
             service.aiState.collect { state ->
                 eventChannel.send(BotEvent.AiState(state))
+            }
+        }
+
+        // ── 流 3.5：ttsStopped（仅 tts stop 时触发） ──
+        // 群聊 relay 只在服务器明确发送 tts stop 时切换，不受 sentence_end 超时干扰
+        viewModelScope.launch(parentJob) {
+            service.ttsStopped.collect {
+                android.util.Log.i(TAG, "[$botName] 收到 ttsStopped 事件")
+                eventChannel.send(BotEvent.TtsStopped)
             }
         }
 
@@ -654,8 +663,13 @@ class GroupChatViewModel @Inject constructor(
             for (event in eventChannel) {
                 when (event) {
                     is BotEvent.TtsText -> {
-                        // 流式文本累积：多个 ttsText 拼接为完整回复
-                        replyText = if (replyText.isBlank()) event.text else "$replyText ${event.text}"
+                        // 只累积预期 speaker 的文本，非预期 speaker 的文本不累积
+                        val rs = _relayState.value
+                        val idx = rs.botIds.indexOf(botId)
+                        val isExpectedSpeaker = idx < 0 || rs.waitingSpeakerIndex < 0 || idx == rs.waitingSpeakerIndex
+                        if (isExpectedSpeaker) {
+                            replyText = if (replyText.isBlank()) event.text else "$replyText ${event.text}"
+                        }
                     }
                     is BotEvent.Message -> {
                         val msg = event.msg
@@ -665,6 +679,13 @@ class GroupChatViewModel @Inject constructor(
                                 android.util.Log.w(TAG, "[$botName] 跳过重复消息: ${msg.content.take(30)}")
                                 // 不清空 replyText！重复消息的文本仍需要作为转发上下文
                                 // 给下一个 bot（仅跳过 UI 显示），避免下一 bot 收到空白
+                                continue
+                            }
+                            // 非预期 speaker 的 TTS 文字不显示（音频已被过滤，文字也跳过）
+                            val rs = _relayState.value
+                            val idx = rs.botIds.indexOf(botId)
+                            if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) {
+                                android.util.Log.w(TAG, "[$botName] 跳过非预期 speaker 的消息: ${msg.content.take(30)}")
                                 continue
                             }
                             groupChatRepository.addMessage(groupId, ChatMessage(
@@ -713,45 +734,55 @@ class GroupChatViewModel @Inject constructor(
                             }
                         }
 
+                        // AiState.IDLE 不再触发 relay —— 改由 TtsStopped 驱动
+                        // sentence_end 超时触发的 IDLE 不应导致 relay 切换（会丢弃当前 bot 剩余音频）
+                        // 注意：不清 hasSpoken！留给 TtsStopped 处理
                         if (state == AiStateStr.IDLE && hasSpoken) {
-                            // ── AI 说完话 → 触发下一轮 ──
-                            hasSpoken = false
-                            // 排空当前 bot 的音频缓冲区，确保全部播放完毕
-                            drainPreviousBotAudio(botId, "${groupId}_shared")
+                            android.util.Log.i(TAG, "[$botName] aiState=IDLE（等待 ttsStopped 触发 relay）")
+                        }
+                    }
 
-                            var shouldTrigger = false
-                            var replyToForward = ""
-                            speakerMutex.withLock {
-                                // mutex 内重读 relayState，避免竞态
-                                // （外边读的快照可能已过时，比如另一个 bot 刚更新了状态）
-                                val currentRs = _relayState.value
-                                if (speakerSession != currentRs.sessionId) {
-                                    android.util.Log.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${currentRs.sessionId}")
-                                    return@withLock
-                                }
-                                val botIndex = currentRs.botIds.indexOf(botId)
-                                if (botIndex < 0) return@withLock
+                    is BotEvent.TtsStopped -> {
+                        // ── 服务器 tts stop：TTS 真正结束，触发 relay 切换 ──
+                        if (!hasSpoken) continue
+                        hasSpoken = false
+                        android.util.Log.i(TAG, "[$botName] ttsStopped → 触发 relay")
+                        // 排空当前 bot 的音频缓冲区，确保全部播放完毕
+                        val serverRate = service.getServerSampleRate()
+                        drainPreviousBotAudio(botId, "${groupId}_shared_${serverRate}")
 
-                                // 条件 A：我是被等待的 speaker + 有多个 bot → 触发下一轮
-                                if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
-                                    replyToForward = replyText.also { replyText = "" }
-                                    shouldTrigger = true
-                                    android.util.Log.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
-                                }
-                                // 条件 B：ws=-1 但还有活跃 bot → 自动继续下一轮
-                                else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
-                                    replyToForward = replyText.also { replyText = "" }
-                                    shouldTrigger = true
-                                    android.util.Log.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
-                                } else {
-                                    // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
-                                    replyText = ""
-                                }
+                        var shouldTrigger = false
+                        var replyToForward = ""
+                        speakerMutex.withLock {
+                            // mutex 内重读 relayState，避免竞态
+                            // （外边读的快照可能已过时，比如另一个 bot 刚更新了状态）
+                            val currentRs = _relayState.value
+                            if (speakerSession != currentRs.sessionId) {
+                                android.util.Log.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${currentRs.sessionId}")
+                                return@withLock
                             }
-                            if (shouldTrigger) {
-                                val reply = replyToForward
-                                viewModelScope.launch { triggerNextSpeaker(reply) }
+                            val botIndex = currentRs.botIds.indexOf(botId)
+                            if (botIndex < 0) return@withLock
+
+                            // 条件 A：我是被等待的 speaker + 有多个 bot → 触发下一轮
+                            if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
+                                replyToForward = replyText.also { replyText = "" }
+                                shouldTrigger = true
+                                android.util.Log.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
                             }
+                            // 条件 B：ws=-1 但还有活跃 bot → 自动继续下一轮
+                            else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
+                                replyToForward = replyText.also { replyText = "" }
+                                shouldTrigger = true
+                                android.util.Log.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
+                            } else {
+                                // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
+                                replyText = ""
+                            }
+                        }
+                        if (shouldTrigger) {
+                            val reply = replyToForward
+                            viewModelScope.launch { triggerNextSpeaker(reply) }
                         }
                     }
                 }

@@ -14,6 +14,8 @@ interface BotConnection {
     val alert: SharedFlow<String>
     val streamingEnd: SharedFlow<String>
     val speakRequest: SharedFlow<String>
+    /** 仅在服务器发送 tts stop 时 emit，用于群聊 relay 精确判断 TTS 结束 */
+    val ttsStopped: SharedFlow<Unit>
 
     fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String = "")
     fun disconnect()

@@ -142,14 +142,20 @@ class RelayEngine(
             }
 
                 if (audioOk) {
-                val estimatedAudioMs = relayValidator.estimateAudioMs(audioForwardBuffer[prevBotId])
-                val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
-                logger.i(tag, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
+                // 不等 SPEAKING 状态——等第一个音频包到达即可（比 tts start 更早）
+                // 音频包到了就说明下一个 bot 已在推声音，relay 可以放行
+                val initAudioTs = botLastAudioTime[speakerId] ?: 0L
+                val timeoutMs = 30_000L
+                logger.i(tag, "等待 $speakerId 音频到达 (${timeoutMs}ms超时)")
 
-                val startConfirmed = withTimeoutOrNull(timeoutMs) {
-                    service.aiState.first { it == AiStateStr.SPEAKING }
+                val audioReceived = withTimeoutOrNull(timeoutMs) {
+                    // botLastAudioTime 从初始值变为更新值 = 收到第一个音频包
+                    while (botLastAudioTime[speakerId] == initAudioTs) {
+                        delay(50)
+                    }
+                    true
                 }
-                if (startConfirmed != null) {
+                if (audioReceived != null) {
                     val hint = if (previousReply.isNotBlank()) relayState.value.lastForwardedText.take(8) else ""
                     if (checkAndClearOnDeadloop(hint, speakerId)) {
                         logger.i(tag, "死循环终止，跳过转发")
@@ -198,10 +204,13 @@ class RelayEngine(
                     if (previousReply.isNotBlank()) {
                         relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
                     }
-                    val startConfirmed = withTimeoutOrNull(30_000) {
-                        service.aiState.first { it == AiStateStr.SPEAKING }
+                    // 同样等音频到达而非 SPEAKING 状态
+                    val initTs = botLastAudioTime[speakerId] ?: 0L
+                    val audioReceived = withTimeoutOrNull(30_000) {
+                        while (botLastAudioTime[speakerId] == initTs) { delay(50) }
+                        true
                     }
-                    if (startConfirmed != null) {
+                    if (audioReceived != null) {
                         relayState.update {
                             it.copy(
                                 currentSpeakerIndex = targetIndex,
@@ -259,20 +268,12 @@ class RelayEngine(
 
     /**
      * 排空上一 bot 的音频播放
+     *
+     * tts stop 到达时 decoder 队列里只剩最后几帧 PCM（<200ms），
+     * 不值得阻塞等待。直接放行，让最后几帧自然播完。
      */
     suspend fun drainPreviousBotAudio(botId: String?, sourceId: String?) {
-        if (botId == null || sourceId == null) return
-        withTimeoutOrNull(RelayConfig.AUDIO_DRAIN_TIMEOUT_MS) {
-            while (true) {
-                val lastTs = botLastAudioTime[botId] ?: 0L
-                if (lastTs <= 0) break
-                if (System.currentTimeMillis() - lastTs > RelayConfig.AUDIO_DRAIN_SILENCE_MS) break
-                delay(100)
-            }
-        }
-        delay(200)
-        if (!playbackManager.waitForQueueEmpty(sourceId, 2000L)) {
-            logger.w(tag, "drainPreviousBotAudio 超时")
-        }
+        // 不等待——tts stop 时音频已基本播完，剩余 <200ms
+        // 阻塞等待只会增加 relay 切换延迟
     }
 }
