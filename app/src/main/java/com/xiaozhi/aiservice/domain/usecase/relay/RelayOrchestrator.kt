@@ -159,14 +159,6 @@ class RelayOrchestrator(
             val prevIndex = freshState.currentSpeakerIndex
             val prevBotId = freshState.botIds.getOrNull(prevIndex)
 
-            // 死循环检测
-            val hint = current.currentReplyText.take(8)
-            if (hint.isNotBlank() && deadloopDetector.check(hint, prevBotId)) {
-                logger.i(TAG, "死循环终止")
-                onEvent(RelayEvent.ConversationFinished)
-                return
-            }
-
             // 选人
             val (candidates, newRs) = speakerScorer.resolveCandidates(
                 prevIndex, freshState.currentReplyText, freshState.botIds, freshState
@@ -230,9 +222,9 @@ class RelayOrchestrator(
                 logger.w(TAG, "$speakerId 响应超时，尝试下一候选")
             }
 
-            // 所有候选失败
-            logger.w(TAG, "所有候选失败，结束本轮")
-            onEvent(RelayEvent.ConversationFinished)
+            // 所有候选超时 — 不终止，等下一次 ttsStopped
+            logger.w(TAG, "所有候选超时，等待下一次触发")
+            relayState.update { it.copy(phase = RelayPhase.BOT_SPEAKING) }
         } finally {
             relayMutex.unlock()
         }
