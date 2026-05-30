@@ -165,10 +165,30 @@ class RelayOrchestrator(
             )
             relayState.value = newRs
 
-            // 过滤已连接的候选
-            val connected = candidates.filter { (_, id) ->
+            // 过滤可用候选：Connected 或正在重连(Connecting)的bot都纳入
+            val available = candidates.filter { (_, id) ->
                 val svc = botConnectionPool.get(id)
-                svc != null && svc.connectionState.value is BotConnectionState.Connected
+                if (svc == null) return@filter false
+                val state = svc.connectionState.value
+                state is BotConnectionState.Connected || state is BotConnectionState.Connecting
+            }
+
+            // 对非Connected的bot尝试快速重连（不阻塞，失败就跳过）
+            val connected = mutableListOf<Pair<Int, String>>()
+            for ((targetIndex, speakerId) in available) {
+                val svc = botConnectionPool.get(speakerId) ?: continue
+                if (svc.connectionState.value !is BotConnectionState.Connected) {
+                    val contact = getContacts().find { it.id == speakerId }
+                    if (contact != null) {
+                        logger.i(TAG, "尝试重连 $speakerId (${contact.name})...")
+                        val ok = botConnectionPool.ensureConnected(speakerId, contact)
+                        if (!ok) {
+                            logger.w(TAG, "$speakerId 重连失败，跳过")
+                            continue
+                        }
+                    }
+                }
+                connected.add(targetIndex to speakerId)
             }
 
             if (connected.isEmpty()) {

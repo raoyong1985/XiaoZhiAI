@@ -57,6 +57,13 @@ class XiaoZhiBackendService(
             .writeTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(10, TimeUnit.SECONDS)
             .build()
+
+        /**
+         * 全局重连串行锁：同一时刻只允许一个 bot 执行 WebSocket 重连。
+         * 多 bot 同时重连时，MCP 握手（47个tools的JSON序列化）会抢占CPU，
+         * 导致 AudioTrack 播放线程被饿死 → underrun → TTS无声。
+         */
+        private val reconnectMutex = kotlinx.coroutines.sync.Mutex()
     }
 
     /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
@@ -352,8 +359,11 @@ class XiaoZhiBackendService(
         reconnectAttempt++
 
         // 指数退避: 1s, 2s, 4s, 8s, 16s, 32s, 最多2分钟
-        val delay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(7))).coerceAtMost(120000L)
-        Logger.i(TAG, "计划第 $reconnectAttempt 次重连 (延迟: ${delay}ms)")
+        // + 随机抖动 0-2s：错开多bot同时重连，避免CPU抢占导致AudioTrack underrun
+        val baseDelay = (baseReconnectDelay * (1 shl (reconnectAttempt - 1).coerceAtMost(7))).coerceAtMost(120000L)
+        val jitter = (Math.random() * 2000).toLong()
+        val delay = baseDelay + jitter
+        Logger.i(TAG, "计划第 $reconnectAttempt 次重连 (延迟: ${delay}ms, base=$baseDelay jitter=$jitter)")
 
         // 取消上一次重连协程（如果有），避免 disconnect 后残留
         reconnectJob?.cancel()
@@ -366,7 +376,25 @@ class XiaoZhiBackendService(
                 serverUrl.startsWith("http://") -> "ws://" + serverUrl.removePrefix("http://")
                 else -> serverUrl
             }
-            doConnect(wsUrl, deviceId, clientId, accessToken)
+            // 串行重连：获取全局锁后执行连接，等待 Connected/Error 后释放
+            // 避免多 bot 同时握手抢占 CPU 导致 AudioTrack underrun
+            if (!reconnectMutex.tryLock()) {
+                Logger.i(TAG, "等待其他bot重连完成...")
+            }
+            reconnectMutex.lock()
+            try {
+                Logger.i(TAG, "获取重连锁，开始连接")
+                doConnect(wsUrl, deviceId, clientId, accessToken)
+                // 等待连接建立或失败（最多 8s），确保握手完成后才释放锁
+                kotlinx.coroutines.withTimeoutOrNull(8000L) {
+                    connectionState.first {
+                        it is BotConnectionState.Connected || it is BotConnectionState.Error
+                    }
+                }
+            } finally {
+                reconnectMutex.unlock()
+                Logger.i(TAG, "释放重连锁")
+            }
         }
     }
 
