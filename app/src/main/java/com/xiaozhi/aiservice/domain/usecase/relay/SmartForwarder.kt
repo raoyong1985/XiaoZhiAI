@@ -5,6 +5,7 @@ import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.PlatformLogger
 import kotlinx.coroutines.delay
+import com.google.gson.JsonObject
 
 /**
  * 智能转发器 —— 根据服务器类型选择转发策略
@@ -140,7 +141,10 @@ import kotlinx.coroutines.delay
         val name = prevBotId?.let { id ->
             getContacts().find { id == it.id }?.name
         } ?: return previousReply
-        return """{"speaker":"${name}","content":"${previousReply.replace("\"", "\\\"")}"}"""
+        return JsonObject().apply {
+            addProperty("speaker", name)
+            addProperty("content", previousReply)
+        }.toString()
     }
 
     data class BotSession(

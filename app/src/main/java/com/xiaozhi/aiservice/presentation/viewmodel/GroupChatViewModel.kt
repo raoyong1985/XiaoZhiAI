@@ -344,10 +344,12 @@ class GroupChatViewModel @Inject constructor(
                 )
 
                 // 缓存音频用于转发
-                val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
-                buf.add(audioData)
-                if (buf.size > RelayConfig.MAX_FORWARD_BUFFER_SIZE) {
-                    buf.removeAt(0)
+                val buf = audioForwardBuffer.getOrPut(botId) { java.util.Collections.synchronizedList(mutableListOf()) }
+                synchronized(buf) {
+                    buf.add(audioData)
+                    if (buf.size > RelayConfig.MAX_FORWARD_BUFFER_SIZE) {
+                        buf.removeAt(0)
+                    }
                 }
             }
         }

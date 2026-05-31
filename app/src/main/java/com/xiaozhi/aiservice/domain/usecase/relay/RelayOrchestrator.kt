@@ -81,9 +81,11 @@ class RelayOrchestrator(
     private suspend fun handleUserStartSpeaking(current: RelayState) {
         relayMutex.lock()
         try {
+            // mutex 内重新读最新状态，避免外部快照过时
+            val fresh = relayState.value
             cancelTimeout()
             relayState.update {
-                it.nextSession().copy(
+                fresh.nextSession().copy(
                     phase = RelayPhase.USER_SPEAKING,
                     waitingSpeakerIndex = 0
                 )
@@ -117,15 +119,16 @@ class RelayOrchestrator(
 
     private suspend fun handleBotStopSpeaking(current: RelayState) {
         cancelTimeout()
-        if (current.phase != RelayPhase.BOT_SPEAKING) {
-            // BOT_SPEAKING 或 RELAY_SWITCH 都允许触发 relay（处理 phase 被提前修改的竞态）
-            if (current.phase != RelayPhase.RELAY_SWITCH) {
-                android.util.Log.w(TAG, "BotStopSpeaking 跳过: phase=${current.phase}")
-                return
-            }
+        // 在 mutex 内读最新 phase，避免竞态导致误跳过
+        relayMutex.lock()
+        val fresh = relayState.value
+        relayMutex.unlock()
+        if (fresh.phase != RelayPhase.BOT_SPEAKING && fresh.phase != RelayPhase.RELAY_SWITCH) {
+            android.util.Log.w(TAG, "BotStopSpeaking 跳过: phase=${fresh.phase}")
+            return
         }
 
-        val reply = current.currentReplyText
+        val reply = fresh.currentReplyText
 
         // 结束语检测
         if (reply.isNotBlank() && validator.isGoodbye(reply)) {
@@ -201,9 +204,17 @@ class RelayOrchestrator(
             for ((targetIndex, speakerId) in connected) {
                 val service = botConnectionPool.get(speakerId) ?: continue
                 audioRouter.onSpeakerChanged()
-                relayState.update { it.moveToSpeaker(targetIndex, speakerId) }
+                // 只设 expectedSpeakerId 用于音频过滤，不改 currentSpeakerIndex（转发成功后再改）
+                relayState.update {
+                    it.copy(
+                        waitingSpeakerIndex = targetIndex,
+                        expectedSpeakerId = speakerId,
+                        phase = RelayPhase.BOT_PROCESSING
+                    )
+                }
 
-                val audioBuf = audioForwardBuffer[prevBotId]?.toList()
+                val rawBuf = audioForwardBuffer[prevBotId]
+                val audioBuf = if (rawBuf != null) synchronized(rawBuf) { rawBuf.toList() } else null
                 val isOfficial = smartForwarder.isOfficialServer(speakerId)
                 val result = smartForwarder.forward(
                     prevBotId, freshState.currentReplyText, audioBuf,
@@ -242,9 +253,9 @@ class RelayOrchestrator(
                 logger.w(TAG, "$speakerId 响应超时，尝试下一候选")
             }
 
-            // 所有候选超时 — 不终止，等下一次 ttsStopped
+            // 所有候选超时 — 设 IDLE 等下一次触发，不能设 BOT_SPEAKING（无人说话无 ttsStopped）
             logger.w(TAG, "所有候选超时，等待下一次触发")
-            relayState.update { it.copy(phase = RelayPhase.BOT_SPEAKING) }
+            relayState.update { it.copy(phase = RelayPhase.IDLE) }
         } finally {
             relayMutex.unlock()
         }
