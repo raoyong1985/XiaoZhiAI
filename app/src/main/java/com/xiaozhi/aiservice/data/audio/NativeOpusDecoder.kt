@@ -308,11 +308,12 @@ class NativeOpusDecoder(
                                 lastAudioActivityMs.set(System.currentTimeMillis())
                             }
                         } else {
-                            // poll 超时：空闲时每 3s 写 500B 保活，防 AudioFlinger 杀 track
-                            val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs >= keepAliveTimer + 400) {
-                                keepAliveTimer = System.currentTimeMillis()
+                            // poll 超时：空闲时每 400ms 写 500B 保活，防 AudioFlinger 杀 track
+                            val now = System.currentTimeMillis()
+                            if (now - keepAliveTimer >= 400) {
+                                keepAliveTimer = now
                                 try {
+                                    audioTrackRef.get()?.play()
                                     audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
