@@ -286,6 +286,7 @@ class NativeOpusDecoder(
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
+                            Logger.d(TAG, "play.write: ${data.size}B, queue=${audioQueue.size}, trackState=${audioTrackRef.get()?.playState}")
                             var written = audioTrackRef.get()?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
@@ -413,7 +414,9 @@ class NativeOpusDecoder(
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
-                            var written = track.write(data, 0, data.size) ?: -1
+                            // 必须用 audioTrackRef.get() 而非局部变量 track
+                            // recreateAudioTrack() 会替换 audioTrackRef，局部 track 会变成已释放的旧对象
+                            var written = audioTrackRef.get()?.write(data, 0, data.size) ?: -1
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                             }
@@ -421,7 +424,7 @@ class NativeOpusDecoder(
                                 val next = audioQueue.poll()
                                 if (next == null) break
                                 audioTrackRef.get()?.play()
-                                written = track.write(next, 0, next.size) ?: -1
+                                written = audioTrackRef.get()?.write(next, 0, next.size) ?: -1
                                 if (written > 0) {
                                     totalBytesWritten.updateAndGet { it + written }
                                 }
@@ -429,10 +432,12 @@ class NativeOpusDecoder(
                                 lastAudioActivityMs.set(System.currentTimeMillis())
                             }
                         } else {
-                            val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs >= keepAliveTimer + 400) {
-                                keepAliveTimer = System.currentTimeMillis()
+                            // poll 超时：空闲时每 400ms 写 500B 保活，防 AudioFlinger 杀 track
+                            val now = System.currentTimeMillis()
+                            if (now - keepAliveTimer >= 400) {
+                                keepAliveTimer = now
                                 try {
+                                    audioTrackRef.get()?.play()
                                     audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
@@ -459,6 +464,8 @@ class NativeOpusDecoder(
         }
     }
 
+    private var decodePacketCount = 0
+
     fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
         if (released) return
         if (decoderPtr == 0L) return
@@ -478,6 +485,15 @@ class NativeOpusDecoder(
                 val audioPayload = opusData
                 val pcmShorts = ShortArray(serverFrameSamples)
                 val samples = nativeDecode(decoderPtr, audioPayload, pcmShorts, serverFrameSamples)
+
+                // 诊断日志：每10包打印解码状态
+                decodePacketCount++
+                if (decodePacketCount <= 5 || decodePacketCount % 10 == 0) {
+                    val peak = pcmShorts.take(minOf(samples, pcmShorts.size)).maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                    val queueSz = audioQueue.size
+                    val opusHead = opusData.take(minOf(4, opusData.size)).joinToString("") { "%02X".format(it) }
+                    Logger.i(TAG, "decode#${decodePacketCount}: in=${opusData.size}B($opusHead), out=$samples, peak=$peak, queue=$queueSz, track=${audioTrackRef.get()?.playState}")
+                }
 
                 if (samples > 0) {
                     val t0 = System.nanoTime()

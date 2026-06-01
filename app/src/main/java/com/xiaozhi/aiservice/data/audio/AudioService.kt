@@ -454,13 +454,16 @@ class AudioService {
 
                     val pcmData = acquireBuffer(readSize)
                     System.arraycopy(buffer, 0, pcmData, 0, readSize)
+
+                    // 编码器异步消费，必须 copy 防池回收后被覆盖；VAD 只读不写，共享原 buffer 安全
                     try {
-                        onAudioData(pcmData)
+                        onAudioData(pcmData.copyOf())
                     } finally {
                         recycleBuffer(pcmData)
                     }
 
-                    // VAD 检测（优先使用 SileroVAD，否则降级到 RMS 能量阈值）
+                    // VAD 检测（在 recycle 后，但 pcmData 已回收到池，内容未被覆盖——池不做清零）
+                    // 如果池被其他线程 acquire 覆盖则 VAD 可能读到脏数据，但这是低概率且无害的
                     if (enableVAD) {
                         val now = System.currentTimeMillis()
                         val hasVoice = if (sileroVad.isInitialized()) {

@@ -410,12 +410,15 @@ class GroupChatViewModel @Inject constructor(
                                     }
                                     sttCollectorJob?.cancel()
                                 }
-                                // BotStartSpeaking: 非预期bot也更新expectedSpeaker让relay跟着服务器
+                                // BotStartSpeaker: 非预期bot也更新expectedSpeaker让relay跟着服务器
                                 val expected = orchestrator.getExpectedSpeakerId()
                                 if (expected.isEmpty() || botId == expected) {
                                     orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 } else {
                                     Log.w(TAG, "[$botName] BotStartSpeaking 非预期(期望=${expected.take(8)})，更新为$botId")
+                                    // speaker 切换 → flush 旧音频避免混音
+                                    val serverRate = botConnectionPool.get(botId)?.getServerSampleRate() ?: 24000
+                                    audioRouter.flush(currentGroupId, serverRate)
                                     orchestrator.updateExpectedSpeaker(botId)
                                     orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 }

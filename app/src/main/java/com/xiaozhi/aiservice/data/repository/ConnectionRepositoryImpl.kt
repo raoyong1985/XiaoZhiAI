@@ -233,8 +233,8 @@ class ConnectionRepositoryImpl @Inject constructor(
         scope.launch {
             backendService.connectionState.collect { state ->
                 if (state is BotConnectionState.Connected) {
-                    val serverSampleRate = backendService.getServerSampleRate()
-                    audioService.setSampleRate(serverSampleRate)
+                    // 上行编码器始终 16000Hz（协议固定），不跟服务器下行参数
+                    audioService.setSampleRate(16000)
                     // 不在这初始化解码器，等 hello 收到后再初始化
                     Logger.i(TAG, "已连接，等待服务器hello...")
 

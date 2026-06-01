@@ -11,6 +11,7 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.AiStateStr
 import com.xiaozhi.aiservice.data.settings.AudioSettings
+import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.domain.model.BotConnection
@@ -505,6 +506,7 @@ class XiaoZhiBackendService(
                     Logger.i(TAG, "激活响应: ${response.code} - ${responseBody.take(200)}")
                     if (response.isSuccessful) {
                         Logger.i(TAG, "设备激活成功")
+                        DeviceSettings.setActivated(mcpToolRegistry.context, true)
                     } else {
                         Logger.w(TAG, "设备激活失败: ${response.code}")
                     }
@@ -662,6 +664,12 @@ class XiaoZhiBackendService(
             val challengeCode = activation.get("code")?.asString ?: ""
             Logger.i(TAG, "服务器要求激活: challenge=$challenge, code=$challengeCode")
             if (challenge.isNotEmpty()) sendActivation(challenge, challengeCode)
+        } else {
+            // 无激活挑战 = 设备已激活，持久化状态
+            if (!DeviceSettings.isActivated(mcpToolRegistry.context)) {
+                DeviceSettings.setActivated(mcpToolRegistry.context, true)
+                Logger.i(TAG, "设备已激活，持久化激活状态")
+            }
         }
         // 连接建立后上报 IoT 设备能力
         sendIotDescriptors()
@@ -866,7 +874,15 @@ class XiaoZhiBackendService(
                         add("id", msgId)
                         val result = JsonObject().apply {
                             addProperty("protocolVersion", "2024-11-05")
-                            add("capabilities", JsonObject().apply { addProperty("tools", true) })
+                            add("capabilities", JsonObject().apply {
+                                addProperty("tools", true)
+                                add("resources", JsonObject().apply {
+                                    addProperty("listChanged", false)
+                                })
+                                add("prompts", JsonObject().apply {
+                                    addProperty("listChanged", false)
+                                })
+                            })
                             val serverInfo = JsonObject().apply {
                                 addProperty("name", "xiaozhi-android")
                                 addProperty("version", "1.0.0")
@@ -894,6 +910,54 @@ class XiaoZhiBackendService(
                 }
                 sendTextMessage(response.toString())
                 Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
+            }
+            "resources/list" -> {
+                val response = JsonObject().apply {
+                addProperty("type", "mcp")
+                addProperty("session_id", sessionId)
+                val responsePayload = JsonObject().apply {
+                    addProperty("jsonrpc", "2.0")
+                    add("id", msgId)
+                    add("result", JsonObject().apply {
+                        add("resources", JsonArray())
+                    })
+                }
+                add("payload", responsePayload)
+                }
+                sendTextMessage(response.toString())
+                Logger.i(TAG, "回复MCP resources/list响应(空)")
+                }
+                "resources/read" -> {
+                val response = JsonObject().apply {
+                addProperty("type", "mcp")
+                addProperty("session_id", sessionId)
+                val responsePayload = JsonObject().apply {
+                    addProperty("jsonrpc", "2.0")
+                    add("id", msgId)
+                    add("result", JsonObject().apply {
+                        add("contents", JsonArray())
+                    })
+                }
+                add("payload", responsePayload)
+                }
+                sendTextMessage(response.toString())
+                Logger.i(TAG, "回复MCP resources/read响应(空)")
+                }
+                "prompts/list" -> {
+                val response = JsonObject().apply {
+                addProperty("type", "mcp")
+                addProperty("session_id", sessionId)
+                val responsePayload = JsonObject().apply {
+                    addProperty("jsonrpc", "2.0")
+                    add("id", msgId)
+                    add("result", JsonObject().apply {
+                        add("prompts", JsonArray())
+                    })
+                }
+                add("payload", responsePayload)
+                }
+                sendTextMessage(response.toString())
+                Logger.i(TAG, "回复MCP prompts/list响应(空)")
             }
             "tools/call" -> {
                 val params = payload?.get("params")?.asJsonObject
@@ -1074,19 +1138,29 @@ class XiaoZhiBackendService(
      * - 小智AI 1字节协议: type(1) + payload[]
      * 剥离后只发射纯Opus payload，保证音频缓存和转发不走样
      */
+    private var binaryPacketCount = 0
     private fun handleBinaryMessage(data: ByteArray) {
         if (data.isEmpty()) {
             Logger.w(TAG, "收到空二进制消息")
             return
         }
-        Logger.d(TAG, "收到二进制音频: ${data.size}B session=$sessionId")
+        binaryPacketCount++
+        // 前5包+每20包打印原始字节，诊断协议格式
+        if (binaryPacketCount <= 5 || binaryPacketCount % 20 == 0) {
+            val hex = data.take(minOf(16, data.size)).joinToString("") { "%02X".format(it) }
+            Logger.i(TAG, "bin#${binaryPacketCount}: ${data.size}B, head=$hex")
+        }
         // 有音频数据到达，取消空闲防抖
         idleDebounceJob?.cancel()
         // 标记本轮TTS已有二进制音频（用于base64去重）
         binaryAudioInSession = true
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
-        Logger.d(TAG, "发射音频到Flow: ${opusPayload.size}B (原${data.size}B)")
+        val stripped = data.size - opusPayload.size
+        if (binaryPacketCount <= 5 || binaryPacketCount % 20 == 0) {
+            val opusHex = opusPayload.take(minOf(8, opusPayload.size)).joinToString("") { "%02X".format(it) }
+            Logger.i(TAG, "bin#${binaryPacketCount}→opus: ${opusPayload.size}B (stripped ${stripped}B header), opusHead=$opusHex")
+        }
         scope.launch {
             _audioData.emit(opusPayload)
         }
@@ -1135,7 +1209,24 @@ class XiaoZhiBackendService(
     private fun stripProtocolHeader(data: ByteArray): ByteArray {
         if (data.size < 2) return data
 
-        // BinaryProtocol2: 前2字节 version=0x0002 (big-endian)
+        // BinaryProtocol2: 16B头 [version(2)][type(2)][reserved(4)][timestamp(4)][payload_size(4)][payload...]
+        // 服务器实际发送 version=0x0000（非文档中的0x0002），用结构特征检测：
+        // 1) 前8字节全零（version + type + reserved）
+        // 2) payload_size + 16 == data.size（精确匹配包长）
+        if (data.size >= 16) {
+            val first8AllZero = (0..7).all { data[it].toInt() == 0 }
+            if (first8AllZero) {
+                val payloadSize = ((data[12].toInt() and 0xFF) shl 24) or
+                        ((data[13].toInt() and 0xFF) shl 16) or
+                        ((data[14].toInt() and 0xFF) shl 8) or
+                        (data[15].toInt() and 0xFF)
+                if (payloadSize > 0 && payloadSize + 16 == data.size) {
+                    return data.copyOfRange(16, 16 + payloadSize)
+                }
+            }
+        }
+
+        // BinaryProtocol2 legacy check (version=0x0002)
         if (data.size >= 16 && data[0].toInt() == 0x00 && data[1].toInt() == 0x02) {
             val payloadSize = ((data[12].toInt() and 0xFF) shl 24) or
                     ((data[13].toInt() and 0xFF) shl 16) or
@@ -1146,19 +1237,16 @@ class XiaoZhiBackendService(
             }
         }
 
-        // BinaryProtocol3: 4字节头
-        if (data.size >= 4) {
+        // BinaryProtocol3: [type(1)][reserved(1)][payload_size(2大端)][payload...]
+        // 必须同时满足: byte[0]==0x01 (audio type) 且 byte[1]==0x00 (reserved)
+        // 裸Opus的TOC byte范围 0x40-0x7F (24kHz宽带)，不会匹配 0x01
+        if (data.size >= 4 && data[0].toInt() == 0x01 && data[1].toInt() == 0x00) {
             val payloadSize = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
             if (payloadSize > 0 && payloadSize + 4 <= data.size) {
                 return data.copyOfRange(4, 4 + payloadSize)
             }
         }
 
-        // 小智AI 1字节协议: [type(1)][payload...]
-        val type = data[0].toInt() and 0xFF
-        if (type == 0x01 || type == 0x02) {
-            return data.copyOfRange(1, data.size)
-        }
         return data
     }
 }
