@@ -76,6 +76,8 @@ class RelayOrchestrator(
      */
     fun getExpectedSpeakerId(): String = relayState.value.expectedSpeakerId
 
+    fun getCurrentPhase(): RelayPhase = relayState.value.phase
+
     /**
      * 更新预期 speaker（当服务器把 TTS 发给了非预期 bot 时调用）
      * 让后续 ttsStopped 能正确匹配，relay 不会卡死

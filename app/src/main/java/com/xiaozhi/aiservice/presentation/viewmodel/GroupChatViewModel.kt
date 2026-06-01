@@ -406,14 +406,12 @@ class GroupChatViewModel @Inject constructor(
                                     }
                                     sttCollectorJob?.cancel()
                                 }
-                                // BotStartSpeaking: 非预期bot也更新expectedSpeaker让relay继续
+                                // 只有预期 speaker 的 BotStartSpeaking 才触发 relay
                                 val expected = orchestrator.getExpectedSpeakerId()
                                 if (expected.isEmpty() || botId == expected) {
                                     orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 } else {
-                                    Log.w(TAG, "[$botName] BotStartSpeaking 非预期(期望=${expected.take(8)})，更新为$botId")
-                                    orchestrator.updateExpectedSpeaker(botId)
-                                    orchestrator.onEvent(RelayEvent.BotStartSpeaking)
+                                    Log.d(TAG, "[$botName] BotStartSpeaking 跳过(非预期speaker)")
                                 }
                             }
                             AiStateStr.IDLE -> {
@@ -422,13 +420,21 @@ class GroupChatViewModel @Inject constructor(
                         }
                     }
                     is BotEvent.TtsStopped -> {
-                        // 只有预期 speaker 的 TtsStopped 才触发 relay
                         val expected = orchestrator.getExpectedSpeakerId()
                         if (expected.isEmpty() || botId == expected) {
+                            // 预期 speaker 或无预期 → 正常触发
                             Log.i(TAG, "[$botName] ttsStopped")
                             orchestrator.onEvent(RelayEvent.BotStopSpeaking)
                         } else {
-                            Log.d(TAG, "[$botName] ttsStopped 跳过(非预期speaker=$expected)")
+                            // 非预期 speaker 的 ttsStopped
+                            // 如果预期 bot 从未开始说话（relay 卡死），允许触发
+                            val phase = orchestrator.getCurrentPhase()
+                            if (phase == com.xiaozhi.aiservice.domain.usecase.relay.RelayPhase.BOT_SPEAKING) {
+                                Log.w(TAG, "[$botName] ttsStopped 非预期但relay卡死(phase=BOT_SPEAKING,期望=${expected.take(8)})，允许触发")
+                                orchestrator.onEvent(RelayEvent.BotStopSpeaking)
+                            } else {
+                                Log.d(TAG, "[$botName] ttsStopped 跳过(非预期speaker=$expected)")
+                            }
                         }
                     }
                 }
