@@ -46,14 +46,10 @@ class AudioRouter(
         audioData: ByteArray,
         expectedSpeakerId: String
     ): Boolean {
-        // speaker 过滤
+        // speaker 过滤已移除：服务器不按客户端选的bot发TTS，严格过滤导致无声
+        // 文字过滤仍保留（GroupChatViewModel中只显示预期bot的文字）
         if (expectedSpeakerId.isNotEmpty() && botId != expectedSpeakerId) {
-            if (System.currentTimeMillis() - lastSpeakerChangeMs > RelayConfig.SPEAKER_GRACE_MS) {
-                Log.w(TAG, "音频被过滤: $botId != expected=$expectedSpeakerId")
-                return false
-            } else {
-                Log.d(TAG, "音频grace通过: $botId (grace中)")
-            }
+            Log.d(TAG, "音频非预期但播放: $botId (期望=${expectedSpeakerId.take(8)})")
         }
 
         val sourceId = getSharedSourceId(groupId, serverRate)

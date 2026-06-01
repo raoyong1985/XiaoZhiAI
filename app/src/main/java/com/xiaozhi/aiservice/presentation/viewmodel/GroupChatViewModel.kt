@@ -376,7 +376,11 @@ class GroupChatViewModel @Inject constructor(
             for (event in eventChannel) {
                 when (event) {
                     is BotEvent.TtsText -> {
-                        orchestrator.appendReplyText(event.text)
+                        // 只有预期 speaker 的流式文字才追加
+                        val expected = orchestrator.getExpectedSpeakerId()
+                        if (expected.isEmpty() || botId == expected) {
+                            orchestrator.appendReplyText(event.text)
+                        }
                     }
                     is BotEvent.Message -> {
                         val msg = event.msg
