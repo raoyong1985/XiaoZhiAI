@@ -406,12 +406,14 @@ class GroupChatViewModel @Inject constructor(
                                     }
                                     sttCollectorJob?.cancel()
                                 }
-                                // 只有预期 speaker 的 BotStartSpeaking 才触发 relay
+                                // BotStartSpeaking: 非预期bot也更新expectedSpeaker让relay继续
                                 val expected = orchestrator.getExpectedSpeakerId()
                                 if (expected.isEmpty() || botId == expected) {
                                     orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 } else {
-                                    Log.d(TAG, "[$botName] BotStartSpeaking 跳过(非预期speaker)")
+                                    Log.w(TAG, "[$botName] BotStartSpeaking 非预期(期望=${expected.take(8)})，更新为$botId")
+                                    orchestrator.updateExpectedSpeaker(botId)
+                                    orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 }
                             }
                             AiStateStr.IDLE -> {

@@ -76,6 +76,15 @@ class RelayOrchestrator(
      */
     fun getExpectedSpeakerId(): String = relayState.value.expectedSpeakerId
 
+    /**
+     * 更新预期 speaker（当服务器把 TTS 发给了非预期 bot 时调用）
+     * 让后续 ttsStopped 能正确匹配，relay 不会卡死
+     */
+    fun updateExpectedSpeaker(newBotId: String) {
+        relayState.update { it.copy(expectedSpeakerId = newBotId) }
+        logger.i(TAG, "expectedSpeaker 更新为 $newBotId")
+    }
+
     // ── 状态处理 ──
 
     private suspend fun handleUserStartSpeaking(current: RelayState) {
