@@ -408,7 +408,7 @@ class GroupChatViewModel @Inject constructor(
                                 }
                                 // 只有预期 speaker 的 BotStartSpeaking 才触发 relay
                                 val expected = orchestrator.getExpectedSpeakerId()
-                                if (expected.isEmpty() || botId == expected) {
+                                if (expected.isNotEmpty() && botId == expected) {
                                     orchestrator.onEvent(RelayEvent.BotStartSpeaking)
                                 } else {
                                     Log.d(TAG, "[$botName] BotStartSpeaking 跳过(非预期speaker)")
@@ -422,7 +422,7 @@ class GroupChatViewModel @Inject constructor(
                     is BotEvent.TtsStopped -> {
                         // 只有预期 speaker 的 TtsStopped 才触发 relay
                         val expected = orchestrator.getExpectedSpeakerId()
-                        if (expected.isEmpty() || botId == expected) {
+                        if (expected.isNotEmpty() && botId == expected) {
                             Log.i(TAG, "[$botName] ttsStopped")
                             orchestrator.onEvent(RelayEvent.BotStopSpeaking)
                         } else {
