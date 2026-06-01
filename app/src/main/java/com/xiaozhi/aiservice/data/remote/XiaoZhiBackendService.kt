@@ -26,8 +26,12 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * 小智AI WebSocket客户端
@@ -47,7 +51,7 @@ class XiaoZhiBackendService(
     private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
 
     companion object {
-        private const val PROTOCOL_VERSION = "1"
+        private const val PROTOCOL_VERSION = "2"
         private const val TAG = "XiaoZhiWS"
         private const val MAX_RECONNECT_ATTEMPTS = 10
 
@@ -130,6 +134,7 @@ class XiaoZhiBackendService(
     private var serverChannels = 1
     private var accessToken = ""
     private var wsToken = ""
+    @Volatile private var connectedTimestamp = 0L  // WebSocket连接建立时间(ms)，用于BinaryProtocol2时间戳
     @Volatile private var reconnectAttempt = 0
     private val baseReconnectDelay = 1000L
     @Volatile private var isDisconnecting = false  // 用户主动断开，不再自动重连
@@ -186,10 +191,11 @@ class XiaoZhiBackendService(
             addProperty("language", "zh")
             addProperty("mac_address", deviceId)
             addProperty("uuid", clientId)
+            addProperty("serial_number", deviceId)
             addProperty("chip_model_name", "android")
             add("application", JsonObject().apply {
                 addProperty("name", "xiaozhi-android")
-                addProperty("version", "1.0.0")
+                addProperty("version", "1.5.28")
             })
         }
 
@@ -271,6 +277,7 @@ class XiaoZhiBackendService(
                 isConnected = true
                 isReconnecting = false
                 reconnectAttempt = 0
+                connectedTimestamp = System.currentTimeMillis()
                 _connectionState.value = BotConnectionState.Connected
                 Logger.i(TAG, "WebSocket已连接! 发送hello...")
                 sendHello()
@@ -404,10 +411,11 @@ class XiaoZhiBackendService(
     private fun sendHello() {
         val hello = JsonObject().apply {
             addProperty("type", "hello")
-            addProperty("version", 1)
+            addProperty("version", 2)
             addProperty("transport", "websocket")
             add("features", JsonObject().apply {
                 addProperty("mcp", true)
+                addProperty("aec", true)
             })
             add("audio_params", JsonObject().apply {
                 addProperty("format", "opus")
@@ -416,7 +424,7 @@ class XiaoZhiBackendService(
                 addProperty("frame_duration", 60)
             })
         }
-        Logger.i(TAG, "发送hello")
+        Logger.i(TAG, "发送hello (v2)")
         sendTextMessage(hello.toString())
     }
 
@@ -462,18 +470,49 @@ class XiaoZhiBackendService(
     }
 
     /**
-     * 发送设备激活响应
+     * 发送设备激活响应 (v2协议: HMAC-SHA256签名)
      * @param challenge 服务器下发的challenge
      * @param code 激活码（用户网站上确认后获取）
      */
     private fun sendActivation(challenge: String, code: String) {
-        val message = JsonObject().apply {
-            addProperty("type", "activation")
-            addProperty("challenge", challenge)
-            addProperty("code", code)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val deviceSecret = getDeviceSecret()
+                val hmac = computeHmacSha256(challenge, deviceSecret)
+
+                // POST到OTA端点进行激活
+                val payload = JsonObject().apply {
+                    addProperty("algorithm", "hmac-sha256")
+                    addProperty("serial_number", deviceId)
+                    addProperty("challenge", challenge)
+                    addProperty("hmac", hmac)
+                }
+                val activateUrl = if (otaUrl.endsWith("/")) "${otaUrl}activate" else "$otaUrl/activate"
+                Logger.i(TAG, "发送HMAC激活请求: $activateUrl")
+
+                val requestBody = payload.toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder()
+                    .url(activateUrl)
+                    .post(requestBody)
+                    .addHeader("Device-Id", deviceId)
+                    .addHeader("Client-Id", clientId)
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+
+                sharedClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: "empty"
+                    Logger.i(TAG, "激活响应: ${response.code} - ${responseBody.take(200)}")
+                    if (response.isSuccessful) {
+                        Logger.i(TAG, "设备激活成功")
+                    } else {
+                        Logger.w(TAG, "设备激活失败: ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.e(TAG, "激活请求异常: ${e.message}")
+            }
         }
-        Logger.i(TAG, "发送激活响应")
-        sendTextMessage(message.toString())
     }
 
     /**
@@ -499,10 +538,37 @@ class XiaoZhiBackendService(
 
     /**
      * 发送Opus编码的音频数据
+     * v2协议: 包装为BinaryProtocol2帧 (version=2, type=0 OPUS, timestamp, payload_size, payload)
      */
     override fun sendAudio(audioData: ByteArray) {
         if (!isConnected || audioData.isEmpty()) return
-        webSocket?.send(audioData.toByteString())
+        val framed = wrapInBinaryProtocol2(audioData)
+        webSocket?.send(framed.toByteString())
+    }
+
+    /**
+     * 包装Opus数据为BinaryProtocol2帧格式
+     * 帧结构 (16字节头 + payload):
+     *   version(2B)      = htons(2)       = 0x0002
+     *   type(2B)         = htons(0)       = 0x0000 (0=OPUS)
+     *   reserved(4B)     = 0x00000000
+     *   timestamp(4B)    = htonl(elapsed)  相对连接建立的毫秒数
+     *   payload_size(4B) = htonl(size)
+     *   payload[]
+     */
+    private fun wrapInBinaryProtocol2(opusData: ByteArray): ByteArray {
+        val timestamp = if (connectedTimestamp > 0) {
+            (System.currentTimeMillis() - connectedTimestamp).toInt()
+        } else 0
+        val header = ByteBuffer.allocate(16).apply {
+            order(ByteOrder.BIG_ENDIAN)
+            putShort(2)                    // version = 2
+            putShort(0)                    // type = 0 (OPUS)
+            putInt(0)                      // reserved
+            putInt(timestamp)              // timestamp (ms since connection)
+            putInt(opusData.size)          // payload_size
+        }.array()
+        return header + opusData
     }
 
     /**
@@ -1027,21 +1093,70 @@ class XiaoZhiBackendService(
     }
 
     /**
+     * 获取或生成设备密钥（用于HMAC-SHA256激活签名）
+     * 首次运行时生成32字节随机密钥，存储在SharedPreferences中
+     */
+    private fun getDeviceSecret(): String {
+        val ctx = AppContext.context
+        val prefs = ctx.getSharedPreferences("xiaozhi_activation", android.content.Context.MODE_PRIVATE)
+        var secret = prefs.getString("device_secret", null)
+        if (secret == null) {
+            val bytes = ByteArray(32)
+            java.security.SecureRandom().nextBytes(bytes)
+            secret = bytes.joinToString("") { "%02x".format(it) }
+            prefs.edit().putString("device_secret", secret).apply()
+            Logger.i(TAG, "生成新设备密钥: ${secret.take(16)}...")
+        }
+        return secret
+    }
+
+    /**
+     * 计算HMAC-SHA256签名
+     * @param data 要签名的数据（challenge字符串）
+     * @param key 密钥（hex字符串）
+     * @return 64字符hex HMAC签名
+     */
+    private fun computeHmacSha256(data: String, key: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        val keyBytes = key.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        mac.init(SecretKeySpec(keyBytes, "HmacSHA256"))
+        val hmacBytes = mac.doFinal(data.toByteArray(Charsets.UTF_8))
+        return hmacBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
      * 自动检测并剥离二进制协议头
+     * 支持:
+     * - BinaryProtocol2: version(2) + type(2) + reserved(4) + timestamp(4) + payload_size(4) + payload[] (16B头)
+     * - BinaryProtocol3: type(1) + reserved(1) + payload_size(2大端) + payload[] (4B头)
+     * - 小智AI 1字节协议: type(1) + payload[]
      * 返回纯Opus数据
      */
     private fun stripProtocolHeader(data: ByteArray): ByteArray {
         if (data.size < 2) return data
-        val type = data[0].toInt() and 0xFF
+
+        // BinaryProtocol2: 前2字节 version=0x0002 (big-endian)
+        if (data.size >= 16 && data[0].toInt() == 0x00 && data[1].toInt() == 0x02) {
+            val payloadSize = ((data[12].toInt() and 0xFF) shl 24) or
+                    ((data[13].toInt() and 0xFF) shl 16) or
+                    ((data[14].toInt() and 0xFF) shl 8) or
+                    (data[15].toInt() and 0xFF)
+            if (payloadSize > 0 && payloadSize + 16 <= data.size) {
+                return data.copyOfRange(16, 16 + payloadSize)
+            }
+        }
+
+        // BinaryProtocol3: 4字节头
         if (data.size >= 4) {
             val payloadSize = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
             if (payloadSize > 0 && payloadSize + 4 <= data.size) {
-                // BinaryProtocol3: 4字节头有效
                 return data.copyOfRange(4, 4 + payloadSize)
             }
         }
+
+        // 小智AI 1字节协议: [type(1)][payload...]
+        val type = data[0].toInt() and 0xFF
         if (type == 0x01 || type == 0x02) {
-            // 小智AI 1字节协议: [type(1)][payload...]
             return data.copyOfRange(1, data.size)
         }
         return data

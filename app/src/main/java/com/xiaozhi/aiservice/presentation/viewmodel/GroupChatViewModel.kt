@@ -427,15 +427,17 @@ class GroupChatViewModel @Inject constructor(
                     }
                     is BotEvent.TtsStopped -> {
                         val expected = orchestrator.getExpectedSpeakerId()
-                        if (expected.isEmpty() || botId == expected) {
-                            // 预期 speaker 或无预期 → 正常触发
+                        if (botId == expected) {
+                            // 当前预期 speaker 的 TTS 停了 → 正常推进 relay
                             Log.i(TAG, "[$botName] ttsStopped")
                             orchestrator.onEvent(RelayEvent.BotStopSpeaking)
-                        } else {
-                            // 非预期 speaker 说完 → 更新expectedSpeakerId让relay跟着服务器走
-                            Log.w(TAG, "[$botName] ttsStopped 非预期(期望=${expected.take(8)})，更新expectedSpeaker")
-                            orchestrator.updateExpectedSpeaker(botId)
+                        } else if (expected.isEmpty()) {
+                            // 无预期 speaker（首 bot 场景）→ 允许触发
+                            Log.i(TAG, "[$botName] ttsStopped (无预期speaker)")
                             orchestrator.onEvent(RelayEvent.BotStopSpeaking)
+                        } else {
+                            // 非预期 speaker 的迟到 ttsStopped → 丢弃，不推进 relay
+                            Log.w(TAG, "[$botName] ttsStopped 丢弃(期望=${expected.take(8)})")
                         }
                     }
                 }
