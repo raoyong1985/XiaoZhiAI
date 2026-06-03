@@ -28,8 +28,8 @@ class AudioEnhancer {
 
     /** 配置参数 */
     var aecEnabled = false
-    var agcEnabled = false
-    var nsEnabled = false
+    var agcEnabled = true
+    var nsEnabled = true
 
     /** 是否已绑定到 AudioRecord 会话 */
     var isActive: Boolean = false

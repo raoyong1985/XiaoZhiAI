@@ -515,6 +515,12 @@ class ConnectionRepositoryImpl @Inject constructor(
         if (audioService.isAecSupported()) {
             audioService.setAecEnabled(true)
         }
+        if (audioService.isAgcSupported()) {
+            audioService.setAgcEnabled(true)
+        }
+        if (audioService.isNsSupported()) {
+            audioService.setNsEnabled(true)
+        }
         if (!audioRecorder.start(
                 owner = "main",
                 scope = scope,

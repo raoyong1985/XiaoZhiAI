@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 class OpusEncoder(
     private val sampleRate: Int = 16000,  // 必须与 AudioService 录音采样率一致（16kHz）
     private val channels: Int = 1,
-    private val bitRate: Int = 32000  // 32kbps（原来 16kbps 太低，语音细节丢失）
+    private val bitRate: Int = 64000  // 64kbps（提升语音细节有利于服务端 ASR）
 ) {
     companion object {
         private const val TAG = "OpusEncoder"

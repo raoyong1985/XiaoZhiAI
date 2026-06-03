@@ -22,7 +22,7 @@ class AudioService {
         const val DEFAULT_SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val SILENCE_RMS_THRESHOLD = 1200
+        private const val SILENCE_RMS_THRESHOLD = 800
         private const val SILENCE_TIMEOUT_MS = 3000L
         private const val SILENCE_CONSECUTIVE_BUFFERS = 2
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
