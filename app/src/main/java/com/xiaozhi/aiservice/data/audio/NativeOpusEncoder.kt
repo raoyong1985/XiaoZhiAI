@@ -65,13 +65,12 @@ class NativeOpusEncoder(
         encodingThread = Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             val codecPtr = encoderPtr
-            var pcmAccumulator = ShortArray(frameSamples * 4)  // 预分配 ~4 帧容量，避免频繁扩容
+            var pcmAccumulator = ShortArray(frameSamples * 4)
             var accumulatedSamples = 0
 
             while (isEncoding) {
                 val pcm = try { pcmQueue.poll(50, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { break }
                 if (pcm == null) {
-                    // 积攒的 PCM 够一帧时编码
                     if (accumulatedSamples >= frameSamples) {
                         encodeFrame(codecPtr, pcmAccumulator, accumulatedSamples)
                         pcmAccumulator = ShortArray(frameSamples * 4)
@@ -84,9 +83,10 @@ class NativeOpusEncoder(
                 val shortBuf = ShortArray(pcm.size / 2)
                 ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortBuf)
 
-                // 确保有足够空间
-                if (accumulatedSamples + shortBuf.size > pcmAccumulator.size) {
-                    pcmAccumulator = pcmAccumulator.copyOf(pcmAccumulator.size * 2)
+                // 确保有足够空间（必须在 arraycopy 之前）
+                val required = accumulatedSamples + shortBuf.size
+                if (required > pcmAccumulator.size) {
+                    pcmAccumulator = pcmAccumulator.copyOf(maxOf(required, pcmAccumulator.size * 2))
                 }
                 System.arraycopy(shortBuf, 0, pcmAccumulator, accumulatedSamples, shortBuf.size)
                 accumulatedSamples += shortBuf.size
@@ -94,14 +94,14 @@ class NativeOpusEncoder(
                 // 积攒够一帧就编码
                 while (accumulatedSamples >= frameSamples) {
                     encodeFrame(codecPtr, pcmAccumulator, frameSamples)
-                    // 移动剩余样本到数组头部
                     val remaining = accumulatedSamples - frameSamples
-                    System.arraycopy(pcmAccumulator, frameSamples, pcmAccumulator, 0, remaining)
+                    if (remaining > 0) {
+                        System.arraycopy(pcmAccumulator, frameSamples, pcmAccumulator, 0, remaining)
+                    }
                     accumulatedSamples = remaining
                 }
             }
 
-            // 编码剩余数据
             if (accumulatedSamples > 0) {
                 encodeFrame(codecPtr, pcmAccumulator, accumulatedSamples)
             }
