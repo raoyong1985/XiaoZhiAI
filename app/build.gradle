@@ -13,8 +13,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 74
-        versionName "1.5.31"
+        versionCode 75
+        versionName "1.5.32"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -141,8 +141,8 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 
-    // Porcupine wake word engine
-    implementation 'ai.picovoice:porcupine-android:3.0.2'
+    // 唤醒词引擎：使用 OpenWakeWord (ONNX)，已由 MfccExtractor + ONNX Runtime 替代
+    // 移除 Picovoice Porcupine（需要企业授权 AccessKey）
 
     // Hilt DI
     implementation "com.google.dagger:hilt-android:2.50"

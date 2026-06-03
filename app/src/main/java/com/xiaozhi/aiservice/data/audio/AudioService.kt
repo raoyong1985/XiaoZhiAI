@@ -9,7 +9,6 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
-import android.os.PowerManager
 import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.core.content.ContextCompat
@@ -28,10 +27,6 @@ class AudioService {
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
         private const val MIN_SPEECH_DURATION_MS = 300L
         private const val POOL_CAPACITY = 16
-
-        /** 唤醒词模式录音参数（小缓冲、低延迟） */
-        private const val WAKE_WORD_SAMPLE_RATE = 16000
-        private const val WAKE_WORD_BUFFER_MS = 100  // 100ms 缓冲
     }
 
     // ByteArray 池：减少录音→编码链路 GC 压力
@@ -75,22 +70,13 @@ class AudioService {
     private var appContext: android.content.Context? = null
     private var audioSettingsBackup = mutableMapOf<String, Boolean>()  // 存旧增强配置
 
-    // 唤醒词检测相关（参考 ESP32 AudioService::wake_word_）
-    private val wakeWordDetector = WakeWordDetector()
-    private var onWakeWordDetected: ((String) -> Unit)? = null
-    private val isWakeWordRecording = AtomicBoolean(false)
-    private var wakeWordThread: Thread? = null
-    private var wakeWordRecord: AudioRecord? = null
-    private var wakeLock: PowerManager.WakeLock? = null
-
-    // Silero VAD（神经网络语音活动检测，替代 RMS 能量阈值）
-    val sileroVad = SileroVAD()
+    // FSMN VAD（神经网络语音活动检测，替代 SileroVAD，专为中文优化）
+    val fsmnVad = FsmnVAD()
 
     fun init(context: Context) {
         appContext = context
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        // Silero VAD 已禁用（ONNX Runtime JNI 在 OPPO/MTK 上 java_class 引用丢失导致 SIGABRT）
-        // 改用 AudioService.calculateRmsEnergy() RMS 能量阈值兜底
+        // FSMN VAD 使用 ONNX Runtime（与 SileroVAD 相同的基础设施）
     }
 
     /**
@@ -204,167 +190,8 @@ class AudioService {
         }
     }
 
-    /**
-     * 设置唤醒词检测回调
-     * 对应 ESP32 AudioServiceCallbacks.on_wake_word_detected
-     */
-    fun setOnWakeWordDetected(callback: (String) -> Unit) {
-        onWakeWordDetected = callback
-    }
-
-    /**
-     * 唤醒词引擎是否可用（AccessKey 已配置）
-     */
-    fun isWakeWordAvailable(): Boolean = wakeWordDetector.isReady()
-
-    /**
-     * 唤醒词检测是否正在运行
-     */
-    fun isWakeWordRunning(): Boolean = isWakeWordRecording.get()
-
-    /**
-     * 初始化并启动唤醒词检测
-     * 对应 ESP32 AudioService::EnableWakeWordDetection(true)
-     *
-     * 使用独立的 AudioRecord（小缓冲、VOICE_RECOGNITION），
-     * 录音数据仅用于 Porcupine 引擎，不编码不发送
-     *
-     * @param accessKey Picovoice AccessKey
-     * @param keyword 唤醒词
-     */
-    fun startWakeWordDetection(
-        accessKey: String = WakeWordDetector.ACCESS_KEY,
-        keyword: String = WakeWordDetector.DEFAULT_KEYWORD
-    ): Boolean {
-        if (isWakeWordRecording.get()) return true
-        if (isRecording.get()) {
-            Logger.w(TAG, "语音录音中，暂不启动唤醒词检测")
-            return false
-        }
-
-        // 初始化引擎（首次调用）
-        if (!wakeWordDetector.initialize(accessKey, keyword, appContext)) {
-            Logger.w(TAG, "唤醒词引擎初始化失败（AccessKey 未配置？），唤醒词不生效")
-            return false
-        }
-
-        // 设置回调链：WakeWordDetector → AudioService → App
-        wakeWordDetector.setOnWakeWordDetected { wakeWord ->
-            Logger.i(TAG, "唤醒词检测命中: $wakeWord")
-            onWakeWordDetected?.invoke(wakeWord)
-            // 检测到后自动停止唤醒模式
-            stopWakeWordDetection()
-        }
-
-        return startWakeWordRecording()
-    }
-
-    /**
-     * 启动唤醒词专用录音
-     */
-    private fun startWakeWordRecording(): Boolean {
-        val bufferSize = AudioRecord.getMinBufferSize(
-            WAKE_WORD_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT
-        )
-        val frameBytes = WAKE_WORD_SAMPLE_RATE * 2 * WAKE_WORD_BUFFER_MS / 1000 // 16bit = 2 bytes
-
-        return try {
-            val audioFormat = AudioFormat.Builder()
-                .setEncoding(AUDIO_FORMAT)
-                .setSampleRate(WAKE_WORD_SAMPLE_RATE)
-                .setChannelMask(CHANNEL_CONFIG)
-                .build()
-
-            wakeWordRecord = AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                .setAudioFormat(audioFormat)
-                .setBufferSizeInBytes(maxOf(bufferSize, frameBytes))
-                .build()
-
-            if (wakeWordRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Logger.e(TAG, "唤醒词 AudioRecord 初始化失败")
-                wakeWordRecord?.release()
-                wakeWordRecord = null
-                return false
-            }
-
-            // AudioRecord 初始化成功后获取 PARTIAL_WAKE_LOCK 防止 CPU 休眠
-            // 无超时——唤醒词常驻运行，stopWakeWordDetection 中释放
-            val powerManager = appContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            if (powerManager != null) {
-                wakeLock = powerManager.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK,
-                    "AudioService:WakeWordRecording"
-                )
-                wakeLock?.acquire()
-            }
-
-            isWakeWordRecording.set(true)
-            wakeWordRecord?.startRecording()
-
-            wakeWordThread = Thread {
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-                var buffer = acquireBuffer(frameBytes)
-                try {
-                    while (isWakeWordRecording.get()) {
-                        val readSize = wakeWordRecord?.read(buffer, 0, frameBytes) ?: 0
-                        if (readSize > 0) {
-                            val actualData = if (readSize < frameBytes) buffer.copyOf(readSize) else buffer
-                            wakeWordDetector.feed(actualData)
-                            // 若 buffer 被 copyOf 替换过，重新从池中获取
-                            if (actualData !== buffer) {
-                                recycleBuffer(buffer)
-                                buffer = acquireBuffer(frameBytes)
-                            }
-                        } else if (readSize == 0) {
-                            // 空读 backoff，避免忙等
-                            Thread.sleep(10)
-                        }
-                    }
-                } finally {
-                    recycleBuffer(buffer)
-                }
-            }.also { it.start() }
-
-            Logger.i(TAG, "唤醒词录音已启动（采样率: ${WAKE_WORD_SAMPLE_RATE}Hz, 缓冲: ${WAKE_WORD_BUFFER_MS}ms, 节能模式）")
-            true
-        } catch (e: SecurityException) {
-            Logger.e(TAG, "唤醒词录音权限被拒绝: ${e.message}")
-            releaseWakeLockQuietly()
-            false
-        } catch (e: Exception) {
-            Logger.e(TAG, "唤醒词录音启动失败: ${e.message}")
-            releaseWakeLockQuietly()
-            false
-        }
-    }
-
-    private fun releaseWakeLockQuietly() {
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (_: Exception) {}
-        wakeLock = null
-    }
-
-    /**
-     * 停止唤醒词检测
-     * 对应 ESP32 AudioService::EnableWakeWordDetection(false)
-     */
-    fun stopWakeWordDetection() {
-        isWakeWordRecording.set(false)
-        try {
-            wakeWordRecord?.stop()
-        } catch (_: Exception) {}
-        wakeWordThread?.join(300)
-        wakeWordThread = null
-        try {
-            wakeWordRecord?.release()
-        } catch (_: Exception) {}
-        wakeWordRecord = null
-        // 释放 PARTIAL_WAKE_LOCK
-        releaseWakeLockQuietly()
-        Logger.i(TAG, "唤醒词检测已停止")
-    }
+    /** 获取 Application Context（供 AudioRecorder 初始化 SileroVAD 使用） */
+    fun getAppContext(): android.content.Context? = appContext
 
     /**
      * 启动录音，带 VAD 静音检测
@@ -435,8 +262,8 @@ class AudioService {
 
             isRecording.set(true)
             audioRecord?.startRecording()
-            // 重置 Silero VAD 状态（内部 state/context/window 清零）
-            sileroVad.reset()
+            // 重置 FSMN VAD 状态
+            fsmnVad.reset()
 
             val buffer = ByteArray(bufferSize)
             var silenceStartTime = 0L
@@ -460,11 +287,11 @@ class AudioService {
                         recycleBuffer(pcmData)
                     }
 
-                    // VAD 检测（优先使用 SileroVAD，否则降级到 RMS 能量阈值）
+                    // VAD 检测（优先使用 FSMN VAD，否则降级到 RMS 能量阈值）
                     if (enableVAD) {
                         val now = System.currentTimeMillis()
-                        val hasVoice = if (sileroVad.isInitialized()) {
-                            sileroVad.isVoice(pcmData)
+                        val hasVoice = if (fsmnVad.initialized) {
+                            fsmnVad.isVoice(pcmData)
                         } else {
                             calculateRmsEnergy(pcmData) > SILENCE_RMS_THRESHOLD
                         }
@@ -490,7 +317,7 @@ class AudioService {
                                 if (consecutiveSilenceBuffers >= SILENCE_CONSECUTIVE_BUFFERS &&
                                     now - silenceStartTime >= SILENCE_TIMEOUT_MS &&
                                     speechDuration >= MIN_SPEECH_DURATION_MS) {
-                                    Logger.i(TAG, "SileroVAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（语音持续${speechDuration}ms）")
+                                    Logger.i(TAG, "FSMN VAD检测到${SILENCE_TIMEOUT_MS}ms静音，触发自动停止（语音持续${speechDuration}ms）")
                                     // 查找当前 owner 的 VAD 回调
                                     val ownerCallback = silenceCallbacks[recorderOwner]
                                     if (ownerCallback != null) {
@@ -575,10 +402,7 @@ class AudioService {
         // 5. 释放 AudioFX 增强器（AEC+AGC+NS）
         audioEnhancer.release()
 
-        // 6. 停止唤醒词检测（如果正在运行）
-        stopWakeWordDetection()
-
-        // 7. 清理 owner 记录（不再有活跃录音）
+        // 6. 清理 owner 记录（不再有活跃录音）
         if (recorderOwner != null) {
             silenceCallbacks.remove(recorderOwner)
             recorderOwner = null
@@ -590,7 +414,6 @@ class AudioService {
 
     fun release() {
         stopRecordingInternal()
-        wakeWordDetector.release()
     }
 
     fun isRecording(): Boolean = isRecording.get()

@@ -71,6 +71,12 @@ interface ConnectionRepository {
     // 语音控制
     suspend fun startListening(mode: String = "realtime")  // auto / manual / realtime
     suspend fun stopListening(userExplicitStop: Boolean = true)
+
+    // 唤醒词设置
+    fun setWakeWord(wakeWord: String)
+    fun startWakeWordMode(): Boolean
+    /** 检查当前是否有任何录音运行（唤醒模式或实时模式） */
+    fun isRecording(): Boolean
 }
 
 /**

@@ -447,7 +447,7 @@ class GroupChatViewModel @Inject constructor(
         // ── 启动录音 ──
         // onOpusPacket：每个 Opus 音频包实时转发到首 bot 的 WebSocket
         // onSilenceDetected：VAD 检测到静音后自动停止录音
-        if (!audioRecorder.start(
+        if (!audioRecorder.startLive(
                 owner = groupId,  // 传 groupId 标识，保护不与私聊录音冲突
                 scope = viewModelScope,
                 enableVAD = true,

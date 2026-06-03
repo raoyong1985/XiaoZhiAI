@@ -8,7 +8,7 @@ import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
-import com.xiaozhi.aiservice.data.audio.WakeWordDetector
+
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -67,9 +67,19 @@ class ConnectionRepositoryImpl @Inject constructor(
     // AI 最后说的话（RECEIVED 消息），用于回声检测
     @Volatile
     private var lastTtsText: String = ""
+    // AI 最后一次说话结束时间（毫秒），用于唤醒启动冷却
+    @Volatile
+    private var lastSpeakingEndMs = 0L
 
-    // 当前联系人ID，用于消息路由
+    // 当前联系人 ID，用于消息路由
     var currentContactId: String = ""
+
+    // 当前联系人唤醒词（空=说话即唤醒，非空=需要验证）
+    var currentWakeWord: String = ""
+
+    // 唤醒词验证中：第一次 STT 结果需要匹配唤醒词
+    @Volatile
+    private var pendingWakeVerification = false
 
     // 跟踪我们自己启动的录音（用于 AI 说话时自动停止，避免回声）
     private var weStartedRecording = false
@@ -82,8 +92,6 @@ class ConnectionRepositoryImpl @Inject constructor(
     // 等待文本消息回复（参考对方 Completer 模式）
     @Volatile
     private var pendingTextResponse: CompletableDeferred<Unit>? = null
-    // 唤醒词已启用
-    private var wakeWordEnabled = false
 
     // 设备状态（参考 ESP32 device_state_machine.cc）
     // 使用 internal 可见性让 MCP 工具能访问，同时对接口暴露为 StateFlow
@@ -95,6 +103,8 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
     private val stateMutex = Mutex()
+    // 录音模式互斥锁：唤醒模式 vs 直播模式，阻止竞态
+    private val recordingLock = Any()
 
     init {
         observeBackendService()
@@ -107,12 +117,29 @@ class ConnectionRepositoryImpl @Inject constructor(
             }
         }
 
-        // 参考 ESP32 HandleStateChangedEvent(Idle): 统一在 IDLE 状态重启唤醒词
-        // 替代分散在各处的 startWakeWordMode() 调用，确保所有回到 IDLE 的路径都触发
+        // 唤醒词验证：监听 STT 结果，检查是否匹配唤醒词
         scope.launch {
-            _deviceState.collect { state ->
-                if (state == DeviceState.IDLE) {
-                    startWakeWordMode()
+            backendService.textMessage.collect { text ->
+                if (pendingWakeVerification && text.isNotEmpty()) {
+                    // 去除标点符号再匹配，ASR 可能加逗号/句号/空格
+                    val clean = text.trim().lowercase().replace(Regex("[，。、！？,.!?\\s]"), "")
+                    val wakeWord = currentWakeWord.trim().lowercase()
+                    if (wakeWord.isNotEmpty() && !fuzzyWakeWordMatch(clean, wakeWord)) {
+                        Logger.i(TAG, "唤醒词不匹配: 期望「${wakeWord}」, 实际「${clean}」，中止并重新监听")
+                        pendingWakeVerification = false
+                        scope.launch {
+                            backendService.sendAbort()
+                            audioRecorder.stop("main")
+                            _deviceState.value = DeviceState.IDLE
+                            _aiState.value = AiState.IDLE
+                            // 等服务器处理完中止后再启动唤醒，避免竞态
+                            delay(500)
+                            startWakeWordMode()
+                        }
+                    } else if (wakeWord.isNotEmpty()) {
+                        Logger.i(TAG, "✅ 唤醒词匹配成功: 「${clean}」")
+                        pendingWakeVerification = false
+                    }
                 }
             }
         }
@@ -154,6 +181,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // 统一在这里设 _deviceState，替代分散在各条件分支中设置
                     // 确保文本模式（weStartedRecording=false）也能正确更新设备状态
                     if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
+                        // ⚠️ 无条件停止录音（唤醒模式 + 对话模式），防止 TTS 回声被捕获触发唤醒
+                        audioRecorder.stop("main")
                         _deviceState.value = DeviceState.SPEAKING
                     }
 
@@ -171,6 +200,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // AUTO 模式：AI 说完话回到 IDLE → 等播放排空后重启监听
                     // 文本模式下(textInputActive=true)不自动重启（参考 ESP32: 非 REALTIME 走 IDLE）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
+                        lastSpeakingEndMs = System.currentTimeMillis()
                         if (textInputActive) {
                             Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听，启动唤醒词检测")
                             _deviceState.value = DeviceState.IDLE
@@ -186,6 +216,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // Manual Stop 模式：TTS 结束后回到 IDLE，不自动重启监听，等待用户手动触发
                     // 参考 ESP32 kListeningModeManualStop 行为
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.MANUAL) {
+                        lastSpeakingEndMs = System.currentTimeMillis()
                         Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，启动唤醒词检测")
                         _deviceState.value = DeviceState.IDLE
                         audioService.abandonAudioFocus()
@@ -196,6 +227,7 @@ class ConnectionRepositoryImpl @Inject constructor(
 
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
+                        lastSpeakingEndMs = System.currentTimeMillis()
                         if (textInputActive) {
                             Logger.i(TAG, "Realtime 模式：文本输入中，不重启监听")
                             _deviceState.value = DeviceState.IDLE
@@ -224,15 +256,18 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // 连接建立后，在 IDLE 状态启动唤醒词检测
                     // 延迟启动避免与初始化流程竞争
                     scope.launch {
-                        kotlinx.coroutines.delay(2000)
+                        kotlinx.coroutines.delay(3000)
                         startWakeWordMode()
                     }
                 } else if (state is BotConnectionState.Disconnected ||
                            state is BotConnectionState.Error) {
                     playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
-                    // 断开后唤醒词已经在 disconnect() 中启动，但如果在 observeBackendService 外断开（如后端主动断开），此处兜底
-                    startWakeWordMode()
+                    // 断开后延迟再启动唤醒，让残留 TTS 播完
+                    scope.launch {
+                        kotlinx.coroutines.delay(3000)
+                        startWakeWordMode()
+                    }
                 }
             }
         }
@@ -394,59 +429,69 @@ class ConnectionRepositoryImpl @Inject constructor(
      * 对应 ESP32 EnableWakeWordDetection(true)
      * 在 IDLE 状态时运行，监听唤醒词后自动切换到语音模式
      */
-    fun startWakeWordMode() {
-        if (wakeWordEnabled) return
-        if (_aiState.value != AiState.IDLE) return
-
-        // 设置唤醒检测回调（唤醒→启动语音模式）
-        audioService.setOnWakeWordDetected { wakeWord ->
-            Logger.i(TAG, "🎤 检测到唤醒词「$wakeWord」，启动语音模式")
-            wakeWordEnabled = false
-            scope.launch {
-                startListening("realtime")
-            }
-        }
-
-        if (audioService.startWakeWordDetection()) {
-            wakeWordEnabled = true
-            Logger.i(TAG, "唤醒词模式已启动，说「${WakeWordDetector.DEFAULT_KEYWORD}」唤醒")
-        }
-    }
-
     /**
-     * 停止唤醒词模式
-     * 对应 ESP32 EnableWakeWordDetection(false)
+     * 初始化并启动唤醒模式（单 AudioRecord + SileroVAD + 环形缓冲）。
+     * 检测到连续语音后自动过渡到编码发送。
      */
-    fun stopWakeWordMode() {
-        if (!wakeWordEnabled) return
-        wakeWordEnabled = false
-        audioService.stopWakeWordDetection()
-        Logger.i(TAG, "唤醒词模式已停止")
+    override fun startWakeWordMode(): Boolean {
+        if (_aiState.value != AiState.IDLE) return false
+
+        // TTS 刚结束冷却期（3秒），防止残余回声被捕获触发假唤醒
+        if (System.currentTimeMillis() - lastSpeakingEndMs < 3000) {
+            Logger.i(TAG, "唤醒模式延迟启动：TTS 刚结束（冷却中），跳过")
+            return false
+        }
+
+        synchronized(recordingLock) {
+            // 二次检查：可能在获取锁期间录音已被对话启动
+            if (audioRecorder.isRecording) return false
+            val ok = audioRecorder.startWake(
+                owner = "main",
+                scope = scope,
+                onWakeDetected = { wakeText ->
+                    Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
+
+                    // 进入验证模式
+                    if (currentWakeWord.isNotEmpty()) {
+                        pendingWakeVerification = true
+                        Logger.i(TAG, "进入唤醒词验证模式，期望: 「${currentWakeWord}」")
+                    }
+
+                    // 发送唤醒事件到服务器（ESP32 协议风格）
+                    backendService.sendListenStart("realtime")
+
+                    scope.launch {
+                        _aiState.value = AiState.LISTENING
+                        weStartedRecording = true
+                        _deviceState.value = DeviceState.LISTENING
+                    }
+                },
+                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
+                onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
+            )
+            return ok
+        }
     }
+
+    override fun setWakeWord(wakeWord: String) {
+        currentWakeWord = wakeWord
+        Logger.i(TAG, "设置唤醒词: «${wakeWord}»")
+    }
+
+    override fun isRecording(): Boolean = audioRecorder.isRecording
 
     override suspend fun startListening(mode: String) {
-        // 停止唤醒词检测（录音冲突）
-        stopWakeWordMode()
-
         stateMutex.withLock {
-            // 用户开始语音输入，关闭文本模式标记
             textInputActive = false
-            // 解析并保存监听模式（参考 ESP32 ListeningMode）
             listeningMode = VoiceMode.fromServerValue(mode)
             isAutoMode = (mode == "auto")
 
-            backendService.sendListenStart(mode)
-            _aiState.value = AiState.LISTENING
-            weStartedRecording = true
-
-            // 更新设备状态（参考 ESP32 kDeviceStateListening）
-            _deviceState.value = DeviceState.LISTENING
-
-            // Realtime 模式：禁用 VAD 自动停止（持续录音流）
-            // 注意：Realtime 模式需要 AEC 支持才能在说话时继续录音
             val enableVAD = listeningMode != VoiceMode.REALTIME
 
-            if (!audioRecorder.start(
+            // 先停任何旧录音，再启实时录音
+            audioRecorder.stop("main")
+
+            if (!audioRecorder.startLive(
                     owner = "main",
                     scope = scope,
                     enableVAD = enableVAD,
@@ -457,7 +502,13 @@ class ConnectionRepositoryImpl @Inject constructor(
                 weStartedRecording = false
                 isAutoMode = false
                 _aiState.value = AiState.IDLE
+                return
             }
+
+            backendService.sendListenStart(mode)
+            _aiState.value = AiState.LISTENING
+            weStartedRecording = true
+            _deviceState.value = DeviceState.LISTENING
         }
     }
 
@@ -510,7 +561,8 @@ class ConnectionRepositoryImpl @Inject constructor(
      * 共享方法：AI 说完后重启监听（消除 AUTO/REALTIME 重复代码）
      */
     private suspend fun restartListeningAfterSpeaking(mode: String, enableVAD: Boolean) {
-        _deviceState.value = DeviceState.IDLE
+        // 确保旧录音已停（唤醒模式或实时模式）
+        audioRecorder.stop("main")
         drainAndFlushPlayback()
         if (audioService.isAecSupported()) {
             audioService.setAecEnabled(true)
@@ -521,7 +573,7 @@ class ConnectionRepositoryImpl @Inject constructor(
         if (audioService.isNsSupported()) {
             audioService.setNsEnabled(true)
         }
-        if (!audioRecorder.start(
+        if (!audioRecorder.startLive(
                 owner = "main",
                 scope = scope,
                 enableVAD = enableVAD,
@@ -541,10 +593,13 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     private suspend fun drainAndFlushPlayback() {
         // ESP32 WaitForPlaybackQueueEmpty: 等软件队列自然排空
-        val hadQueueData = playbackManager.waitForQueueEmpty("main", 1000)
-        // 等 AudioTrack 硬件缓冲排空（适度等待，文本回声滤波器兜底）
-        val hadHardware = playbackManager.waitForHardwareDrain("main", 1500)
+        // 服务端"stop"已经等待了音频发送完成+预缓冲播放时间，队列应已接近空
+        val hadQueueData = playbackManager.waitForQueueEmpty("main", 500)
+        // AudioTrack 硬件缓冲自然排空（和ESP32一样不做显式flush，少量等待即可）
+        val hadHardware = playbackManager.waitForHardwareDrain("main", 200)
         Logger.i(TAG, "drainAndFlushPlayback 完成（软件队列${if (hadQueueData) "空" else "超时"}，硬件${if (hadHardware) "已排空" else "超时"}）")
+        // 简短安全延迟，ESP32不需要等待硬件，Android 加少量缓冲
+        delay(200)
     }
 
     /**
@@ -571,5 +626,44 @@ class ConnectionRepositoryImpl @Inject constructor(
     /** 更新私聊解码器音量（由 set_xiaozhi_volume MCP 工具调用） */
     fun setVolume(level: Int) {
         playbackManager.setVolume(level)
+    }
+
+    /**
+     * 模糊唤醒词匹配：先精确 contains()，再降级到字符级重叠匹配。
+     *
+     * ASR 可能识别为"悠悠你好啊""悠悠泥好"等变体，strict contains 会失败。
+     * 算法：计算唯一字重叠率 ≥60% + 首字匹配 → 通过。
+     *
+     * 特别处理：短唤醒词（≤2个唯一字）只要首字匹配即通过。
+     * 例如"悠悠"（1个唯一字'悠'）→ ASR 返回"悠悠""优优""悠悠在做什么"，
+     * 只要含'悠'字就算匹配。长句含'悠'误命中概率极低。
+     */
+    private fun fuzzyWakeWordMatch(text: String, wakeWord: String): Boolean {
+        // 1. 精确子串匹配（快速通道，覆盖大部分情况）
+        if (text.contains(wakeWord)) return true
+
+        val uniqueWakeChars = wakeWord.toSet()      // 唤醒词唯一字集合
+        val textChars = text.toSet()                 // ASR 结果唯一字集合
+
+        // 2. 短唤醒词（≤2个唯一字）：只要首字出现就算匹配
+        //    例如"悠悠"→只要ASR结果含'悠'、 "张三"→含'张'
+        //    这些字在日常对话中不常见，误命中率极低
+        if (uniqueWakeChars.size <= 2) {
+            val firstCharMatch = wakeWord.first() in textChars
+            Logger.i(TAG, "短唤醒词模糊匹配: [${wakeWord}] 首字'${wakeWord.first()}'${if (firstCharMatch) "✅" else "❌"} 文本=[${text}]")
+            return firstCharMatch
+        }
+
+        // 3. 长唤醒词：字符级重叠匹配
+        val matched = uniqueWakeChars.count { it in textChars }
+        val ratio = matched.toDouble() / uniqueWakeChars.size
+
+        // 首字必须在 ASR 结果中（防误匹配："你好"→误配"悠悠你好"）
+        val firstCharMatch = wakeWord.first() in textChars
+
+        Logger.i(TAG, "模糊匹配: 唤醒词=[${wakeWord}] 唯一字数=${uniqueWakeChars.size} 重叠=${matched}/${uniqueWakeChars.size} " +
+                "首字=${firstCharMatch} 阈值=60% → ${if (ratio >= 0.6 && firstCharMatch) "✅" else "❌"}")
+
+        return ratio >= 0.6 && firstCharMatch
     }
 }

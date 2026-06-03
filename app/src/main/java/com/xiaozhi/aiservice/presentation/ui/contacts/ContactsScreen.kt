@@ -334,7 +334,7 @@ fun AddEditContactDialog(
     contact: BotContact?,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
-) {
+    ) {
     val isEditing = contact != null
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().serverUrl) }

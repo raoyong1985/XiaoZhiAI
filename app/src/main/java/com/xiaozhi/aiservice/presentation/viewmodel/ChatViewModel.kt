@@ -108,6 +108,16 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** 设置当前联系人的唤醒词 = 联系人名（直接喊名字唤醒） */
+    fun setCurrentWakeWord(contactName: String) {
+        val wakeWord = contactName
+        Logger.i(TAG, "设置唤醒词: «${wakeWord}»")
+        connectionRepository.setWakeWord(wakeWord)
+        // 启动唤醒检测（单 AudioRecord，自动过渡）
+        val started = connectionRepository.startWakeWordMode()
+        Logger.i(TAG, "唤醒模式启动${if (started) "成功" else "失败"}，录音中=${connectionRepository.isRecording()}")
+    }
+
     fun disconnect() {
         viewModelScope.launch {
             connectionRepository.disconnect()

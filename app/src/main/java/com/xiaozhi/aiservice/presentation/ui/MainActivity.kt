@@ -182,6 +182,8 @@ private fun MainNavigation() {
             "chat" -> {
                 val contact = contacts.find { it.id == selectedContactId }
                 if (contact != null) {
+                    // 设置唤醒词 = 联系人名 + "你好"
+                    chatViewModel.setCurrentWakeWord(contact.name)
                     ChatScreen(
                         viewModel = chatViewModel,
                         contact = contact,
