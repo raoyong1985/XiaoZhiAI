@@ -7,7 +7,7 @@ import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 fun registerLocationTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "get_location",
-        description = "获取设备当前地理位置（经纬度+地名），需要定位权限",
+        description = "获取设备当前地理位置（经纬度），需要定位权限",
         inputSchema = jsonSchema()
     ) { _ ->
         val ctx = registry.context
@@ -20,28 +20,9 @@ fun registerLocationTools(registry: MCPToolRegistry) {
         try {
             val loc = getCurrentLocation()
             if (loc != null) {
-                val lat = loc.first
-                val lng = loc.second
-                // 逆地理编码获取地名
-                var address = ""
-                try {
-                    val geoCtx = android.location.Geocoder(ctx, java.util.Locale.getDefault())
-                    @Suppress("DEPRECATION")
-                    val list = geoCtx.getFromLocation(lat, lng, 1)
-                    if (!list.isNullOrEmpty()) {
-                        val a = list[0]
-                        address = buildString {
-                            a.countryName?.let { append(it) }
-                            a.adminArea?.let { if (isNotEmpty()) append(" "); append(it) }
-                            a.locality?.let { if (isNotEmpty()) append(" "); append(it) }
-                            a.featureName?.let { if (isNotEmpty()) append(" "); append(it) }
-                        }
-                    }
-                } catch (_: Exception) {}
                 JsonObject().apply {
-                    addProperty("latitude", lat)
-                    addProperty("longitude", lng)
-                    if (address.isNotEmpty()) addProperty("address", address)
+                    addProperty("latitude", loc.first)
+                    addProperty("longitude", loc.second)
                     addProperty("provider", "fused")
                     addProperty("status", "ok")
                 }

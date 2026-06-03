@@ -280,7 +280,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         )
         if (notifPerm != null) return@registerTool notifPerm
         NotificationManagerCompat.from(registry.context).notify(
-            System.currentTimeMillis().toInt(), notification
+            (System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification
         )
         JsonObject().apply {
             addProperty("success", true)
@@ -327,13 +327,13 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "navigate",
-        description = "打开地图导航到指定目的地，支持高德/百度/腾讯地图或系统地图",
+        description = "打开地图导航到指定目的地，支持高德/百度地图或系统地图",
         inputSchema = jsonSchema(
             "destination" to jsonStringProp("目的地名称或地址"),
             "latitude" to jsonNumberProp("目的地纬度（可选，传经纬度可精确定位）"),
             "longitude" to jsonNumberProp("目的地经度（可选，传经纬度可精确定位）"),
             "mode" to jsonStringProp("导航模式：driving/walking/transit/cycling，默认 driving"),
-            "app" to jsonStringProp("地图应用：auto/amap/baidu/tencent/google，默认 auto（依次尝试高德→百度→腾讯→系统地图）"),
+            "app" to jsonStringProp("地图应用：auto/amap/baidu/google，默认 auto"),
             required = listOf("destination")
         )
     ) { args ->
@@ -347,85 +347,6 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
         val dlat = args["dlat"] as? Double
         val dlon = args["dlon"] as? Double
-
-        // Auto mode: try amap → baidu → tencent → system → google web in sequence
-        if (app == "auto") {
-            val encodedDest = URLEncoder.encode(destination, "UTF-8")
-            val naviStyle = when(mode){"driving"->2;"walking"->4;"transit"->1;else->2}
-            val baiduMode = when(mode){"driving"->"driving";"walking"->"walking";"transit"->"transit";"cycling"->"riding";else->"driving"}
-            val tMode = when(mode){"driving"->"drive";"walking"->"walk";"transit"->"bus";"cycling"->"bike";else->"drive"}
-
-            // 1. Try Amap (高德)
-            val amapUri = if (lat != null && lon != null)
-                "androidamap://navi?sourceApplication=xiaozhi&lat=$lat&lon=$lon&poiname=$encodedDest&style=$naviStyle"
-            else
-                "androidamap://keywordNavi?sourceApplication=xiaozhi&keyword=$encodedDest&style=$naviStyle"
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(amapUri)).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true); addProperty("destination", destination)
-                    addProperty("app", "amap"); addProperty("mode", mode)
-                    addProperty("message", "已打开高德地图导航到$destination")
-                }
-            } catch (_: Exception) { /* amap not installed, try next */ }
-
-            // 2. Try Baidu (百度)
-            val bCoord = if (lat != null && lon != null) "|ll=${lat},${lon}" else ""
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                    "baidumap://map/direction?destination=$encodedDest$bCoord&coord_type=gcj02&mode=$baiduMode"
-                )).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true); addProperty("destination", destination)
-                    addProperty("app", "baidu"); addProperty("mode", mode)
-                    addProperty("message", "已打开百度地图导航到$destination")
-                }
-            } catch (_: Exception) { /* baidu not installed, try next */ }
-
-            // 3. Try Tencent (腾讯)
-            val tCoord = if (lat != null && lon != null) "latlng=${lat},${lon}&name=$encodedDest" else "keyword=$encodedDest"
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                    "https://apis.map.qq.com/uri/v1/navigation?$tCoord&type=$tMode"
-                )).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true); addProperty("destination", destination)
-                    addProperty("app", "tencent"); addProperty("mode", mode)
-                    addProperty("message", "已打开腾讯地图导航到$destination")
-                }
-            } catch (_: Exception) { /* tencent not installed, try next */ }
-
-            // 4. System geo intent
-            try {
-                val geoUri = if (lat != null && lon != null) "geo:${lat},${lon}?q=${lat},${lon}($encodedDest)"
-                else "geo:0,0?q=$encodedDest"
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(geoUri)).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                ctx.startActivity(intent)
-                return@registerTool JsonObject().apply {
-                    addProperty("success", true); addProperty("destination", destination)
-                    addProperty("app", "system"); addProperty("mode", mode)
-                    addProperty("message", "已打开系统地图导航到$destination")
-                }
-            } catch (_: Exception) { /* no system map, try google web */ }
-
-            // 5. Google Maps web fallback
-            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                "https://www.google.com/maps/search/?api=1&query=$encodedDest"
-            )).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-            try {
-                ctx.startActivity(intent)
-                JsonObject().apply {
-                    addProperty("success", true); addProperty("destination", destination)
-                    addProperty("app", "google"); addProperty("mode", mode)
-                    addProperty("message", "已打开Google Maps导航到$destination")
-                }
-            } catch (_: Exception) {
-                throw Exception("无法打开导航，请安装高德/百度/腾讯地图")
-            }
-        }
 
         val intent = when (app) {
             "amap" -> {
@@ -441,13 +362,6 @@ fun registerIntentTools(registry: MCPToolRegistry) {
                     "baidumap://map/direction?destination=${URLEncoder.encode(destination, "UTF-8")}$coord&coord_type=gcj02&mode=${when(mode){"driving"->"driving";"walking"->"walking";"transit"->"transit";"cycling"->"riding";else->"driving"}}"
                 ))
             }
-            "tencent" -> {
-                val coord = if (lat != null && lon != null) "latlng=${lat},${lon}&name=${URLEncoder.encode(destination, "UTF-8")}" else "keyword=${URLEncoder.encode(destination, "UTF-8")}"
-                val tMode = when(mode){"driving"->"drive";"walking"->"walk";"transit"->"bus";"cycling"->"bike";else->"drive"}
-                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
-                    "https://apis.map.qq.com/uri/v1/navigation?$coord&type=$tMode"
-                ))
-            }
             "google" -> {
                 val coord = if (lat != null && lon != null) "${lat},${lon}" else URLEncoder.encode(destination, "UTF-8")
                 val travelMode = when (mode) { "driving" -> "driving"; "walking" -> "walking"; "transit" -> "transit"; "cycling" -> "bicycling"; else -> "driving" }
@@ -455,7 +369,18 @@ fun registerIntentTools(registry: MCPToolRegistry) {
                     "https://www.google.com/maps/dir/?api=1&destination=$coord&travelmode=$travelMode"
                 ))
             }
-            else -> throw Exception("不支持的地图应用: $app")
+            else -> { // auto - try system geo intent
+                val coord = if (lat != null && lon != null) "geo:${lat},${lon}?q=${lat},${lon}(${URLEncoder.encode(destination, "UTF-8")})"
+                else "geo:0,0?q=${URLEncoder.encode(destination, "UTF-8")}"
+                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(coord)).apply {
+                    // Also try amap/baidu if installed
+                    val pm = ctx.packageManager
+                    if (resolveActivity(pm) == null) {
+                        // Fallback to Google Maps web
+                        setData(android.net.Uri.parse("https://www.google.com/maps/search/?api=1&query=${URLEncoder.encode(destination, "UTF-8")}"))
+                    }
+                }
+            }
         }.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
 
         try {
@@ -744,7 +669,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "get_installed_apps",
-        description = "列出手机上安装的应用包名、名称和版本号（非系统应用）",
+        description = "列出手机上安装的应用包名和名称（非系统应用）",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回数量，默认 30"),
             "keyword" to jsonStringProp("搜索关键词，只返回名称或包名包含此关键词的应用"),
@@ -761,11 +686,9 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             .take(maxResults)
         val arr = JsonArray()
         apps.forEach { a ->
-            val pkgInfo = try { pm.getPackageInfo(a.packageName, 0) } catch (_: Exception) { null }
             arr.add(JsonObject().apply {
                 addProperty("name", a.loadLabel(pm).toString())
                 addProperty("package", a.packageName)
-                pkgInfo?.versionName?.let { addProperty("version", it) }
             })
         }
         JsonObject().apply { add("apps", arr); addProperty("count", arr.size()) }

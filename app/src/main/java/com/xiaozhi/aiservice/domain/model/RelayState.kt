@@ -1,9 +1,6 @@
 package com.xiaozhi.aiservice.domain.model
 
-import com.xiaozhi.aiservice.domain.usecase.relay.RelayPhase
-
 data class RelayState(
-    val phase: RelayPhase = RelayPhase.IDLE,
     val botIds: List<String> = emptyList(),
     val currentSpeakerIndex: Int = 0,
     val waitingSpeakerIndex: Int = -1,
@@ -12,40 +9,29 @@ data class RelayState(
     val spokenInThisRound: Set<Int> = emptySet(),
     val spokenRoundCounter: Int = 0,
     val lastForwardedText: String = "",
-    val transitionHistory: List<Pair<String, String>> = emptyList(),
-    /** 当前预期 speaker 的 botId（音频过滤用） */
-    val expectedSpeakerId: String = "",
-    /** 当前轮次的回复文本（转发给下一个 bot 用） */
-    val currentReplyText: String = "",
-    /** 是否为 人群模式 */
-    val isTwoPersonMode: Boolean = false
+    val transitionHistory: List<Pair<String, String>> = emptyList()
 ) {
-    fun nextSession() = copy(
-        phase = RelayPhase.IDLE,
+    fun nextSession(): RelayState = copy(
         sessionId = sessionId + 1,
         forwardRound = 0,
         spokenInThisRound = emptySet(),
         spokenRoundCounter = 0,
-        transitionHistory = emptyList(),
-        expectedSpeakerId = "",
-        currentReplyText = ""
+        transitionHistory = emptyList()
     )
 
-    fun markSpoken(index: Int) = copy(
+    fun markSpoken(index: Int): RelayState = copy(
         spokenInThisRound = spokenInThisRound + index,
         spokenRoundCounter = spokenRoundCounter + 1
     )
 
-    fun moveToSpeaker(index: Int, botId: String) = copy(
+    fun moveToSpeaker(index: Int): RelayState = copy(
         currentSpeakerIndex = index,
-        waitingSpeakerIndex = index,
-        expectedSpeakerId = botId,
-        phase = RelayPhase.BOT_PROCESSING
+        waitingSpeakerIndex = index
     )
 
-    fun clearWaiting() = copy(waitingSpeakerIndex = -1, expectedSpeakerId = "")
+    fun clearWaiting(): RelayState = copy(waitingSpeakerIndex = -1)
 
-    fun recordTransition(fromId: String, toId: String) = copy(
+    fun recordTransition(fromId: String, toId: String): RelayState = copy(
         transitionHistory = (transitionHistory + (fromId to toId)).takeLast(20)
     )
 }

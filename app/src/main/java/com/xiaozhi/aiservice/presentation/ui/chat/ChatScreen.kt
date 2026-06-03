@@ -73,17 +73,30 @@ fun ChatScreen(
     }
 
     // 首次加载或新消息到达时滚动到底部（最新消息在底部）
+    // 首次加载无动画；后续若用户在底部则平滑滚动，若滚上去了则不打扰阅读
+    var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.size - 1)
+            if (initialLoad) {
+                initialLoad = false
+                listState.scrollToItem(uiState.messages.size - 1)
+            } else {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                if (lastVisible >= uiState.messages.size - 2) {
+                    listState.animateScrollToItem(uiState.messages.size - 1)
+                }
+            }
         }
     }
 
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
     }
-    // 断开由 ViewModel.onCleared() 管理（用户按返回键 → ViewModel 销毁 → disconnect）
-    // 不在 DisposableEffect.onDispose 中断连，保活 WebSocket 以支持服务器主动唤醒（speak_request）
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.disconnect()
+        }
+    }
 
     // 顶部栏状态
     val connectionColor by animateColorAsState(
@@ -131,6 +144,15 @@ fun ChatScreen(
                 duration = SnackbarDuration.Short
             )
             viewModel.dismissAlert()
+        }
+    }
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let { errorText ->
+            snackbarHostState.showSnackbar(
+                message = errorText,
+                duration = SnackbarDuration.Short
+            )
+            viewModel.dismissError()
         }
     }
 
@@ -241,8 +263,9 @@ private fun MessageBubble(message: ChatMessage, onCopy: ((String) -> Unit)? = nu
     val isFromMe = message.direction == MessageDirection.SENT
 
     // 流式消息：透明度 0.5→1 呼吸动画
+    // 正在流式传输时半透明（0.5），完成后变为不透明（1.0）
     val streamingAlpha by animateFloatAsState(
-        targetValue = if (message.isStreaming) 1f else 0.5f,
+        targetValue = if (message.isStreaming) 0.5f else 1f,
         animationSpec = tween(400),
         label = "streaming_alpha"
     )
@@ -317,7 +340,7 @@ private fun TextBubble(message: ChatMessage, isFromMe: Boolean, streamingAlpha: 
                 )
                 .background(
                     if (isFromMe) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (message.isStreaming) streamingAlpha else 1f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = streamingAlpha)
                 )
                 .combinedClickable(
                     onClick = {},

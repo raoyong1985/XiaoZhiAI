@@ -104,7 +104,8 @@ class BotConnectionPoolImpl @Inject constructor(
         }
         // Error / Disconnected / null → 重建连接
         Logger.w(TAG, "重新连接: $botId (state=${service?.connectionState?.value})")
-        CoroutineScope(Dispatchers.IO).launch { connections[botId]?.disconnect() }
+        // disconnect() 不需要单独协程，它是非阻塞的
+        connections[botId]?.disconnect()
         val newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
         connections[botId] = newService
         newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)

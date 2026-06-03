@@ -133,6 +133,10 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(alert = null) }
     }
 
+    fun dismissError() {
+        _uiState.update { it.copy(error = null) }
+    }
+
     fun stopListening() {
         viewModelScope.launch {
             connectionRepository.stopListening()
@@ -143,7 +147,11 @@ class ChatViewModel @Inject constructor(
     fun sendTextMessage(text: String) {
         viewModelScope.launch {
             Logger.i(TAG, "sendTextMessage: 发送文本: $text")
-            connectionRepository.sendTextMessage(currentContactId, text)
+            val result = connectionRepository.sendTextMessage(currentContactId, text)
+            result.onFailure { e ->
+                Logger.e(TAG, "发送失败: ${e.message}")
+                _uiState.update { it.copy(error = "发送失败: ${e.message}") }
+            }
         }
     }
 

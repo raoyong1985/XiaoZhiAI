@@ -16,10 +16,14 @@ import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+
+private val toolScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 fun registerExtraTools(registry: MCPToolRegistry) {
 
@@ -147,7 +151,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             }
 
             // 自动恢复
-            GlobalScope.launch {
+            toolScope.launch {
                 delay(duration * 1000L)
                 try {
                     audioManager.ringerMode = originalMode
@@ -278,9 +282,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             }
         }
 
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_STARTED))
-        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND))
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED))
+        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_STARTED), Context.RECEIVER_NOT_EXPORTED)
+        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
+        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED), Context.RECEIVER_NOT_EXPORTED)
 
         adapter.startDiscovery()
         delay(5000) // 扫描 5 秒

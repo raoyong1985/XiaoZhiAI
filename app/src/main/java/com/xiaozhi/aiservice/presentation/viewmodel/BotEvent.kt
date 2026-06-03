@@ -27,7 +27,4 @@ sealed class BotEvent {
 
     /** AI 状态变化：idle（空闲）/listening（监听）/speaking（说话）/processing（处理中） */
     data class AiState(val state: String) : BotEvent()
-
-    /** 服务器发送 tts stop（仅此触发 relay，不受 sentence_end 超时干扰） */
-    data object TtsStopped : BotEvent()
 }

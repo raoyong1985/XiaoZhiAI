@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 class NativeOpusEncoder(
     private val sampleRate: Int = 16000,
     private val channels: Int = 1,
-    private val bitRate: Int = 64000  // 64kbps，与 OpusEncoder 一致
+    private val bitRate: Int = 32000
 ) {
     companion object {
         private const val TAG = "NativeOpusEncoder"
@@ -32,8 +32,8 @@ class NativeOpusEncoder(
     private var onOpusData: ((ByteArray) -> Unit)? = null
     private var presentationTimeUs = 0L
 
-    /** 每帧 PCM 样本数（60ms @ 16kHz = 960 样本，与 ESP32 和服务器 VAD 对齐） */
-    private val frameSamples = sampleRate * 60 / 1000
+    /** 每帧 PCM 样本数（20ms @ 16kHz = 320 样本） */
+    private val frameSamples = sampleRate * 20 / 1000
 
     fun init(onOpusPacket: (ByteArray) -> Unit): Boolean {
         this.onOpusData = onOpusPacket
@@ -65,7 +65,7 @@ class NativeOpusEncoder(
         encodingThread = Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             val codecPtr = encoderPtr
-            var pcmAccumulator = mutableListOf<Short>()
+            var pcmAccumulator = ShortArray(frameSamples * 4)  // 预分配 ~4 帧容量，避免频繁扩容
             var accumulatedSamples = 0
 
             while (isEncoding) {
@@ -74,7 +74,7 @@ class NativeOpusEncoder(
                     // 积攒的 PCM 够一帧时编码
                     if (accumulatedSamples >= frameSamples) {
                         encodeFrame(codecPtr, pcmAccumulator, accumulatedSamples)
-                        pcmAccumulator = mutableListOf()
+                        pcmAccumulator = ShortArray(frameSamples * 4)
                         accumulatedSamples = 0
                     }
                     continue
@@ -83,15 +83,21 @@ class NativeOpusEncoder(
                 // byte[] → short[]
                 val shortBuf = ShortArray(pcm.size / 2)
                 ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortBuf)
-                pcmAccumulator.addAll(shortBuf.toList())
+
+                // 确保有足够空间
+                if (accumulatedSamples + shortBuf.size > pcmAccumulator.size) {
+                    pcmAccumulator = pcmAccumulator.copyOf(pcmAccumulator.size * 2)
+                }
+                System.arraycopy(shortBuf, 0, pcmAccumulator, accumulatedSamples, shortBuf.size)
                 accumulatedSamples += shortBuf.size
 
                 // 积攒够一帧就编码
                 while (accumulatedSamples >= frameSamples) {
                     encodeFrame(codecPtr, pcmAccumulator, frameSamples)
-                    // 移除已编码的样本
-                    pcmAccumulator = pcmAccumulator.drop(frameSamples).toMutableList()
-                    accumulatedSamples -= frameSamples
+                    // 移动剩余样本到数组头部
+                    val remaining = accumulatedSamples - frameSamples
+                    System.arraycopy(pcmAccumulator, frameSamples, pcmAccumulator, 0, remaining)
+                    accumulatedSamples = remaining
                 }
             }
 
@@ -104,10 +110,9 @@ class NativeOpusEncoder(
         }, "native-opus-encoder").apply { start() }
     }
 
-    private fun encodeFrame(ptr: Long, samples: List<Short>, count: Int) {
+    private fun encodeFrame(ptr: Long, samples: ShortArray, count: Int) {
         try {
-            val input = ShortArray(count)
-            for (i in 0 until count) input[i] = samples[i]
+            val input = if (count == samples.size) samples else samples.copyOf(count)
 
             // 输出缓冲：Opus 最大帧约 1275 字节（@ 48kHz），16kHz 更少
             val maxOutputSize = 1500

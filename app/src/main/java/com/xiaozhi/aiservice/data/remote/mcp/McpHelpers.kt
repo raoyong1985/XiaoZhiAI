@@ -406,7 +406,7 @@ fun sendPermissionGuideNotification(permissionName: String): JsonObject {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
     val pendingIntent = android.app.PendingIntent.getActivity(
-        ctx, System.currentTimeMillis().toInt(), intent,
+        ctx, (System.currentTimeMillis() % Int.MAX_VALUE).toInt(), intent,
         android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
     )
 

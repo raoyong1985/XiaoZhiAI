@@ -8,17 +8,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private val defaultTimeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
 fun registerBasicTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "get_device_info",
-        description = "获取Android设备的基本信息，包括厂商、型号、系统版本、屏幕分辨率等",
+        description = "获取Android设备的基本信息，包括厂商、型号、系统版本等",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = registry.context
-        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
-        val metrics = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION")
-        wm?.defaultDisplay?.getRealMetrics(metrics)
         JsonObject().apply {
             addProperty("manufacturer", android.os.Build.MANUFACTURER)
             addProperty("model", android.os.Build.MODEL)
@@ -26,11 +23,6 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             addProperty("sdk_int", android.os.Build.VERSION.SDK_INT)
             addProperty("brand", android.os.Build.BRAND)
             addProperty("device", android.os.Build.DEVICE)
-            addProperty("screen_width_px", metrics.widthPixels)
-            addProperty("screen_height_px", metrics.heightPixels)
-            addProperty("screen_density", metrics.densityDpi)
-            addProperty("screen_density_dp", "${(metrics.widthPixels / metrics.density).toInt()}x${(metrics.heightPixels / metrics.density).toInt()}")
-            addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
         }
     }
 
@@ -43,42 +35,20 @@ fun registerBasicTools(registry: MCPToolRegistry) {
     ) { args ->
         val format = args["format"] as? String ?: "yyyy-MM-dd HH:mm:ss"
         JsonObject().apply {
-            addProperty("time", SimpleDateFormat(format, Locale.getDefault()).format(Date()))
+            addProperty("time", (if (format == "yyyy-MM-dd HH:mm:ss") defaultTimeFormat else SimpleDateFormat(format, Locale.getDefault())).format(Date()))
             addProperty("timestamp", System.currentTimeMillis() / 1000)
         }
     }
 
     registry.registerTool(
         name = "get_battery_level",
-        description = "获取当前设备的电池信息：电量百分比、充电状态、温度、健康状态",
+        description = "获取当前设备的电池电量百分比",
         inputSchema = jsonSchema()
     ) { _ ->
         val bm = registry.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
-        // 电池 Intent（含充电状态、温度、健康）
-        val tempIntent = registry.context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-        // 充电状态
-        val plugged = tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
-        val chargeStatus = when (plugged) {
-            android.os.BatteryManager.BATTERY_PLUGGED_AC -> "充电中(AC)"
-            android.os.BatteryManager.BATTERY_PLUGGED_USB -> "充电中(USB)"
-            android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS -> "充电中(无线)"
-            else -> "未充电"
-        }
-        // 电池温度（单位 0.1°C）
-        val temperature = (tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
-        val health = when (tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_HEALTH, 0) ?: 0) {
-            android.os.BatteryManager.BATTERY_HEALTH_GOOD -> "良好"
-            android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT -> "过热"
-            android.os.BatteryManager.BATTERY_HEALTH_DEAD -> "损坏"
-            android.os.BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "过压"
-            else -> "未知"
-        }
         JsonObject().apply {
             addProperty("level", level)
-            addProperty("charge_status", chargeStatus)
-            addProperty("temperature_c", temperature)
-            addProperty("health", health)
             addProperty("status", if (level >= 0) "ok" else "unavailable")
         }
     }
@@ -219,7 +189,7 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
             addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
             addProperty("app_version_code", com.xiaozhi.aiservice.BuildConfig.VERSION_CODE)
-            addProperty("current_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+            addProperty("current_time", defaultTimeFormat.format(Date()))
         }
     }
 }

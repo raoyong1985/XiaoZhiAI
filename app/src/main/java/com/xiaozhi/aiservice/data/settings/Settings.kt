@@ -7,15 +7,12 @@ class Settings(context: Context, private val ns: String, readWrite: Boolean = tr
 
     private val prefs: SharedPreferences = context.getSharedPreferences(ns, Context.MODE_PRIVATE)
 
-    private var dirty = false
-
     fun getString(key: String, defaultValue: String = ""): String {
         return prefs.getString(key, defaultValue) ?: defaultValue
     }
 
     fun setString(key: String, value: String) {
         prefs.edit().putString(key, value).apply()
-        dirty = true
     }
 
     fun getInt(key: String, defaultValue: Int = 0): Int {
@@ -24,7 +21,6 @@ class Settings(context: Context, private val ns: String, readWrite: Boolean = tr
 
     fun setInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
-        dirty = true
     }
 
     fun getBool(key: String, defaultValue: Boolean = false): Boolean {
@@ -33,20 +29,15 @@ class Settings(context: Context, private val ns: String, readWrite: Boolean = tr
 
     fun setBool(key: String, value: Boolean) {
         prefs.edit().putBoolean(key, value).apply()
-        dirty = true
     }
 
     fun eraseKey(key: String) {
         prefs.edit().remove(key).apply()
-        dirty = true
     }
 
     fun eraseAll() {
         prefs.edit().clear().apply()
-        dirty = true
     }
-
-    fun isDirty(): Boolean = dirty
 
     companion object {
         const val NS_DEVICE = "device"

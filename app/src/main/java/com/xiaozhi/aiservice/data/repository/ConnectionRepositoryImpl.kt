@@ -65,6 +65,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     private val lastSentTextLock = Any()
 
     // AI 最后说的话（RECEIVED 消息），用于回声检测
+    @Volatile
     private var lastTtsText: String = ""
 
     // 当前联系人ID，用于消息路由
@@ -112,24 +113,6 @@ class ConnectionRepositoryImpl @Inject constructor(
             _deviceState.collect { state ->
                 if (state == DeviceState.IDLE) {
                     startWakeWordMode()
-                }
-            }
-        }
-
-        // 服务器主动唤醒（speak_request）：收到后切到 SPEAKING 状态接收 TTS 音频
-        scope.launch {
-            backendService.speakRequest.collect { text ->
-                Logger.i(TAG, "服务器主动唤醒: text=$text")
-                stateMutex.withLock {
-                    // 停止当前录音（如果有）
-                    if (weStartedRecording) {
-                        audioRecorder.stop("main")
-                        weStartedRecording = false
-                    }
-                    // 切到 SPEAKING 状态，等待服务器发 TTS 音频
-                    _deviceState.value = DeviceState.SPEAKING
-                    _aiState.value = AiState.SPEAKING
-                    playbackManager.flushSource("main")
                 }
             }
         }
@@ -233,8 +216,8 @@ class ConnectionRepositoryImpl @Inject constructor(
         scope.launch {
             backendService.connectionState.collect { state ->
                 if (state is BotConnectionState.Connected) {
-                    // 上行编码器始终 16000Hz（协议固定），不跟服务器下行参数
-                    audioService.setSampleRate(16000)
+                    val serverSampleRate = backendService.getServerSampleRate()
+                    audioService.setSampleRate(serverSampleRate)
                     // 不在这初始化解码器，等 hello 收到后再初始化
                     Logger.i(TAG, "已连接，等待服务器hello...")
 

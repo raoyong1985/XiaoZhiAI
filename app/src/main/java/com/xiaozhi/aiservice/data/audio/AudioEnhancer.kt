@@ -27,9 +27,9 @@ class AudioEnhancer {
     private var ns: NoiseSuppressor? = null
 
     /** 配置参数 */
-    var aecEnabled = true
-    var agcEnabled = true   // 开启自动增益，安静环境说话声音小会自动放大
-    var nsEnabled = true    // 开启降噪，减少背景噪音
+    var aecEnabled = false
+    var agcEnabled = false
+    var nsEnabled = false
 
     /** 是否已绑定到 AudioRecord 会话 */
     var isActive: Boolean = false

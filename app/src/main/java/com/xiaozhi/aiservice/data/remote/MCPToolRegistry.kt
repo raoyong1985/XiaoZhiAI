@@ -10,7 +10,6 @@ import com.xiaozhi.aiservice.data.remote.mcp.registerExtraTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerIntentTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerLocationTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerNetworkTools
-import com.xiaozhi.aiservice.data.remote.mcp.registerThemeTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerXiaozhiTools
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
@@ -46,7 +45,6 @@ class MCPToolRegistry @Inject constructor(
         registerXiaozhiTools(this)
         registerCameraTool(this)
         registerExtraTools(this)
-        registerThemeTools(this)
     }
 
     fun registerTool(
