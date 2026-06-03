@@ -12,6 +12,9 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import com.xiaozhi.aiservice.utils.Logger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +68,13 @@ class MessageRepositoryImpl @Inject constructor(
             }
         }
         return flow.asStateFlow()
+    }
+
+    override fun getLastMessage(contactId: String): StateFlow<ChatMessage?> {
+        val messagesFlow = getMessages(contactId)
+        return messagesFlow.map { messages ->
+            messages.lastOrNull()
+        }.stateIn(scope, SharingStarted.Eagerly, null)
     }
 
     private suspend fun scopeLoadFromDisk(contactId: String): List<ChatMessage> {

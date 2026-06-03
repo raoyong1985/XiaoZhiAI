@@ -32,6 +32,7 @@ enum class DeviceState(val displayName: String) {
  */
 interface MessageRepository {
     fun getMessages(contactId: String): StateFlow<List<ChatMessage>>
+    fun getLastMessage(contactId: String): StateFlow<ChatMessage?>
     suspend fun sendTextMessage(contactId: String, text: String): Result<Unit>
     suspend fun sendVoiceMessage(contactId: String, filePath: String, duration: Int): Result<Unit>
     suspend fun addReceivedMessage(contactId: String, message: ChatMessage)

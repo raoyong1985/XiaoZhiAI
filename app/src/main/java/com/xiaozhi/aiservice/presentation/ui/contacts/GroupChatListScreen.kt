@@ -1,14 +1,12 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -18,11 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
@@ -65,7 +63,7 @@ fun GroupChatListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("群聊", fontSize = 20.sp) },
+                title = { Text("群聊", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -85,35 +83,17 @@ fun GroupChatListScreen(
             ) {
                 Icon(Icons.Default.Add, contentDescription = "创建群聊")
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         if (groups.isEmpty()) {
             // ── 空状态 ──
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                // 多个圆形组合表示群组
-                Canvas(modifier = Modifier.size(80.dp)) {
-                    val c = androidx.compose.ui.graphics.Color(0xFFBDBDBD).copy(alpha = 0.4f)
-                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.35f, size.height * 0.35f))
-                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.65f, size.height * 0.35f))
-                    drawCircle(color = c, radius = size.width * 0.2f, center = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.6f))
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    "暂无群聊",
-                    fontSize = 16.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "点击 + 创建群聊，选择多个智能体加入",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-            }
+            com.xiaozhi.aiservice.presentation.ui.components.EmptyStateView(
+                icon = Icons.Default.Forum,
+                title = "暂无群聊",
+                subtitle = "点击 + 创建群聊，选择多个智能体加入",
+                modifier = Modifier.fillMaxSize().padding(padding)
+            )
         } else {
             // ── 群聊列表 ──
             LazyColumn(
@@ -151,20 +131,10 @@ fun GroupChatListScreen(
                             }
                         },
                         leadingContent = {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = group.name.firstOrNull()?.toString() ?: "群",
-                                    color = Color.White,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            com.xiaozhi.aiservice.presentation.ui.components.AvatarView(
+                                name = group.name,
+                                size = 48.dp
+                            )
                         },
                         trailingContent = {
                             // ── 三点菜单 ──

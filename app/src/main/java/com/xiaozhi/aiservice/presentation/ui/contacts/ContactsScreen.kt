@@ -1,15 +1,12 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -18,20 +15,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.ContextCompat
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
-import com.xiaozhi.aiservice.domain.model.VoiceMode
+import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -43,6 +37,7 @@ fun ContactsScreen(
     onGroupChatClick: () -> Unit
 ) {
     val contacts by viewModel.contacts.collectAsState()
+    val lastMessages by viewModel.lastMessages.collectAsState()
     val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var editingContact by remember { mutableStateOf<BotContact?>(null) }
@@ -96,6 +91,7 @@ fun ContactsScreen(
                 items(contacts, key = { it.id }) { contact ->
                     ContactItem(
                         contact = contact,
+                        lastMessage = lastMessages[contact.id],
                         onClick = { onContactClick(contact) },
                         onEdit = { editingContact = contact },
                         onDelete = { contactToDelete = contact },
@@ -159,45 +155,18 @@ fun ContactsScreen(
 
 @Composable
 private fun EmptyContactsView(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // 两个重叠的对话气泡
-        Canvas(modifier = Modifier.size(80.dp)) {
-            val c = androidx.compose.ui.graphics.Color(0xFFBDBDBD).copy(alpha = 0.4f)
-            drawRoundRect(
-                color = c,
-                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.05f, size.height * 0.25f),
-                size = androidx.compose.ui.geometry.Size(size.width * 0.65f, size.height * 0.5f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.12f)
-            )
-            drawRoundRect(
-                color = c,
-                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.3f, size.height * 0.1f),
-                size = androidx.compose.ui.geometry.Size(size.width * 0.65f, size.height * 0.5f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.12f)
-            )
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "暂无智能体",
-            fontSize = 18.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "点击 + 添加第一个智能体",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-        )
-    }
+    com.xiaozhi.aiservice.presentation.ui.components.EmptyStateView(
+        icon = Icons.Default.SmartToy,
+        title = "暂无智能体",
+        subtitle = "点击 + 添加第一个智能体",
+        modifier = modifier
+    )
 }
 
 @Composable
 private fun ContactItem(
     contact: BotContact,
+    lastMessage: com.xiaozhi.aiservice.domain.model.ChatMessage? = null,
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -217,42 +186,47 @@ private fun ContactItem(
             )
         },
         supportingContent = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = if (contact.inputMode == InputMode.VOICE)
-                        Icons.Default.Mic else Icons.Default.Keyboard,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                )
-                Text(
-                    text = "ID: ${contact.deviceId}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+            Column {
+                // 最近消息预览
+                if (lastMessage != null && lastMessage.content.isNotEmpty()) {
+                    val prefix = if (lastMessage.direction == MessageDirection.SENT) "我: " else ""
+                    Text(
+                        text = "$prefix${lastMessage.content}",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (contact.inputMode == InputMode.VOICE)
+                            Icons.Default.Mic else Icons.Default.Keyboard,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = "ID: ${contact.deviceId}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
             }
         },
         leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = contact.name.firstOrNull()?.toString() ?: "?",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            com.xiaozhi.aiservice.presentation.ui.components.AvatarView(
+                name = contact.name,
+                size = 48.dp,
+                avatarColor = com.xiaozhi.aiservice.presentation.ui.components.BotColorScheme.forName(contact.name).avatarColor
+            )
         },
         trailingContent = {
             Box(modifier = Modifier.padding(start = 8.dp)) {

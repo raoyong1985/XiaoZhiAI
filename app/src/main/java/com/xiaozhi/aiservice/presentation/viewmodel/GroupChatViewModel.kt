@@ -140,6 +140,10 @@ class GroupChatViewModel @Inject constructor(
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
+    /** 乒乓模式：AI 正在回复中，等待回复完成（仅双人群聊生效） */
+    private val _isAiResponding = MutableStateFlow(false)
+    val isAiResponding: StateFlow<Boolean> = _isAiResponding.asStateFlow()
+
     // ── 录音相关 ──
     private val audioRecorder = AudioRecorder(audioService)
     private var currentGroupId = ""
@@ -367,6 +371,18 @@ class GroupChatViewModel @Inject constructor(
                                 retries++
                             }
                         }
+                    }
+                }
+            }
+        }  // stuckRelayWatcher
+
+        // ── 乒乓模式：监听接龙结束，解锁输入（仅双人群聊生效） ──
+        viewModelScope.launch {
+            _relayState.collectLatest { state ->
+                if (_isAiResponding.value && state.waitingSpeakerIndex < 0) {
+                    delay(1500)
+                    if (_isAiResponding.value && _relayState.value.waitingSpeakerIndex < 0) {
+                        _isAiResponding.value = false
                     }
                 }
             }
@@ -757,7 +773,7 @@ class GroupChatViewModel @Inject constructor(
                 }
             }
         }
-    }
+    }  // observeBotEvents
 
     // ═══════════════════════════════════════════
     // 接龙引擎
@@ -836,6 +852,11 @@ class GroupChatViewModel @Inject constructor(
 
     /** 发送文字消息到群聊 */
     suspend fun sendMessageToGroup(groupId: String, content: String) {
+        // 乒乓模式：仅双人群聊锁定输入
+        val group = groupChatRepository.getGroup(groupId)
+        if (group?.botIds?.size == 2) {
+            _isAiResponding.value = true
+        }
         groupChatUseCase.sendMessageToGroup(groupId, content)
     }
 

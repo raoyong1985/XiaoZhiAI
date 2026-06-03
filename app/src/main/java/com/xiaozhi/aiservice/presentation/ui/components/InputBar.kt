@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 
 @Composable
 fun InputBar(
@@ -32,7 +34,8 @@ fun InputBar(
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
     onTryReconnect: (() -> Unit)? = null,
-    isOffline: Boolean = false
+    isOffline: Boolean = false,
+    isAiResponding: Boolean = false
 ) {
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
@@ -62,15 +65,16 @@ fun InputBar(
         label = "recording_scale"
     )
 
-    val buttonColor = if (isRecording) Color(0xFFF44336) else MaterialTheme.colorScheme.primary
+    val buttonColor = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val haptic = LocalHapticFeedback.current
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shadowElevation = 8.dp,
+        shadowElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -104,6 +108,7 @@ fun InputBar(
 
                                 IconButton(
                                     onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         if (isRecording) {
                                             onStopRecording()
                                         } else if (isOffline) {
@@ -113,7 +118,7 @@ fun InputBar(
                                         }
                                     },
                                     modifier = Modifier
-                                        .size(72.dp)
+                                        .size(60.dp)
                                         .scale(if (isRecording) scale else 1f)
                                         .clip(CircleShape)
                                         .background(buttonColor)
@@ -122,7 +127,7 @@ fun InputBar(
                                         imageVector = micIcon,
                                         contentDescription = contentDesc,
                                         tint = Color.White,
-                                        modifier = Modifier.size(36.dp)
+                                        modifier = Modifier.size(30.dp)
                                     )
                                 }
                             }
@@ -134,10 +139,17 @@ fun InputBar(
                             ) {
                                 OutlinedTextField(
                                     value = text,
-                                    onValueChange = { text = it },
+                                    onValueChange = { if (!isAiResponding) text = it },
                                     modifier = Modifier.weight(1f).focusRequester(focusRequester),
-                                    placeholder = { Text("输入消息...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
+                                    placeholder = {
+                                        Text(
+                                            if (isAiResponding) "等待回复中..." else "输入消息...",
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    },
                                     singleLine = true,
+                                    enabled = !isAiResponding,
                                     colors = OutlinedTextFieldDefaults.colors(
                                         unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
                                         focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
@@ -150,7 +162,7 @@ fun InputBar(
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
-                                            if (text.isNotBlank() && !sending) {
+                                            if (text.isNotBlank() && !sending && !isAiResponding) {
                                                 sending = true
                                                 onSendText(text.trim())
                                                 text = ""
@@ -167,14 +179,14 @@ fun InputBar(
                                             text = ""
                                         }
                                     },
-                                    enabled = text.isNotBlank() && !sending,
-                                    modifier = Modifier.size(52.dp),
-                                    shape = RoundedCornerShape(14.dp)
+                                    enabled = text.isNotBlank() && !sending && !isAiResponding,
+                                    modifier = Modifier.size(42.dp),
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Send,
                                         contentDescription = "发送",
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }

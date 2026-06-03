@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.domain.model.BotContact
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
@@ -10,6 +11,7 @@ import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -22,6 +24,15 @@ class ContactsViewModel @Inject constructor(
 
     val contacts: StateFlow<List<BotContact>> = contactsRepository.getContacts()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // 每个联系人的最后一条消息
+    val lastMessages: StateFlow<Map<String, ChatMessage>> = contacts.map { contactList ->
+        contactList.associate { contact ->
+            contact.id to (messageRepository.getLastMessage(contact.id).value ?: ChatMessage(
+                id = "", content = "", direction = MessageDirection.RECEIVED
+            ))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     fun saveContact(contact: BotContact) {
         viewModelScope.launch {

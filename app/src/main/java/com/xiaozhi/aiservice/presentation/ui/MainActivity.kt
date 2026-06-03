@@ -4,21 +4,16 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.view.WindowManager
-import com.xiaozhi.aiservice.utils.Logger
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.presentation.theme.XiaoZhiTheme
 import com.xiaozhi.aiservice.presentation.ui.chat.ChatScreen
@@ -28,6 +23,7 @@ import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatListScreen
 import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatScreen
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
+import com.xiaozhi.aiservice.utils.Logger
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -93,13 +89,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 定位权限（MCP: get_weather/get_location/get_network_info 需要）
+        // 定位权限
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
             permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
-        // 日历读取权限（MCP: get_calendar 需要）
+        // 日历读取权限
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
             permissionsToRequest.add(Manifest.permission.READ_CALENDAR)
@@ -123,7 +119,6 @@ private fun MainNavigation() {
     var showCreateGroup by rememberSaveable { mutableStateOf(false) }
     val contacts by contactsViewModel.contacts.collectAsState()
 
-    // 处理返回键
     BackHandler(enabled = selectedGroupId != null || showCreateGroup || showGroupChatList || selectedContactId != null) {
         when {
             selectedGroupId != null -> selectedGroupId = null
@@ -133,49 +128,76 @@ private fun MainNavigation() {
         }
     }
 
-    when {
-        selectedGroupId != null -> {
-            GroupChatScreen(
-                groupId = selectedGroupId!!,
-                onNavigateBack = { selectedGroupId = null }
-            )
-        }
-        showCreateGroup -> {
-            CreateGroupScreen(
-                onNavigateBack = { showCreateGroup = false },
-                onGroupCreated = { groupId ->
-                    showCreateGroup = false
-                    selectedGroupId = groupId
+    val currentScreen = when {
+        selectedGroupId != null -> "group_chat"
+        showCreateGroup -> "create_group"
+        showGroupChatList -> "group_chat_list"
+        selectedContactId != null -> "chat"
+        else -> "contacts"
+    }
+
+    AnimatedContent(
+        targetState = currentScreen,
+        transitionSpec = {
+            if (targetState == "chat" || targetState == "group_chat") {
+                slideInHorizontally(tween(300)) { it }
+                    .togetherWith(slideOutHorizontally(tween(300)) { -it / 3 })
+            } else if (initialState == "chat" || initialState == "group_chat") {
+                slideInHorizontally(tween(300)) { -it / 3 }
+                    .togetherWith(slideOutHorizontally(tween(300)) { it })
+            } else {
+                fadeIn(tween(250))
+                    .togetherWith(fadeOut(tween(250)))
+            }
+        },
+        label = "page_transition"
+    ) { screen ->
+        when (screen) {
+            "group_chat" -> {
+                selectedGroupId?.let { groupId ->
+                    GroupChatScreen(
+                        groupId = groupId,
+                        onNavigateBack = { selectedGroupId = null }
+                    )
                 }
-            )
-        }
-        showGroupChatList -> {
-            GroupChatListScreen(
-                onGroupClick = { groupId ->
-                    selectedGroupId = groupId
-                },
-                onCreateGroupClick = { showCreateGroup = true },
-                onNavigateBack = { showGroupChatList = false }
-            )
-        }
-        selectedContactId != null -> {
-            val contact = contacts.find { it.id == selectedContactId }
-            if (contact != null) {
-                ChatScreen(
-                    viewModel = chatViewModel,
-                    contact = contact,
-                    onNavigateBack = { selectedContactId = null }
+            }
+            "create_group" -> {
+                CreateGroupScreen(
+                    onNavigateBack = { showCreateGroup = false },
+                    onGroupCreated = { groupId ->
+                        showCreateGroup = false
+                        selectedGroupId = groupId
+                    }
                 )
             }
-        }
-        else -> {
-            ContactsScreen(
-                viewModel = contactsViewModel,
-                onContactClick = { contact ->
-                    selectedContactId = contact.id
-                },
-                onGroupChatClick = { showGroupChatList = true }
-            )
+            "group_chat_list" -> {
+                GroupChatListScreen(
+                    onGroupClick = { groupId ->
+                        selectedGroupId = groupId
+                    },
+                    onCreateGroupClick = { showCreateGroup = true },
+                    onNavigateBack = { showGroupChatList = false }
+                )
+            }
+            "chat" -> {
+                val contact = contacts.find { it.id == selectedContactId }
+                if (contact != null) {
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        contact = contact,
+                        onNavigateBack = { selectedContactId = null }
+                    )
+                }
+            }
+            else -> {
+                ContactsScreen(
+                    viewModel = contactsViewModel,
+                    onContactClick = { contact ->
+                        selectedContactId = contact.id
+                    },
+                    onGroupChatClick = { showGroupChatList = true }
+                )
+            }
         }
     }
 }

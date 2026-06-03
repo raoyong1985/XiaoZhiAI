@@ -44,7 +44,9 @@ class ChatViewModel @Inject constructor(
                     it.copy(
                         aiState = state,
                         // 当 AI 不再监听时，自动切回麦克风图标
-                        isRecording = if (state != AiState.LISTENING) false else it.isRecording
+                        isRecording = if (state != AiState.LISTENING) false else it.isRecording,
+                        // 乒乓模式：AI 回到空闲状态时解锁输入
+                        isAiResponding = if (state == AiState.IDLE) false else it.isAiResponding
                     )
                 }
             }
@@ -147,6 +149,7 @@ class ChatViewModel @Inject constructor(
     fun sendTextMessage(text: String) {
         viewModelScope.launch {
             Logger.i(TAG, "sendTextMessage: 发送文本: $text")
+            _uiState.update { it.copy(isAiResponding = true) }  // 乒乓模式：锁定输入
             val result = connectionRepository.sendTextMessage(currentContactId, text)
             result.onFailure { e ->
                 Logger.e(TAG, "发送失败: ${e.message}")
@@ -170,5 +173,6 @@ data class ChatUiState(
     val emotion: String = "",   // AI情感：happy/sad/angry/worried/thoughtful/gentle/doubtful
     val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 当前语音模式：auto / manual / realtime
     val alert: String? = null,  // 服务器Alert弹窗内容（非null时显示）
-    val error: String? = null
+    val error: String? = null,
+    val isAiResponding: Boolean = false  // 乒乓模式：AI正在回复中，等待回复完成
 )

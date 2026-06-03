@@ -92,7 +92,7 @@ class NativeOpusEncoder(
                 accumulatedSamples += shortBuf.size
 
                 // 积攒够一帧就编码
-                while (accumulatedSamples >= frameSamples) {
+                while (accumulatedSamples >= frameSamples && isEncoding) {
                     encodeFrame(codecPtr, pcmAccumulator, frameSamples)
                     val remaining = accumulatedSamples - frameSamples
                     if (remaining > 0) {
@@ -133,6 +133,8 @@ class NativeOpusEncoder(
         val thread = encodingThread
         encodingThread = null
         thread?.interrupt()
+        // 等编码线程退出后再销毁 native 编码器，防止 use-after-free
+        try { thread?.join(200) } catch (_: InterruptedException) {}
         if (encoderPtr != 0L) {
             nativeDestroyEncoder(encoderPtr)
             encoderPtr = 0L

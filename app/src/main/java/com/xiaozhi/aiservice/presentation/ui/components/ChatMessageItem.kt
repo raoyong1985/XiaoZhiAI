@@ -1,0 +1,233 @@
+package com.xiaozhi.aiservice.presentation.ui.components
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.tween
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.xiaozhi.aiservice.domain.model.ChatMessage
+import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.domain.model.MessageType
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+
+/**
+ * 共享消息气泡组件 — 群聊/私聊共用
+ *
+ * @param botColor 传入预计算的 BotColor，为 null 时自动 fallback
+ * @param contactName 私聊时用作 bot 名称的 fallback（群聊传空）
+ * @param onCopy 长按复制回调
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ChatMessageItem(
+    message: ChatMessage,
+    botColor: BotColorScheme.BotColor? = null,
+    contactName: String = "",
+    showTimestamp: Boolean = true,
+    onCopy: ((String) -> Unit)? = null,
+    onDelete: ((String) -> Unit)? = null
+) {
+    val isFromMe = message.direction == MessageDirection.SENT
+    val isDark = isSystemInDarkTheme()
+    val effectiveBotColor = remember(botColor, isDark) {
+        botColor ?: BotColorScheme.get(0, isDark)
+    }
+
+    val bubbleColor = when {
+        isFromMe -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+        else -> effectiveBotColor.bubbleColor
+    }
+    val displayName = remember(message.botName, contactName) {
+        message.botName.ifEmpty { contactName.ifEmpty { "" } }
+    }
+
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeText = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
+
+    var showContextMenu by remember { mutableStateOf(false) }
+
+    AnimatedVisibility(
+        visible = true,
+        enter = fadeIn(animationSpec = tween(300)) +
+                slideInVertically(animationSpec = tween(300)) { it / 2 }
+    ) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top
+    ) {
+        // Bot头像（左）：有名称才显示，否则 44dp 占位保持对齐
+        if (!isFromMe) {
+            if (displayName.isNotEmpty()) {
+                AvatarView(
+                    name = displayName,
+                    size = 36.dp,
+                    avatarColor = effectiveBotColor.avatarColor
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+            } else {
+                Spacer(modifier = Modifier.width(42.dp))
+            }
+        }
+
+        // 气泡主体 + 上下文菜单
+        Box {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 240.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isFromMe) 16.dp else 4.dp,
+                            bottomEnd = if (isFromMe) 4.dp else 16.dp
+                        )
+                    )
+                    .background(bubbleColor)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { showContextMenu = true }
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+            Column {
+                // bot 回复显示名称
+                if (!isFromMe && displayName.isNotEmpty()) {
+                    Text(
+                        text = displayName,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = effectiveBotColor.nameColor
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                // 内容区：图片或文字
+                when (message.type) {
+                    MessageType.IMAGE -> {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(message.content)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "照片",
+                            modifier = Modifier
+                                .widthIn(max = 220.dp)
+                                .heightIn(max = 360.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                    else -> {
+                        Text(
+                            text = message.content,
+                            color = if (isFromMe) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+                if (showTimestamp) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = timeText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        fontSize = 10.sp,
+                        modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
+                    )
+                }
+            }
+        }
+        // 上下文菜单
+        DropdownMenu(
+            expanded = showContextMenu,
+            onDismissRequest = { showContextMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("复制") },
+                onClick = {
+                    showContextMenu = false
+                    onCopy?.invoke(message.content)
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null)
+                }
+            )
+            if (onDelete != null) {
+                Divider()
+                DropdownMenuItem(
+                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        showContextMenu = false
+                        onDelete?.invoke(message.id)
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    }
+                )
+            }
+        }
+        }
+
+        // 用户头像（右）
+        if (isFromMe) {
+            Spacer(modifier = Modifier.width(6.dp))
+            AvatarView(
+                name = "我",
+                size = 36.dp,
+                avatarColor = MaterialTheme.colorScheme.primary
+            )
+        }
+    }  // Row
+    }  // AnimatedVisibility
+}
+
+/**
+ * 日期分割线（M月d日）
+ */
+@Composable
+fun DateSeparator(timestamp: Long) {
+    val dateFormat = remember { SimpleDateFormat("M月d日", Locale.getDefault()) }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = dateFormat.format(Date(timestamp)),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
+    }
+}
+
+/**
+ * 判断两个时间戳是否同一天
+ */
+fun isSameDay(t1: Long, t2: Long): Boolean {
+    val a = Calendar.getInstance().apply { timeInMillis = t1 }
+    val b = Calendar.getInstance().apply { timeInMillis = t2 }
+    return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) &&
+           a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+}
