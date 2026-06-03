@@ -52,8 +52,8 @@ class AudioRecorder(
     private val SILENCE_GRACE_MS = 300L  // 词语间停顿不超过300ms不重置timer
 
     companion object {
-        // "悠悠你好"约0.8-1.2秒，600ms可让用户说到"悠悠你"时就触发，缩短响应延迟
-        private const val WAKE_HOLD_MS = 600L
+        // "悠悠"约400-500ms，400ms可让用户说到一半时就触发（缩短响应延迟）
+        private const val WAKE_HOLD_MS = 400L
         // RMS 阈值（0-32767），越低越灵敏。350≈中等环境噪声下的轻声说话
         private const val WAKE_RMS_THRESHOLD = 350
         // 唤醒模式下 PCM 前置增益（×2.0），让 ASR 收到更清晰的音频
@@ -234,44 +234,21 @@ class AudioRecorder(
         if (hasVoice) {
             silenceStartTime = 0L  // 有人声，清除静音计时
             if (wakeVoiceStartTime == 0L) wakeVoiceStartTime = now
-            val duration = now - wakeVoiceStartTime
-
-            if (!wakeTriggered && duration >= WAKE_HOLD_MS) {
-                wakeTriggered = true
-                Logger.i(TAG, "🎤 检测到连续语音 ${duration}ms，过渡到实时编码")
-
-                // 1. 创建编码器
-                val sampleRate = audioService.getSampleRate()
-                val nativeEncoder = NativeOpusEncoder(sampleRate = sampleRate)
-                if (nativeEncoder.init { packet -> onOpusPacket(packet) }) {
-                    nativeOpusEncoder = nativeEncoder
-                } else {
-                    val encoder = OpusEncoder(sampleRate = sampleRate)
-                    if (!encoder.init { packet -> onOpusPacket(packet) }) {
-                        Logger.e(TAG, "唤醒后编码器初始化失败")
-                        return
-                    }
-                    opusEncoder = encoder
-                }
-
-                // 2. 发送缓冲 PCM（先编码再发送，填补唤醒检测期的音频缺口）
-                val buffered = wakeBuffer.toByteArray()
-                if (buffered.isNotEmpty()) {
-                    Logger.i(TAG, "发送唤醒缓冲 ${buffered.size}B")
-                    if (nativeOpusEncoder != null) nativeOpusEncoder!!.encode(buffered)
-                    else opusEncoder?.encode(buffered)
-                }
-                wakeBuffer.reset()
-
-                // 3. 切换为实时模式（后续 PCM 直接编码）
-                wakeModeActive = false
-
-                // 4. 回调通知上层发送 listen_start
-                onWakeDetected?.invoke("voice")
+            if (!wakeTriggered && now - wakeVoiceStartTime >= WAKE_HOLD_MS) {
+                triggerWake(onOpusPacket)
             }
         } else {
             // 静音：不超过容错期不重置，防止词语间隙打断唤醒
             if (silenceStartTime == 0L) silenceStartTime = now
+
+            // 静音容错期内检查：如果说话总时长已到 WAKE_HOLD_MS，触发
+            if (!wakeTriggered && wakeVoiceStartTime > 0 &&
+                now - silenceStartTime <= SILENCE_GRACE_MS &&
+                now - wakeVoiceStartTime >= WAKE_HOLD_MS) {
+                Logger.i(TAG, "🎤 静音容错期内触发唤醒（累计语音 ${now - wakeVoiceStartTime}ms）")
+                triggerWake(onOpusPacket)
+            }
+
             if (now - silenceStartTime > SILENCE_GRACE_MS) {
                 wakeVoiceStartTime = 0L
             }
@@ -301,6 +278,40 @@ class AudioRecorder(
         scope = null
         wakeFsmnVad?.reset()
         wakeFsmnVad = null
+    }
+
+    /**
+     * 触发唤醒：创建编码器、发送缓冲 PCM、切为实时模式、回调上层
+     * 从 hasVoice 路径和静音容错路径都能调用，消除代码重复
+     */
+    private fun triggerWake(onOpusPacket: (ByteArray) -> Unit) {
+        if (wakeTriggered) return
+        wakeTriggered = true
+        Logger.i(TAG, "🎤 检测到连续语音，过渡到实时编码")
+
+        val sampleRate = audioService.getSampleRate()
+        val nativeEncoder = NativeOpusEncoder(sampleRate = sampleRate)
+        if (nativeEncoder.init { packet -> onOpusPacket(packet) }) {
+            nativeOpusEncoder = nativeEncoder
+        } else {
+            val encoder = OpusEncoder(sampleRate = sampleRate)
+            if (!encoder.init { packet -> onOpusPacket(packet) }) {
+                Logger.e(TAG, "唤醒后编码器初始化失败")
+                return
+            }
+            opusEncoder = encoder
+        }
+
+        val buffered = wakeBuffer.toByteArray()
+        if (buffered.isNotEmpty()) {
+            Logger.i(TAG, "发送唤醒缓冲 ${buffered.size}B")
+            if (nativeOpusEncoder != null) nativeOpusEncoder!!.encode(buffered)
+            else opusEncoder?.encode(buffered)
+        }
+        wakeBuffer.reset()
+
+        wakeModeActive = false
+        onWakeDetected?.invoke("voice")
     }
 
     /** 初始化唤醒用的 FSMN VAD */
