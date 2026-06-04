@@ -8,14 +8,17 @@ package com.xiaozhi.aiservice.domain.usecase.relay
  */
 class RelayValidator {
 
-    /** 判断回复是否为结束语（再见/拜拜等），含中文后缀检查 */
+    /** 判断回复是否为结束语，仅当回复很短（≤20字）且包含结束关键词时判定 */
     fun isGoodbye(previousReply: String, keywords: List<String> = RelayConfig.GOODBYE_KEYWORDS): Boolean {
         if (previousReply.isBlank()) return false
-        val tail = previousReply.takeLast(35)
+        val clean = previousReply.trim()
+        // 仅当回复全文较短（≤20字）时才判定为"专门说再见结束对话"
+        // 长回复（正常聊天）中包含"再见"等词不切断接龙
+        if (clean.length > 20) return false
         return keywords.any { keyword ->
-            val idx = tail.indexOf(keyword)
-            idx >= 0 && (idx + keyword.length >= tail.length ||
-                tail.substring(idx + keyword.length).none { it in '\u4E00'..'\u9FA5' })
+            val idx = clean.indexOf(keyword)
+            idx >= 0 && (idx + keyword.length >= clean.length ||
+                clean.substring(idx + keyword.length).none { it in '\u4E00'..'\u9FA5' })
         }
     }
 
@@ -34,8 +37,8 @@ class RelayValidator {
     /** 判断回复文本是否为空 */
     fun isReplyBlank(reply: String): Boolean = reply.isBlank()
 
-    /** 判断是否为长音频（超过 200 包） */
-    fun isLongAudio(audioBuf: List<*>?): Boolean = audioBuf != null && audioBuf.size > 200
+    /** 判断是否为长音频（超过阈值就跳过纯音频转发，用文字兜底） */
+    fun isLongAudio(audioBuf: List<*>?): Boolean = audioBuf != null && audioBuf.size > RelayConfig.LONG_AUDIO_THRESHOLD
 
     /** 估算音频时长（ms），基于 32kbps Opus、50fps、2字节/帧 */
     fun estimateAudioMs(audioBuf: List<ByteArray>?): Long {

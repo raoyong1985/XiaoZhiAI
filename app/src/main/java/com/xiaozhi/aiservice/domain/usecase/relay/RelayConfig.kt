@@ -22,8 +22,10 @@ object RelayConfig {
     /** 音频静默判定阈值：超过 1 秒无音频视为「已安静」 */
     const val AUDIO_DRAIN_SILENCE_MS = 1000L
 
-    /** 音频转发缓存单 bot 上限（防止内存持续增长） */
-    const val MAX_FORWARD_BUFFER_SIZE = 200
+    /** 音频转发缓存单 bot 上限（约200包=12秒@60ms帧） */
+    const val MAX_FORWARD_BUFFER_SIZE = 300
+    /** 音频转发判断为「超长」的阈值（超过此数量走文字兜底） */
+    const val LONG_AUDIO_THRESHOLD = 150
 
     /**
      * 接龙最大轮次

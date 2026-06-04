@@ -58,7 +58,11 @@ class AudioForwardHandler(
                     batchIdx % 4 == 0 -> delay(10)
                 }
             }
-            delay(200)
+            // 等服务器处理完音频再发 listenStop
+            // 长音频 ≈ 9秒(150包×60ms) 给服务器足够时间开始 ASR 处理
+            val audioDurationMs = cachedOpus.size * 60L  // 每包约60ms
+            val settleMs = (audioDurationMs / 4).coerceIn(200, 2000)
+            delay(settleMs)
             service.sendListenStopOnly()
             return service.connectionState.value is BotConnectionState.Connected
         } catch (e: Exception) {
