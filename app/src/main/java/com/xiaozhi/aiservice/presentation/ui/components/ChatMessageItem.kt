@@ -57,7 +57,8 @@ fun ChatMessageItem(
     }
 
     val bubbleColor = when {
-        isFromMe -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+        isFromMe -> if (isDark) MaterialTheme.colorScheme.primary.copy(alpha = 1.0f)
+                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
         else -> effectiveBotColor.bubbleColor
     }
     val displayName = remember(message.botName, contactName) {
@@ -144,6 +145,7 @@ fun ChatMessageItem(
                         Text(
                             text = message.content,
                             color = if (isFromMe) MaterialTheme.colorScheme.onPrimary
+                                    else if (isDark) MaterialTheme.colorScheme.onSurface
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 15.sp
                         )
@@ -153,7 +155,8 @@ fun ChatMessageItem(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = timeText,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        color = if (isDark) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                         fontSize = 10.sp,
                         modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
                     )

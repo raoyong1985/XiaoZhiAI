@@ -71,12 +71,17 @@ class AudioService {
     private var audioSettingsBackup = mutableMapOf<String, Boolean>()  // 存旧增强配置
 
     // FSMN VAD（神经网络语音活动检测，替代 SileroVAD，专为中文优化）
+    // 单例：AudioRecorder 共享此实例，不再重复加载 ONNX 模型
     val fsmnVad = FsmnVAD()
 
     fun init(context: Context) {
         appContext = context
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        // FSMN VAD 使用 ONNX Runtime（与 SileroVAD 相同的基础设施）
+        // 提前初始化 FSMN VAD（ONNX 模型加载），使 AudioRecorder 可直接复用
+        if (!fsmnVad.initialized) {
+            fsmnVad.init(context)
+            Logger.i(TAG, "FSMN VAD 全局初始化: ${if (fsmnVad.initialized) "成功" else "失败，将降级到 RMS"}")
+        }
     }
 
     /**

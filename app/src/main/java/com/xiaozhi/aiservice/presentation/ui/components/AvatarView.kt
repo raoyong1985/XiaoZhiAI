@@ -54,24 +54,24 @@ object BotColorScheme {
         BotColor(Color(0xFFE1F5FE), Color(0xFF4FC3F7), Color(0xFF0277BD)),  // 湖蓝
     )
 
-    // 深色模式
+    // 深色模式（高对比度：深色纯色气泡 + 亮白文字）
     private val darkColors = listOf(
-        BotColor(Color(0xFF1B5E20).copy(alpha = 0.25f), Color(0xFF66BB6A), Color(0xFF81C784)),
-        BotColor(Color(0xFF0D47A1).copy(alpha = 0.25f), Color(0xFF42A5F5), Color(0xFF64B5F6)),
-        BotColor(Color(0xFFE65100).copy(alpha = 0.20f), Color(0xFFFFB74D), Color(0xFFFFCC80)),
-        BotColor(Color(0xFF4A148C).copy(alpha = 0.25f), Color(0xFFAB47BC), Color(0xFFCE93D8)),
-        BotColor(Color(0xFF004D40).copy(alpha = 0.25f), Color(0xFF26C6DA), Color(0xFF4DD0E1)),
-        BotColor(Color(0xFFB71C1C).copy(alpha = 0.25f), Color(0xFFEC407A), Color(0xFFF06292)),
-        BotColor(Color(0xFF1A237E).copy(alpha = 0.25f), Color(0xFF5C6BC0), Color(0xFF7986CB)),
-        BotColor(Color(0xFFBF360C).copy(alpha = 0.20f), Color(0xFFFF7043), Color(0xFFFF8A65)),
-        BotColor(Color(0xFF004D40).copy(alpha = 0.25f), Color(0xFF26A69A), Color(0xFF80CBC4)),
-        BotColor(Color(0xFFF57F17).copy(alpha = 0.20f), Color(0xFFFFCA28), Color(0xFFFFF176)),
-        BotColor(Color(0xFF311B92).copy(alpha = 0.25f), Color(0xFF7E57C2), Color(0xFFB39DDB)),
-        BotColor(Color(0xFF004D40).copy(alpha = 0.25f), Color(0xFF00897B), Color(0xFF4DB6AC)),
-        BotColor(Color(0xFF263238).copy(alpha = 0.30f), Color(0xFF78909C), Color(0xFF90A4AE)),
-        BotColor(Color(0xFF4A148C).copy(alpha = 0.20f), Color(0xFFF48FB1), Color(0xFFF48FB1)),
-        BotColor(Color(0xFF33691E).copy(alpha = 0.25f), Color(0xFF8BC34A), Color(0xFFAED581)),
-        BotColor(Color(0xFF01579B).copy(alpha = 0.25f), Color(0xFF4FC3F7), Color(0xFF81D4FA)),
+        BotColor(Color(0xFF2E7D32), Color(0xFF66BB6A), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF1565C0), Color(0xFF42A5F5), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFFE65100), Color(0xFFFFB74D), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF6A1B9A), Color(0xFFAB47BC), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF00695C), Color(0xFF26C6DA), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFFC62828), Color(0xFFEC407A), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF283593), Color(0xFF5C6BC0), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFFBF360C), Color(0xFFFF7043), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF00695C), Color(0xFF26A69A), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFFF57F17), Color(0xFFFFCA28), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF4527A0), Color(0xFF7E57C2), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF004D40), Color(0xFF00897B), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF37474F), Color(0xFF78909C), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFFAD1457), Color(0xFFF48FB1), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF558B2F), Color(0xFF8BC34A), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF)),
     )
 
     /** 用户自己的主题色 — 仅头像色 */

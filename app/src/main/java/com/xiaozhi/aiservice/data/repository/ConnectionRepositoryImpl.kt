@@ -491,10 +491,15 @@ class ConnectionRepositoryImpl @Inject constructor(
             // 先停任何旧录音，再启实时录音
             audioRecorder.stop("main")
 
+            // 计算静默期：用户主动按键（距上次 TTS > 1s）则跳过回声防护
+            val muteMs = if (System.currentTimeMillis() - lastSpeakingEndMs > 1000) 0L else 600L
+            Logger.i(TAG, "startListening: muteMs=$muteMs (lastSpeakingEndMs=$lastSpeakingEndMs)")
+
             if (!audioRecorder.startLive(
                     owner = "main",
                     scope = scope,
                     enableVAD = enableVAD,
+                    startMuteMs = muteMs,
                     onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
                     onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
                 )) {
@@ -577,6 +582,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                 owner = "main",
                 scope = scope,
                 enableVAD = enableVAD,
+                startMuteMs = 600L,  // AI说话刚结束，防回声
                 onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
                 onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
             )) {
