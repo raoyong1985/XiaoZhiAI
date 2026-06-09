@@ -16,7 +16,9 @@ import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -147,7 +149,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             }
 
             // 自动恢复
-            GlobalScope.launch {
+            registry.toolScope.launch {
                 delay(duration * 1000L)
                 try {
                     audioManager.ringerMode = originalMode

@@ -51,9 +51,10 @@ fun ChatMessageList(
         }
     }
     // ── 回到底部按钮状态 ──
-    val showScrollToBottom by remember {
+    val showScrollToBottom by remember(messages.size, messages.isNotEmpty()) {
         derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val visInfo = listState.layoutInfo.visibleItemsInfo
+            val lastVisible = visInfo.lastOrNull()?.index ?: -1
             val totalItems = listState.layoutInfo.totalItemsCount
             messages.isNotEmpty() && totalItems > 0 && lastVisible < totalItems - 1
         }

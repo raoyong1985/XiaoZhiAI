@@ -56,6 +56,10 @@
 -keep class kotlinx.coroutines.** { *; }
 -dontwarn kotlinx.coroutines.**
 
+# Keep ONNX Runtime (SileroVAD)
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
+
 # Keep repository interfaces and states
 -keep class com.xiaozhi.aiservice.domain.repository.ConnectionState { *; }
 -keep class com.xiaozhi.aiservice.domain.repository.DeviceState { *; }

@@ -16,6 +16,9 @@ import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.Lazy
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,6 +40,7 @@ class MCPToolRegistry @Inject constructor(
 ) {
     private val tools = mutableListOf<MCPTool>()
     private var cachedToolList: JsonArray? = null
+    val toolScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     init {
         registerBasicTools(this)

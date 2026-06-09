@@ -332,15 +332,15 @@ class GroupChatRepositoryImpl @Inject constructor(
      */
     override fun getGroupMessages(groupId: String): Flow<List<ChatMessage>> {
         val flow = getOrCreateFlow(groupId)
-        android.util.Log.i("GroupChatRepo", "getGroupMessages groupId=$groupId currentSize=${flow.value.size}")
+        Logger.i("GroupChatRepo", "getGroupMessages groupId=$groupId currentSize=${flow.value.size}")
         if (loadedFromDisk.putIfAbsent(groupId, true) == null) {
             scope.launch {
                 val stored = loadMessagesFromDisk(groupId)
-                android.util.Log.i("GroupChatRepo", "disk load groupId=$groupId loaded=${stored.size} currentMem=${flow.value.size}")
+                Logger.i("GroupChatRepo", "disk load groupId=$groupId loaded=${stored.size} currentMem=${flow.value.size}")
                 // 仅在内存仍为空时才写入，防止覆盖加载期间到达的新消息
                 if (stored.isNotEmpty() && flow.value.isEmpty()) {
                     flow.value = stored
-                    android.util.Log.i("GroupChatRepo", "disk merge groupId=$groupId finalSize=${flow.value.size}")
+                    Logger.i("GroupChatRepo", "disk merge groupId=$groupId finalSize=${flow.value.size}")
                 }
             }
         }
@@ -376,7 +376,7 @@ class GroupChatRepositoryImpl @Inject constructor(
     override suspend fun sendMessage(groupId: String, message: ChatMessage) {
         val flow = getOrCreateFlow(groupId)
         flow.value = flow.value + message
-        android.util.Log.i("GroupChatRepo", "sendMessage groupId=$groupId msgId=${message.id} content='${message.content.take(20)}' dir=${message.direction} total=${flow.value.size}")
+        Logger.i("GroupChatRepo", "sendMessage groupId=$groupId msgId=${message.id} content='${message.content.take(20)}' dir=${message.direction} total=${flow.value.size}")
         markDirty(groupId)
     }
 

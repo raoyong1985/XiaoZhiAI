@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.utils.Logger
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import java.io.File
@@ -58,10 +59,10 @@ fun registerCameraTool(registry: MCPToolRegistry) {
                         timestamp = System.currentTimeMillis()
                     )
                 )
-                android.util.Log.i("MCPToolRegistry", "照片已添加到聊天: ${photoFile.absolutePath}")
+                Logger.i("MCPToolRegistry", "照片已添加到聊天: ${photoFile.absolutePath}")
             }
         } catch (e: Exception) {
-            android.util.Log.e("MCPToolRegistry", "保存照片或插入消息失败: ${e.message}")
+            Logger.e("MCPToolRegistry", "保存照片或插入消息失败: ${e.message}")
             throw e
         }
 

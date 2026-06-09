@@ -73,6 +73,18 @@ class RelayEngine(
     }
 
     private suspend fun innerTriggerNextSpeaker(previousReply: String = "") {
+        // 全局超时兜底：防止 isRelaying 被锁死（接龙卡在某 bot 等待上）
+        val overallTimeoutMs = 45_000L
+        val deadline = System.currentTimeMillis() + overallTimeoutMs
+        withTimeoutOrNull(overallTimeoutMs) {
+            innerTriggerNextSpeakerImpl(previousReply, deadline)
+        }
+        if (relayState.value.waitingSpeakerIndex >= 0) {
+            relayState.update { it.clearWaiting() }
+        }
+    }
+
+    private suspend fun innerTriggerNextSpeakerImpl(previousReply: String, deadline: Long) {
         val rs = relayState.value
         if (relayValidator.isSingleBot(rs.botIds)) {
             relayState.update { it.clearWaiting() }
@@ -106,6 +118,7 @@ class RelayEngine(
             candidates = result
             newState
         }
+        logger.i(tag, "候选人=${candidates.size}: ${candidates.map { it.second }.take(4)}")
 
         // 过滤已连接的候选
         val connected = candidates.filter { (_, id) ->
@@ -116,6 +129,7 @@ class RelayEngine(
                     contact != null && botConnectionPool.ensureConnected(id, contact)
                 })
         }
+        logger.i(tag, "已连接候选人=${connected.size}: ${connected.map { it.second }.take(4)}")
 
         // 终止前一个 bot 的 TTS
         if (prevBotId != null && prevBotId != connected.firstOrNull()?.second) {
@@ -128,6 +142,10 @@ class RelayEngine(
 
         // 遍历候选 bot 尝试转发
         for ((targetIndex, speakerId) in connected) {
+            if (System.currentTimeMillis() > deadline) {
+                logger.w(tag, "接龙全局超时，跳过本轮")
+                break
+            }
             val service = botConnectionPool.get(speakerId) ?: continue
             relayState.update { it.copy(waitingSpeakerIndex = targetIndex) }
             botLastAudioTime[speakerId] = System.currentTimeMillis()
