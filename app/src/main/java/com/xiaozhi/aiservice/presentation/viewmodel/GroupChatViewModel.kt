@@ -738,36 +738,38 @@ class GroupChatViewModel @Inject constructor(
                         if (state == AiStateStr.IDLE && hasSpoken) {
                             // ── AI 说完话 → 触发下一轮 ──
                             hasSpoken = false
-                            // 排空当前 bot 的音频缓冲区，确保全部播放完毕
                             val drainRate = service.getServerSampleRate()
                             drainPreviousBotAudio(botId, "${groupId}_shared_${drainRate}")
 
                             var shouldTrigger = false
                             var replyToForward = ""
                             speakerMutex.withLock {
-                                // mutex 内重读 relayState，避免竞态
-                                // （外边读的快照可能已过时，比如另一个 bot 刚更新了状态）
                                 val currentRs = _relayState.value
+                                val botIndex = currentRs.botIds.indexOf(botId)
+
+                                // ═══ 诊断日志 ═══
+                                Logger.i(TAG, "[$botName] IDLE诊断: session(speaker=$speakerSession/current=${currentRs.sessionId}) " +
+                                    "botIdx=$botIndex ws=${currentRs.waitingSpeakerIndex} fwd=${currentRs.forwardRound} " +
+                                    "botCnt=${currentRs.botIds.size} reply='${replyText.take(60)}' bufSize=${audioForwardBuffer[botId]?.size ?: -1}")
+
                                 if (speakerSession != currentRs.sessionId) {
                                     Logger.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${currentRs.sessionId}")
                                     return@withLock
                                 }
-                                val botIndex = currentRs.botIds.indexOf(botId)
                                 if (botIndex < 0) return@withLock
 
-                                // 条件 A：我是被等待的 speaker + 有多个 bot → 触发下一轮
                                 if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
                                     Logger.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
                                 }
-                                // 条件 B：ws=-1 但还有活跃 bot → 自动继续下一轮
                                 else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
                                     Logger.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
                                 } else {
-                                    // 本 bot 已 idle 但不是被等待的 speaker（如已被跳过），清空文本
+                                    Logger.i(TAG, "[$botName] 不满足触发条件: ws=${currentRs.waitingSpeakerIndex} botCnt=${currentRs.botIds.size} fwd=${currentRs.forwardRound} " +
+                                        "matchA=${botIndex == currentRs.waitingSpeakerIndex} matchB=${currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0}")
                                     replyText = ""
                                 }
                             }
