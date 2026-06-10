@@ -2,6 +2,7 @@ package com.xiaozhi.aiservice.presentation.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -14,11 +15,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -69,6 +76,7 @@ fun ChatMessageItem(
     val timeText = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
 
     var showContextMenu by remember { mutableStateOf(false) }
+    var showImageViewer by remember { mutableStateOf(false) }
 
     AnimatedVisibility(
         visible = true,
@@ -125,7 +133,7 @@ fun ChatMessageItem(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                 }
-                // 内容区：图片或文字
+                // 内容区：图片、语音或文字
                 when (message.type) {
                     MessageType.IMAGE -> {
                         AsyncImage(
@@ -137,8 +145,24 @@ fun ChatMessageItem(
                             modifier = Modifier
                                 .widthIn(max = 220.dp)
                                 .heightIn(max = 360.dp)
-                                .clip(RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showImageViewer = true },
                             contentScale = ContentScale.Fit
+                        )
+                    }
+                    MessageType.VOICE -> {
+                        val displayText = remember(message.content) {
+                            if (message.content.startsWith("/") || message.content.startsWith("file:"))
+                                "🎤 语音 ${message.duration?.let { "${it / 1000}秒" } ?: ""}"
+                            else
+                                message.content
+                        }
+                        Text(
+                            text = displayText,
+                            color = if (isFromMe) MaterialTheme.colorScheme.onPrimary
+                                    else if (isDark) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 15.sp
                         )
                     }
                     else -> {
@@ -205,6 +229,53 @@ fun ChatMessageItem(
         }
     }  // Row
     }  // AnimatedVisibility
+
+    // 全屏图片查看器
+    if (showImageViewer) {
+        var scale by remember { mutableFloatStateOf(1f) }
+        var offsetX by remember { mutableFloatStateOf(0f) }
+        var offsetY by remember { mutableFloatStateOf(0f) }
+
+        Dialog(
+            onDismissRequest = { showImageViewer = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.95f))
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(0.5f, 5f)
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        }
+                    }
+                    .clickable { showImageViewer = false },
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(message.content)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "照片（点击关闭）",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        ),
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+    }
 }
 
 /**

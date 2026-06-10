@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.data.repository
 
 import android.content.Context
+import android.os.PowerManager
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
@@ -53,6 +54,28 @@ class ConnectionRepositoryImpl @Inject constructor(
     
     private val _aiState = MutableStateFlow(AiState.IDLE)
     override val aiState: StateFlow<AiState> = _aiState.asStateFlow()
+
+    // AI 说话时持唤醒锁，阻止黑屏休眠
+    private val wakeLock: PowerManager.WakeLock? = run {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "XiaoZhi:BotSpeaking")
+    }
+
+    init {
+        // AI 说话/停止时自动管理唤醒锁
+        scope.launch {
+            _aiState.collect { state ->
+                when (state) {
+                    AiState.SPEAKING -> wakeLock?.acquire(30_000L)  // 最多持锁30秒，防止泄漏
+                    else -> {
+                        if (wakeLock?.isHeld == true) {
+                            wakeLock?.release()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     override val emotion: StateFlow<String> = backendService.emotion
 

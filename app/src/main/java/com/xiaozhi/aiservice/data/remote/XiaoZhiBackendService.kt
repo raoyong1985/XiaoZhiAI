@@ -376,6 +376,7 @@ class XiaoZhiBackendService(
      * @param mode "auto", "manual", 或 "realtime"
      */
     override fun sendListenStart(mode: String) {
+        _textMessage.value = ""  // 清空旧 STT 结果，避免新录音误用残留值
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
             addProperty("type", "listen")

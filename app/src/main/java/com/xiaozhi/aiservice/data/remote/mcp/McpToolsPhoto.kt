@@ -7,7 +7,6 @@ import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -17,7 +16,7 @@ fun registerCameraTool(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "take_photo",
-        description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等。调用后手机将自动打开相机并拍照，用户无需按任何按钮",
+        description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等。当用户说「帮我看看」「看看这是什么」「帮我认一下」「识别这个」「拍张照」「看看」「这是什么东西」「这是什么」「帮我拍」等请求识别、查看周围环境时，调用此工具。调用后手机将自动打开相机并拍照，用户无需按任何按钮",
         inputSchema = jsonSchema(),
         readOnly = true
     ) { _ ->
@@ -45,6 +44,8 @@ fun registerCameraTool(registry: MCPToolRegistry) {
             photoDir.mkdirs()
             val photoFile = File(photoDir, "photo_${System.currentTimeMillis()}.jpg")
             FileOutputStream(photoFile).use { it.write(jpegBytes) }
+            // 清理旧照片缓存，保留最近 20 张
+            cleanupPhotoCache(photoDir)
 
             val contactId = (registry.connectionRepository.get() as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
             if (contactId.isNotEmpty()) {
@@ -106,7 +107,7 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
             .post(bodyBuilder.build())
             .build()
 
-        val client = OkHttpClient.Builder()
+        val client = httpClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
@@ -132,4 +133,17 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
     } catch (e: Exception) {
         return "照片已拍好，但视觉分析请求出错: ${e.message}"
     }
+}
+
+/**
+ * 清理照片缓存，保留最近 20 张
+ */
+private fun cleanupPhotoCache(dir: File) {
+    val maxKeep = 20
+    val files = dir.listFiles()?.filter { it.name.startsWith("photo_") && it.name.endsWith(".jpg") }
+        ?: return
+    if (files.size <= maxKeep) return
+    files.sortedBy { it.lastModified() }
+        .dropLast(maxKeep)
+        .forEach { it.delete() }
 }

@@ -509,7 +509,8 @@ class GroupChatViewModel @Inject constructor(
 
         audioRecorder.stop(owner = currentGroupId)
         audioService.abandonAudioFocus()
-        sttCollectorJob?.cancel()
+        // 不取消 sttCollectorJob！服务器可能还在处理 ASR，STT 结果稍后才到
+        // 取消会导致文字收不到、对话框空白。下次 startVoiceInput 会取消旧的。
 
         try { botConnectionPool.get(_relayState.value.botIds.firstOrNull() ?: "")?.sendListenStopOnly() } catch (e: Exception) { Logger.w(TAG, "sendListenStopOnly failed: ${e.message}") }
     }
