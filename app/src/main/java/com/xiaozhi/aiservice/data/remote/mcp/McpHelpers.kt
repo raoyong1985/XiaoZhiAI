@@ -60,11 +60,19 @@ fun jsonBoolProp(description: String): JsonObject = JsonObject().apply {
 
 // ========== HTTP Client ==========
 
-val httpClient: OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(5, TimeUnit.SECONDS)
-    .readTimeout(5, TimeUnit.SECONDS)
-    .writeTimeout(5, TimeUnit.SECONDS)
-    .build()
+/**
+ * 共享 HTTP 客户端（单例 + 连接池）。
+ * 所有 MCP 工具的 HTTP 调用都走这里，connection pool 共享避免每次冷启动 DNS/TCP。
+ */
+val httpClient: OkHttpClient by lazy {
+    OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
+        .build()
+}
 
 fun httpGet(urlString: String, timeoutMs: Long = 5000): String {
     val client = if (timeoutMs != 5000L) {

@@ -7,6 +7,7 @@ import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -28,6 +29,12 @@ fun registerCameraTool(registry: MCPToolRegistry) {
         )
         if (permCheck != null) return@registerTool permCheck
 
+        // 并发保护：如果上一次拍照还没回来，拒绝本次请求（避免 pendingResult 静态字段被覆盖导致第一次永久挂起）
+        val existing = com.xiaozhi.aiservice.presentation.ui.CameraCaptureActivity.pendingResult
+        if (existing != null && !existing.isCompleted) {
+            throw Exception("正在拍照中，请稍候再试")
+        }
+
         // 启动拍照 Activity 并等待结果
         val deferred = kotlinx.coroutines.CompletableDeferred<String>()
         com.xiaozhi.aiservice.presentation.ui.CameraCaptureActivity.pendingResult = deferred
@@ -47,7 +54,7 @@ fun registerCameraTool(registry: MCPToolRegistry) {
             // 清理旧照片缓存，保留最近 20 张
             cleanupPhotoCache(photoDir)
 
-            val contactId = (registry.connectionRepository.get() as com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl).currentContactId
+            val contactId = registry.connectionRepository.get().currentContactId
             if (contactId.isNotEmpty()) {
                 registry.messageRepository.addSentMessage(
                     contactId,
@@ -88,12 +95,12 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
         val boundary = "----AndroidCameraBoundary"
         val token = backend.visionToken
 
-        // 构造 multipart body
+        // 构造 multipart body（OkHttp 4.x 兼容写法）
         val bodyBuilder = okhttp3.MultipartBody.Builder()
             .setType("multipart/form-data".toMediaTypeOrNull()!!)
             .addFormDataPart("question", "请详细描述这张图片中的内容，包括物体、场景、文字、颜色等")
             .addFormDataPart("file", "camera.jpg",
-                okhttp3.RequestBody.create("image/jpeg".toMediaTypeOrNull(), jpegData))
+                jpegData.toRequestBody("image/jpeg".toMediaTypeOrNull()))
 
         val request = okhttp3.Request.Builder()
             .url(visionUrl)
@@ -107,6 +114,7 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
             .post(bodyBuilder.build())
             .build()
 
+        // 共享 httpClient 的连接池，newBuilder() 只覆盖 timeouts（OkHttp 共享 dispatcher + connectionPool）
         val client = httpClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)

@@ -63,6 +63,7 @@ interface ConnectionRepository {
     val emotion: StateFlow<String>  // AI情感状态
     val alert: SharedFlow<String>    // 服务器Alert弹窗
     val streamingEnd: SharedFlow<String>  // 流式消息结束信号（消息ID）
+    val currentContactId: String  // 当前联系人 ID（用于 MCP 工具路由消息）
     suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit>
     suspend fun disconnect()
     suspend fun sendTextMessage(contactId: String, text: String): Result<Unit>

@@ -26,32 +26,111 @@ import java.util.Locale
 fun registerIntentTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "open_app",
-        description = "在手机上打开指定的应用，通过包名启动",
+        description = "在手机上打开指定应用（按应用名或包名）。如果应用未安装，会自动跳转到应用商店下载页。当用户说「打开微信」「启动QQ」「帮我打开抖音」「打开地图」「启动相机」「打开设置」「打开 app」等需要打开某个 app 时调用此工具",
         inputSchema = jsonSchema(
-            "package_name" to jsonStringProp("应用包名，如 com.tencent.mm"),
-            "fallback_search" to jsonBoolProp("如果未找到，是否在应用商店搜索（默认 true）"),
-            required = listOf("package_name")
+            "app_name" to jsonStringProp("应用名称（中文或英文），如「微信」「淘宝」「抖音」「高德地图」"),
+            "package_name" to jsonStringProp("可选，应用包名（精确时优先用），如 com.tencent.mm"),
+            "fallback_search" to jsonBoolProp("如果未找到，是否打开应用商店下载页（默认 true）"),
+            required = listOf("app_name")
         )
     ) { args ->
-        val pkg = (args["package_name"] as? String)?.takeIf { it.isNotBlank() }
-            ?: throw Exception("package_name 不能为空")
+        val appName = (args["app_name"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw Exception("app_name 不能为空")
+        val inputPkg = (args["package_name"] as? String)?.trim()?.takeIf { it.isNotBlank() }
         val fallback = (args["fallback_search"] as? Boolean) ?: true
         val ctx = registry.context
-        try {
-            ctx.packageManager.getLaunchIntentForPackage(pkg)?.let {
-                it.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                ctx.startActivity(it)
-                JsonObject().apply { addProperty("success", true); addProperty("package", pkg) }
-            } ?: throw Exception("未找到应用 $pkg")
-        } catch (e: Exception) {
-            if (fallback) {
+
+        // 解析包名：内置映射 → 设备已装应用模糊匹配 → 用户传包名 → null
+        val resolvedPkg = resolvePackageName(ctx, appName, inputPkg)
+
+        if (resolvedPkg != null) {
+            val launchIntent = try {
+                ctx.packageManager.getLaunchIntentForPackage(resolvedPkg)
+            } catch (_: Exception) { null }
+
+            if (launchIntent != null) {
                 try {
-                    val market = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=$pkg"))
-                    market.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    ctx.startActivity(market)
-                    JsonObject().apply { addProperty("success", true); addProperty("package", pkg); addProperty("note", "已跳转应用商店") }
-                } catch (_: Exception) { throw Exception("未找到应用 $pkg") }
-            } else throw Exception("未找到应用 $pkg: ${e.message}")
+                    launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    ctx.startActivity(launchIntent)
+                    return@registerTool JsonObject().apply {
+                        addProperty("success", true)
+                        addProperty("app_name", appName)
+                        addProperty("package", resolvedPkg)
+                        addProperty("via", "installed")
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        // 未安装 / 启动失败 → 跳应用商店
+        if (!fallback) {
+            throw Exception("未找到应用 $appName")
+        }
+
+        // 优先用设备默认商店 + 包名
+        val pkgForStore = resolvedPkg ?: ""  // 未知包名则跳搜索页
+        val marketUri = if (pkgForStore.isNotBlank()) "market://details?id=$pkgForStore"
+                        else "market://search?q=${java.net.URLEncoder.encode(appName, "UTF-8")}"
+        val marketIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(marketUri))
+        marketIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+        if (ctx.packageManager.resolveActivity(marketIntent, 0) != null) {
+            try {
+                ctx.startActivity(marketIntent)
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("app_name", appName)
+                    addProperty("package", pkgForStore.ifBlank { "(未知，按名称搜索)" })
+                    addProperty("via", "market")
+                    addProperty("uri", marketUri)
+                    addProperty("note", "应用未安装，已跳转到应用商店")
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 兜底：常见应用商店
+        val knownStores = listOf(
+            "com.huawei.appmarket",
+            "com.xiaomi.market",
+            "com.oppo.market",
+            "com.bbk.appstore",
+            "com.tencent.android.qqdownloader",
+            "com.android.vending"
+        )
+        val pm = ctx.packageManager
+        for (storePkg in knownStores) {
+            if (pm.getLaunchIntentForPackage(storePkg) == null) continue
+            val storeIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(marketUri))
+            storeIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            storeIntent.setPackage(storePkg)
+            try {
+                ctx.startActivity(storeIntent)
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("app_name", appName)
+                    addProperty("via", "market_fallback")
+                    addProperty("store", storePkg)
+                    addProperty("note", "已跳转到 $storePkg 搜索 $appName")
+                }
+            } catch (_: Exception) { continue }
+        }
+
+        // 终极兜底：浏览器搜
+        try {
+            val webIntent = Intent(
+                Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://www.google.com/search?q=${java.net.URLEncoder.encode("$appName app download", "UTF-8")}")
+            )
+            webIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            ctx.startActivity(webIntent)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("app_name", appName)
+                addProperty("via", "web")
+                addProperty("note", "设备无应用商店，已打开浏览器搜索 $appName")
+            }
+        } catch (e: Exception) {
+            throw Exception("未找到应用 $appName，且设备无可用应用商店: ${e.message}")
         }
     }
 
@@ -118,7 +197,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         require(hour in 0..23) { "hour 必须在 0-23 之间" }
         require(minute in 0..59) { "minute 必须在 0-59 之间" }
         val message = args["message"] as? String ?: "闹钟"
-        val timeStr = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+        val timeStr = String.format(Locale.ROOT, "%02d:%02d", hour, minute)
 
         // 创建通知频道（首次调用会自动创建）
         try {
@@ -133,25 +212,38 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             nm.createNotificationChannel(channel)
         } catch (_: Exception) {}
 
-        // 计算时间
+        // 计算触发时间
+        val now = Calendar.getInstance()
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-            if (before(Calendar.getInstance())) {
+            if (before(now)) {
                 add(Calendar.DAY_OF_MONTH, 1) // 已过则设到明天
             }
         }
 
+        // 文案："今天 HH:MM" 还是 "明天 HH:MM"——按实际 Y/M/D 判断，不依赖 timeInMillis（timeInMillis 此时永远 >= now）
+        val isToday = calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+                calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
+        val alarmTimeText = if (isToday) "今天 $timeStr" else "明天 $timeStr"
+
         val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             ?: throw Exception("系统闹钟服务不可用")
 
-        // 唯一 requestCode：时间戳 + 分钟偏移，同分钟不同闹钟不冲突
+        // 唯一 requestCode：时间戳 + 分钟偏移
         val requestCode = ((hour * 60 + minute) and 0x7FFFFFFF) xor (System.nanoTime().toInt() and 0xFFFF)
-        fun createPendingIntent(): PendingIntent = PendingIntent.getBroadcast(
-            ctx, requestCode, Intent(ctx, AlarmReceiver::class.java).apply {
+        // 闹钟唯一 ID（用于 SharedPreferences 持久化，重启后用同一 ID 重新注册）
+        val alarmId = "${hour}_${minute}_$requestCode"
+
+        // 共用 PendingIntent 实例（避免之前代码创建两次 → 第二次实际覆盖第一次）
+        val pendingIntent = PendingIntent.getBroadcast(
+            ctx, requestCode,
+            Intent(ctx, AlarmReceiver::class.java).apply {
+                action = "com.xiaozhi.aiservice.ALARM_$requestCode"
                 putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+                putExtra("alarm_id", alarmId)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -161,20 +253,22 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             val hasPerm = alarmManager.canScheduleExactAlarms()
             if (!hasPerm) {
                 sendPermissionGuideNotification("精确闹钟")
-                // 用 inexact 降级
-                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, createPendingIntent())
+                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
             } else {
                 alarmManager.setAlarmClock(
-                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, createPendingIntent()),
-                    createPendingIntent()
+                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
+                    pendingIntent
                 )
             }
         } else {
             alarmManager.setAlarmClock(
-                AlarmManager.AlarmClockInfo(calendar.timeInMillis, createPendingIntent()),
-                createPendingIntent()
+                AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
+                pendingIntent
             )
         }
+
+        // 持久化闹钟到 SharedPreferences（用于设备重启后由 BootReceiver 重新注册）
+        AlarmPersistence.save(ctx, alarmId, hour, minute, message, calendar.timeInMillis)
 
         JsonObject().apply {
             addProperty("success", true)
@@ -182,7 +276,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             addProperty("minute", minute)
             addProperty("message", message)
             addProperty("time", timeStr)
-            addProperty("alarm_time", if (calendar.timeInMillis > System.currentTimeMillis()) "今天 $timeStr" else "明天 $timeStr")
+            addProperty("alarm_time", alarmTimeText)
         }
     }
 
@@ -659,26 +753,24 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             ?: throw Exception("此设备不支持 WiFi")
 
         try {
-            // Android 10+ (API 29+) 禁止应用直接开关 WiFi
+            // Android 10+ (API 29+) 禁止三方应用直接开关 WiFi
+            // Settings.Global.WIFI_ON 在 10+ 三方 app 写入会被系统忽略 → 跳系统 WiFi 面板
             if (Build.VERSION.SDK_INT >= 29) {
-                // 尝试通过 Settings.Global 开关（需 WRITE_SETTINGS 特殊权限）
-                if (ensureWriteSettingsOrGuide()) {
-                    Settings.Global.putInt(ctx.contentResolver, Settings.Global.WIFI_ON, if (enable) 1 else 0)
-                } else {
-                    return@registerTool JsonObject().apply {
-                        addProperty("success", false)
-                        addProperty("enabled", enable)
-                        addProperty("via_settings_panel", true)
-                        addProperty("message", "已打开「修改系统设置」权限页面，请手动开启「允许修改系统设置」开关，然后重试")
-                    }
+                val panel = Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(panel)
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("via_panel", true)
+                    addProperty("enabled", enable)
+                    addProperty("message", "Android 10+ 已打开系统 WiFi 面板，请手动切换 WiFi 开关")
                 }
             } else {
                 wifiManager.isWifiEnabled = enable
-            }
-            JsonObject().apply {
-                addProperty("success", true)
-                addProperty("enabled", enable)
-                addProperty("message", if (enable) "WiFi 已打开" else "WiFi 已关闭")
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("enabled", enable)
+                    addProperty("message", if (enable) "WiFi 已打开" else "WiFi 已关闭")
+                }
             }
         } catch (e: Exception) {
             throw Exception("控制 WiFi 失败: ${e.message}")
@@ -858,6 +950,115 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         JsonObject().apply {
             add("events", eventsArray)
             addProperty("count", events.size)
+        }
+    }
+}
+
+/**
+ * 闹钟持久化（SharedPreferences），用于设备重启后由 BootReceiver 重新注册
+ *
+ * 数据格式：
+ * - "alarm_ids"  StringSet  保存所有闹钟 ID
+ * - "$id:triggerAt"  Long    触发时间戳
+ * - "$id:hour"       Int     小时
+ * - "$id:minute"     Int     分钟
+ * - "$id:message"    String  标签
+ */
+internal object AlarmPersistence {
+    private const val PREFS = "xiaozhi_alarms"
+    private const val KEY_IDS = "alarm_ids"
+
+    data class AlarmRecord(
+        val id: String,
+        val hour: Int,
+        val minute: Int,
+        val message: String,
+        val triggerAt: Long
+    )
+
+    fun save(context: Context, id: String, hour: Int, minute: Int, message: String, triggerAt: Long) {
+        val sp = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        sp.edit().apply {
+            putLong("$id:triggerAt", triggerAt)
+            putInt("$id:hour", hour)
+            putInt("$id:minute", minute)
+            putString("$id:message", message)
+            val ids = sp.getStringSet(KEY_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
+            ids.add(id)
+            putStringSet(KEY_IDS, ids)
+        }.apply()
+    }
+
+    fun remove(context: Context, id: String) {
+        val sp = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        sp.edit().apply {
+            remove("$id:triggerAt")
+            remove("$id:hour")
+            remove("$id:minute")
+            remove("$id:message")
+            val ids = sp.getStringSet(KEY_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
+            ids.remove(id)
+            putStringSet(KEY_IDS, ids)
+        }.apply()
+    }
+
+    fun getAll(context: Context): List<AlarmRecord> {
+        val sp = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val ids = sp.getStringSet(KEY_IDS, emptySet()) ?: return emptyList()
+        val now = System.currentTimeMillis()
+        return ids.mapNotNull { id ->
+            val triggerAt = sp.getLong("$id:triggerAt", -1L)
+            if (triggerAt < 0) return@mapNotNull null
+            if (triggerAt < now) {
+                // 已过期，清理
+                remove(context, id)
+                return@mapNotNull null
+            }
+            AlarmRecord(
+                id = id,
+                hour = sp.getInt("$id:hour", 0),
+                minute = sp.getInt("$id:minute", 0),
+                message = sp.getString("$id:message", "") ?: "",
+                triggerAt = triggerAt
+            )
+        }
+    }
+
+    /**
+     * 用与 set_alarm 一致的方式重新调度所有未过期的闹钟。
+     * 供 BootReceiver 在 BOOT_COMPLETED 时调用，恢复重启前设置的闹钟。
+     */
+    fun restoreAll(context: Context) {
+        val ctx = context.applicationContext
+        val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val records = getAll(ctx)
+        records.forEach { r ->
+            // 从 id "H_M_requestCode" 还原 requestCode（最后一段），保证 PendingIntent 标识一致
+            val requestCode = r.id.substringAfterLast('_').toIntOrNull() ?: return@forEach
+            val pi = PendingIntent.getBroadcast(
+                ctx, requestCode,
+                Intent(ctx, AlarmReceiver::class.java).apply {
+                    action = "com.xiaozhi.aiservice.ALARM_$requestCode"
+                    putExtra("hour", r.hour)
+                    putExtra("minute", r.minute)
+                    putExtra("message", r.message)
+                    putExtra("alarm_id", r.id)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            try {
+                if (Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, r.triggerAt, pi)
+                } else {
+                    alarmManager.setAlarmClock(
+                        AlarmManager.AlarmClockInfo(r.triggerAt, pi),
+                        pi
+                    )
+                }
+            } catch (_: SecurityException) {
+                // SCHEDULE_EXACT_ALARM 未授权时降级为 inexact
+                try { alarmManager.set(AlarmManager.RTC_WAKEUP, r.triggerAt, pi) } catch (_: Exception) {}
+            }
         }
     }
 }

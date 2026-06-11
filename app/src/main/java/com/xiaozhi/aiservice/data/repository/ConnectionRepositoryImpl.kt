@@ -95,7 +95,8 @@ class ConnectionRepositoryImpl @Inject constructor(
     private var lastSpeakingEndMs = 0L
 
     // 当前联系人 ID，用于消息路由
-    var currentContactId: String = ""
+    private var _currentContactId: String = ""
+    override val currentContactId: String get() = _currentContactId
 
     // 当前联系人唤醒词（空=说话即唤醒，非空=需要验证）
     var currentWakeWord: String = ""
@@ -368,7 +369,7 @@ class ConnectionRepositoryImpl @Inject constructor(
             pendingTextResponse = null
         }
 
-        currentContactId = contactId
+        _currentContactId = contactId
         // 设置设备状态为 CONNECTING（参考 ESP32 kDeviceStateConnecting）
         _deviceState.value = DeviceState.CONNECTING
 
@@ -399,7 +400,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     }
     
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
-        currentContactId = contactId
+        _currentContactId = contactId
         // 先检查连接状态
         if (_connectionState.value !is BotConnectionState.Connected) {
             Logger.w(TAG, "sendTextMessage: 未连接，消息未发送: $text")

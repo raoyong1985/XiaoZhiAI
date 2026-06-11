@@ -77,6 +77,17 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- 接收设备重启广播，恢复闹钟（set_alarm 持久化的闹钟） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Android 11+ package visibility：解锁 open_app 工具对所有 launcher activity 的查询 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".XiaoZhiApplication"
         android:allowBackup="true"
@@ -127,6 +138,17 @@
         <receiver
             android:name=".data.remote.mcp.AlarmReceiver"
             android:exported="false" />
+
+        <!-- 设备开机/应用升级后重新注册闹钟 -->
+        <receiver
+            android:name=".data.remote.mcp.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

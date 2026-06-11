@@ -61,7 +61,14 @@ class MCPToolRegistry @Inject constructor(
         userOnly: Boolean = false,
         handler: suspend (Map<String, Any>) -> JsonObject
     ) {
-        tools.add(MCPTool(name, description, inputSchema, readOnly, userOnly, handler))
+        // 去重：同名工具覆盖（避免 LLM 看到重复工具、call 命中旧 handler）
+        val tool = MCPTool(name, description, inputSchema, readOnly, userOnly, handler)
+        val existingIdx = tools.indexOfFirst { it.name == name }
+        if (existingIdx >= 0) {
+            tools[existingIdx] = tool
+        } else {
+            tools.add(tool)
+        }
         cachedToolList = null
     }
 
