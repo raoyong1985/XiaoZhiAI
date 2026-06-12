@@ -63,15 +63,21 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     init {
         // AI 说话/停止时自动管理唤醒锁
+        // 用 collectLatest：state 变化时取消当前块，新 state 立即接管
+        // 内部 while + delay(25s) 循环续期，避免 30s 超时后 state 没变导致锁丢失
         scope.launch {
-            _aiState.collect { state ->
-                when (state) {
-                    AiState.SPEAKING -> wakeLock?.acquire(30_000L)  // 最多持锁30秒，防止泄漏
-                    else -> {
-                        if (wakeLock?.isHeld == true) {
-                            wakeLock?.release()
+            _aiState.collectLatest { state ->
+                if (state == AiState.SPEAKING) {
+                    // 循环续期：每 25s 重新 acquire，state 变化时 collectLatest 取消本块
+                    while (_aiState.value == AiState.SPEAKING) {
+                        if (wakeLock?.isHeld != true) {
+                            wakeLock?.acquire(30_000L)
                         }
+                        delay(25_000L)
                     }
+                    if (wakeLock?.isHeld == true) wakeLock.release()
+                } else {
+                    if (wakeLock?.isHeld == true) wakeLock.release()
                 }
             }
         }
@@ -472,14 +478,25 @@ class ConnectionRepositoryImpl @Inject constructor(
             val ok = audioRecorder.startWake(
                 owner = "main",
                 scope = scope,
-                onWakeDetected = { wakeText ->
+                onWakeDetected = callback@{ wakeText ->
                     Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
 
-                    // 进入验证模式
-                    if (currentWakeWord.isNotEmpty()) {
-                        pendingWakeVerification = true
-                        Logger.i(TAG, "进入唤醒词验证模式，期望: 「${currentWakeWord}」")
+                    // 唤醒词验证：用 onWakeDetected 传回的 wakeText（用户说的内容）直接匹配 currentWakeWord
+                    // 之前用 pendingWakeVerification 推到下一轮 STT 验证，效率低且会被环境噪音干扰
+                    val wakeOk = if (currentWakeWord.isEmpty()) {
+                        true
+                    } else {
+                        val matched = wakeText.isNotBlank() &&
+                                wakeText.contains(currentWakeWord, ignoreCase = true)
+                        if (!matched) {
+                            Logger.i(TAG, "唤醒词不匹配（text='$wakeText', expected='$currentWakeWord'），忽略")
+                            false
+                        } else {
+                            Logger.i(TAG, "唤醒词匹配: 「${currentWakeWord}」")
+                            true
+                        }
                     }
+                    if (!wakeOk) return@callback
 
                     // 发送唤醒事件到服务器（ESP32 协议风格）
                     backendService.sendListenStart("realtime")
