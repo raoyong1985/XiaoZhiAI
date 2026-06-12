@@ -30,10 +30,11 @@ class CameraCaptureActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "CameraCapture"
-        // ESP32 用 QVGA(320x240) + jpeg_quality=12，我们用 VGA(640x480) 质量更好
+        // ESP32 用 QVGA(320x240) + jpeg_quality=12，Android 端用 VGA(640x480) 配合高画质
+        // 分辨率受服务器视觉 API 限制（一般是 640×480 或更小），不动
         private const val MAX_WIDTH = 640
         private const val MAX_HEIGHT = 480
-        private const val JPEG_QUALITY = 50
+        private const val JPEG_QUALITY = 85  // 50→85：减少 JPEG 压缩 artifact，文件约 +50%
 
         /** 拍照结果的延续——MCP 工具通过它等待拍照完成 */
         @JvmStatic
