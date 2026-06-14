@@ -116,6 +116,12 @@ class BotConnectionPoolImpl @Inject constructor(
         // 重建成功 → 通知 ViewModel 重建观察者
         if (result) {
             _serviceReplaced.tryEmit(botId to newService)
+        } else {
+            // 5s 内未连上 → 标记死亡（与 KDoc L85 "Error → 标记死" 对齐）
+            // SpeakerScorer.resolveCandidates 会过滤掉死 bot，避免 relay 空转
+            // 看门狗每 2 分钟会 clearDead()，允许 bot 网络恢复后重新接入
+            markDead(botId)
+            Logger.w(TAG, "bot[$botId] 5s 未连上，标记死亡")
         }
         return result
     }

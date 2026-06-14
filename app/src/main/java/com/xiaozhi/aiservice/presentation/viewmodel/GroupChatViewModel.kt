@@ -591,7 +591,8 @@ class GroupChatViewModel @Inject constructor(
                 if (idx >= 0 && rs.waitingSpeakerIndex >= 0 && idx != rs.waitingSpeakerIndex) {
                     // 放宽过滤：grace 窗口内允许非预期 bot 的音频通过
                     // 解决 triggerNextSpeaker 还没更新 ws、但 bot 已经开始推音频的竞态
-                    if (System.currentTimeMillis() - lastWaitingChangeMs > 800) {
+                    // 修复 3+ 人群：800ms → 2000ms，覆盖自建服务器 TTS 路由延迟
+                    if (System.currentTimeMillis() - lastWaitingChangeMs > 2000) {
                         Logger.w(TAG, "[$botName] 音频被ws过滤(idx=$idx, ws=${rs.waitingSpeakerIndex}), ${audioData.size}B")
                         return@collect
                     }
@@ -707,10 +708,12 @@ class GroupChatViewModel @Inject constructor(
                             // 记录该 bot 进入 speaking 的时间，audioData 过滤据此做 3 秒 grace
                             botSpeakingTime[botId] = System.currentTimeMillis()
                             val botIndex = rs.botIds.indexOf(botId)
-                            if (rs.waitingSpeakerIndex >= 0 && botIndex != rs.waitingSpeakerIndex && botIndex >= 0) {
-                                Logger.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，丢弃音频")
+                            // 修复 3+ 人群：非预期发言不 continue，让后续 IDLE 也能进回收路径
+                            // 双人群 ws 100% 命中 → 此条件不成立；3+ 人服务器 TTS 路由错乱时非预期 bot 也会完成
+                            val isUnexpected = rs.waitingSpeakerIndex >= 0 && botIndex >= 0 && botIndex != rs.waitingSpeakerIndex
+                            if (isUnexpected && System.currentTimeMillis() - lastWaitingChangeMs > 2000) {
+                                Logger.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，清文本但保留状态机")
                                 replyText = ""  // 清空累积文本，避免下次转发旧数据
-                                continue
                             }
                             hasSpoken = true
                             speakerSession = rs.sessionId
@@ -767,6 +770,15 @@ class GroupChatViewModel @Inject constructor(
                                     replyToForward = replyText.also { replyText = "" }
                                     shouldTrigger = true
                                     Logger.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
+                                }
+                                // 路径 C：3+ 人群服务器 TTS 路由错乱时，非预期 bot 完成 → 主动清 ws + 重选人
+                                // 不等 watchdog 30s 兜底，立即重试
+                                else if (botIndex != currentRs.waitingSpeakerIndex && currentRs.waitingSpeakerIndex >= 0 && currentRs.botIds.size > 1) {
+                                    replyToForward = replyText.also { replyText = "" }
+                                    shouldTrigger = true
+                                    Logger.w(TAG, "[$botName] 非预期bot完成(idx=$botIndex, ws=${currentRs.waitingSpeakerIndex})，清ws主动重试")
+                                    _relayState.update { it.clearWaiting() }
+                                    botConnectionPool.clearDead()
                                 } else {
                                     Logger.i(TAG, "[$botName] 不满足触发条件: ws=${currentRs.waitingSpeakerIndex} botCnt=${currentRs.botIds.size} fwd=${currentRs.forwardRound} " +
                                         "matchA=${botIndex == currentRs.waitingSpeakerIndex} matchB=${currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0}")
