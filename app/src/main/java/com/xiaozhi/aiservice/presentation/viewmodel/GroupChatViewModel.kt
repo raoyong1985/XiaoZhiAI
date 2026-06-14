@@ -479,8 +479,15 @@ class GroupChatViewModel @Inject constructor(
             // 防御性吸收 StateFlow 当前残留值（sendListenStart 已同步清空，正常是 ""）
             // 避免极端时序下残留干扰"真正的 STT"与 lastCollectedText 的匹配
             var lastCollectedText = service.textMessage.value
-            Logger.i(TAG, "sttCollector 启动, 初始基线='$lastCollectedText' (sendListenStart 后应为空)")
+            // 最多收集录音启动后 8 秒内的 STT，超时自动退出。
+            // 此前移除了 sttCollectorJob?.cancel() 导致 job 永久存活，
+            // AI 说话后服务器把 TTS 回声当成 STT 发回来，污染聊天栏。
+            val deadline = System.currentTimeMillis() + 8000
+            Logger.i(TAG, "sttCollector 启动, 初始基线='$lastCollectedText', 截止=$deadline")
             service.textMessage.collect { text ->
+                if (System.currentTimeMillis() > deadline) {
+                    if (lastCollectedText.isNotEmpty()) return@collect  // 超时后跳过后续 STT
+                }
                 if (text.isNotBlank() && text != lastCollectedText) {
                     lastCollectedText = text
                     Logger.i(TAG, "[群聊STT] 收到用户语音文字='$text', 写入 groupId='$currentGroupId'")
