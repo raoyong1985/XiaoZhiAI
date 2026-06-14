@@ -473,10 +473,14 @@ class GroupChatViewModel @Inject constructor(
         // 这里收集文本用于 UI 显示和死循环检测
         sttCollectorJob?.cancel()
         sttCollectorJob = viewModelScope.launch {
-            var lastCollectedText = ""
+            // 防御性吸收 StateFlow 当前残留值（sendListenStart 已同步清空，正常是 ""）
+            // 避免极端时序下残留干扰"真正的 STT"与 lastCollectedText 的匹配
+            var lastCollectedText = service.textMessage.value
+            Logger.i(TAG, "sttCollector 启动, 初始基线='$lastCollectedText' (sendListenStart 后应为空)")
             service.textMessage.collect { text ->
                 if (text.isNotBlank() && text != lastCollectedText) {
                     lastCollectedText = text
+                    Logger.i(TAG, "[群聊STT] 收到用户语音文字='$text', 写入 groupId='$currentGroupId'")
                     if (_relayState.value.lastForwardedText.isEmpty()) {
                         _relayState.update { it.copy(lastForwardedText = text) }
                     }
