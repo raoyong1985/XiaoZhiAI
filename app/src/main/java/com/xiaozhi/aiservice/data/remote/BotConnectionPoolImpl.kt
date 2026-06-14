@@ -85,35 +85,50 @@ class BotConnectionPoolImpl @Inject constructor(
      * 3. 已有连接但状态 Error → 标记死，返回 false
      * 4. 无连接或断线 → 断开旧连接，创建新连接，等待 5s 内连上
      *
+     * 重建段用 `synchronized(connections)` 保护，并发调用时第二次会等第一次
+     * 写回 map 后 recheck state——若期间新 service 已 Connected 则直接复用。
+     *
      * @return 重连后是否处于 Connected 状态
      */
     override suspend fun ensureConnected(botId: String, contact: BotContact): Boolean {
         if (deadBotIds.contains(botId)) return false
-        val service = connections[botId]
-        // 已连接 → 直接返回
-        if (service != null && service.connectionState.value is BotConnectionState.Connected) {
+
+        // ── 快路径（无锁）：已连/正连 → 直接返回 ──
+        val current = connections[botId]
+        if (current != null && current.connectionState.value is BotConnectionState.Connected) {
             return true
         }
-        // 正在连接中 → 等待完成，不重建
-        if (service != null && service.connectionState.value is BotConnectionState.Connecting) {
+        if (current != null && current.connectionState.value is BotConnectionState.Connecting) {
             Logger.i(TAG, "bot[$botId] 正在连接中，等待完成")
             return withTimeoutOrNull(5000) {
-                service.connectionState.first { it is BotConnectionState.Connected }
+                current.connectionState.first { it is BotConnectionState.Connected }
                 true
             } ?: false
         }
-        // Error / Disconnected / null → 重建连接
-        Logger.w(TAG, "重新连接: $botId (state=${service?.connectionState?.value})")
-        // disconnect() 不需要单独协程，它是非阻塞的
-        connections[botId]?.disconnect()
-        val newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
-        connections[botId] = newService
-        newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
+
+        // ── 慢路径：重建连接 ──
+        // 防止两个并发 ensureConnected(botId) 互相覆盖 newService
+        // synchronized 块只能包含非 suspend 操作（Kotlin 限制），所以
+        // 「拿锁 + 销毁旧 + 写新 + 启动 connect」放锁内；5s 等待放锁外。
+        val newService: XiaoZhiBackendService
+        synchronized(connections) {
+            // 拿锁后 recheck：可能另一个线程刚刚连上
+            val rechecked = connections[botId]
+            if (rechecked != null && rechecked.connectionState.value is BotConnectionState.Connected) {
+                return true
+            }
+            Logger.w(TAG, "重新连接: $botId (state=${rechecked?.connectionState?.value})")
+            // 旧 service 即将被丢弃，destroy() 取消其 supervisorJob 防止协程泄漏
+            // （disconnect() 故意保留 scope 以支持重连，池里被替换的 service 不再需要重连）
+            rechecked?.destroy()
+            newService = XiaoZhiBackendService(gson, mcpToolRegistry, audioService)
+            connections[botId] = newService
+            newService.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
+        }
         val result = withTimeoutOrNull(5000) {
             newService.connectionState.first { it is BotConnectionState.Connected }
             true
         } ?: false
-        // 重建成功 → 通知 ViewModel 重建观察者
         if (result) {
             _serviceReplaced.tryEmit(botId to newService)
         } else {
@@ -157,12 +172,13 @@ class BotConnectionPoolImpl @Inject constructor(
 
     /** 断开指定 bot 的连接并清理缓存 */
     override fun disconnect(botId: String) {
-        connections.remove(botId)?.disconnect()
+        // 池里移除的 service 不会复用，destroy() 取消其 scope 防止协程泄漏
+        connections.remove(botId)?.destroy()
     }
 
     /** 断开所有 bot 连接，清理全部状态 */
     override fun disconnectAll() {
-        connections.values.forEach { it.disconnect() }
+        connections.values.forEach { it.destroy() }
         connections.clear()
         deadBotIds.clear()
     }

@@ -477,11 +477,31 @@ class XiaoZhiBackendService(
      * 发送静音状态到服务器
      */
     /**
-     * 判断当前连接是否为本地服务器
+     * 判断当前连接是否为本地/私网服务器
+     *
+     * 支持：
+     * - IPv4 私网：10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+     * - IPv4 回环：127.0.0.0/8
+     * - IPv6 回环：::1
+     * - IPv6 链路本地：fe80::/10
+     * - IPv6 唯一本地地址（ULA）：fc00::/7（fc00~fdff）
+     * - 主机名：localhost
      */
     override fun isLocalServer(): Boolean {
-        return serverUrl.contains("192.168.") || serverUrl.contains("localhost")
-            || serverUrl.contains("127.0.0.1") || serverUrl.contains("10.")
+        val url = serverUrl
+        if (url.isEmpty()) return false
+        if (url.contains("localhost") || url.contains("127.")) return true
+        // IPv6（scheme 后通常是 wss://[::1] 或 wss://[fe80::...]）
+        if (url.contains("::1") || url.contains("fe80:") || url.contains("[fc") || url.contains("[fd")) return true
+        // 10.0.0.0/8
+        if (url.contains("10.")) return true
+        // 192.168.0.0/16
+        if (url.contains("192.168.")) return true
+        // 172.16.0.0/12 → 172.16~172.31
+        // 简单字符串匹配：172.16./172.17./.../172.31.
+        // 公网 172.x.x.x 段几乎不存在，这个范围可以安全判定为私网
+        if (Regex("""172\.(1[6-9]|2[0-9]|3[01])\.""").containsMatchIn(url)) return true
+        return false
     }
 
     fun sendMute(muted: Boolean) {

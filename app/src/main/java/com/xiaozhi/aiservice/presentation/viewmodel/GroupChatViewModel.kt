@@ -656,145 +656,189 @@ class GroupChatViewModel @Inject constructor(
 
         // ── 单协程消费事件通道（保证顺序处理） ──
         //
-        // 事件处理流程（重点关注 aiState 的 speaking → idle 过渡）：
-        //
-        // speaking 到达：
-        //   • 记录 replyText（累积 ttsText）
-        //   • 检查是否自己正在被等待（waitingSpeakerIndex）
-        //   • 如果不是预期 speaker → 丢弃
-        //   • 如果是首 bot → 自动停止录音
-        //
-        // idle 到达（hasSpoken=true）：
-        //   • 排空该 bot 的音频播放
-        //   • 在 speakerMutex 保护下判断是否触发下一轮
-        //   • 条件：自己是 waitingSpeaker + bot 数 > 1 → 触发下一 speaker
-        //   • 条件：ws=-1 但 forwardRound >= 0 → 自动继续
-        var replyText = ""
-        var hasSpoken = false
-        var speakerSession = 0L
+        // 事件处理被拆成 3 个独立 handler：handleTtsEvent / handleMessageEvent /
+        // handleAiStateEvent，共享 SpeakerContext 内的 replyText/hasSpoken/speakerSession。
+        // handleAiStateEvent 返回 (shouldTrigger, replyToForward)，本函数负责发起 triggerNextSpeaker。
+        val ctx = SpeakerContext()
 
         viewModelScope.launch(parentJob) {
             for (event in eventChannel) {
-                when (event) {
+                val trigger: Pair<Boolean, String>? = when (event) {
                     is BotEvent.TtsText -> {
-                        // 流式文本累积：多个 ttsText 拼接为完整回复
-                        replyText = if (replyText.isBlank()) event.text else "$replyText ${event.text}"
+                        handleTtsEvent(event, ctx)
+                        null
                     }
                     is BotEvent.Message -> {
-                        val msg = event.msg
-                        if (msg.direction == MessageDirection.RECEIVED && msg.content.isNotBlank()) {
-                            // 去重检查：同一 bot 的重复文本跳过
-                            if (isDuplicateReply(botId, msg.content)) {
-                                Logger.w(TAG, "[$botName] 跳过重复消息: ${msg.content.take(30)}")
-                                // 不清空 replyText！重复消息的文本仍需要作为转发上下文
-                                // 给下一个 bot（仅跳过 UI 显示），避免下一 bot 收到空白
-                                continue
-                            }
-                            groupChatRepository.addMessage(groupId, ChatMessage(
-                                id = java.util.UUID.randomUUID().toString(), groupId = groupId,
-                                botId = botId, botName = botName, content = msg.content,
-                                type = MessageType.TEXT, direction = MessageDirection.RECEIVED
-                            ))
-                        }
+                        handleMessageEvent(event, ctx, botId, groupId, botName)
+                        null
                     }
-                    is BotEvent.AiState -> {
-                        val state = event.state
-                        val rs = _relayState.value
-                        Logger.i(TAG, "[$botName] aiState=$state reply='${replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
-
-                        if (state == AiStateStr.SPEAKING) {
-                            // ── AI 开始说话 ──
-                            audioService.requestAudioFocus()
-                            // 记录该 bot 进入 speaking 的时间，audioData 过滤据此做 3 秒 grace
-                            botSpeakingTime[botId] = System.currentTimeMillis()
-                            val botIndex = rs.botIds.indexOf(botId)
-                            // 修复 3+ 人群：非预期发言不 continue，让后续 IDLE 也能进回收路径
-                            // 双人群 ws 100% 命中 → 此条件不成立；3+ 人服务器 TTS 路由错乱时非预期 bot 也会完成
-                            val isUnexpected = rs.waitingSpeakerIndex >= 0 && botIndex >= 0 && botIndex != rs.waitingSpeakerIndex
-                            if (isUnexpected && System.currentTimeMillis() - lastWaitingChangeMs > 2000) {
-                                Logger.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，清文本但保留状态机")
-                                replyText = ""  // 清空累积文本，避免下次转发旧数据
-                            }
-                            hasSpoken = true
-                            speakerSession = rs.sessionId
-                            // 首 bot 开始说话 → 自动停止用户录音
-                            if (botId == rs.botIds.firstOrNull()) {
-                                if (_isRecording.value) {
-                                    Logger.i(TAG, "AI开始说话，自动停止录音")
-                                    stopVoiceInput(userExplicitStop = false)
-                                }
-                                sttCollectorJob?.cancel()
-                            }
-                            // 预创建共享解码器（减少音频到达时的首帧延迟）
-                            // 注意：按采样率区分 sourceId，避免切换 bot 时频繁重建
-                            val serverRate = service.getServerSampleRate()
-                            val serverCh = service.getServerChannels()
-                            val volume = AudioSettings.getOutputVolume(context)
-                            val currentSourceId = "${groupId}_shared_${serverRate}"
-                            if (!playbackManager.contains(currentSourceId)) {
-                                decoderCache[serverRate] = currentSourceId
-                                playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
-                                Logger.i(TAG, "[$botName] 预创建共享解码器 (${serverRate}Hz, 音量=$volume%)")
-                            }
-                        }
-
-                        if (state == AiStateStr.IDLE && hasSpoken) {
-                            // ── AI 说完话 → 触发下一轮 ──
-                            hasSpoken = false
-                            val drainRate = service.getServerSampleRate()
-                            drainPreviousBotAudio(botId, "${groupId}_shared_${drainRate}")
-
-                            var shouldTrigger = false
-                            var replyToForward = ""
-                            speakerMutex.withLock {
-                                val currentRs = _relayState.value
-                                val botIndex = currentRs.botIds.indexOf(botId)
-
-                                // ═══ 诊断日志 ═══
-                                Logger.i(TAG, "[$botName] IDLE诊断: session(speaker=$speakerSession/current=${currentRs.sessionId}) " +
-                                    "botIdx=$botIndex ws=${currentRs.waitingSpeakerIndex} fwd=${currentRs.forwardRound} " +
-                                    "botCnt=${currentRs.botIds.size} reply='${replyText.take(60)}' bufSize=${audioForwardBuffer[botId]?.size ?: -1}")
-
-                                if (speakerSession != currentRs.sessionId) {
-                                    Logger.i(TAG, "[$botName] 跳过旧轮次 session=$speakerSession current=${currentRs.sessionId}")
-                                    return@withLock
-                                }
-                                if (botIndex < 0) return@withLock
-
-                                if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
-                                    replyToForward = replyText.also { replyText = "" }
-                                    shouldTrigger = true
-                                    Logger.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
-                                }
-                                else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
-                                    replyToForward = replyText.also { replyText = "" }
-                                    shouldTrigger = true
-                                    Logger.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
-                                }
-                                // 路径 C：3+ 人群服务器 TTS 路由错乱时，非预期 bot 完成 → 主动清 ws + 重选人
-                                // 不等 watchdog 30s 兜底，立即重试
-                                else if (botIndex != currentRs.waitingSpeakerIndex && currentRs.waitingSpeakerIndex >= 0 && currentRs.botIds.size > 1) {
-                                    replyToForward = replyText.also { replyText = "" }
-                                    shouldTrigger = true
-                                    Logger.w(TAG, "[$botName] 非预期bot完成(idx=$botIndex, ws=${currentRs.waitingSpeakerIndex})，清ws主动重试")
-                                    _relayState.update { it.clearWaiting() }
-                                    botConnectionPool.clearDead()
-                                } else {
-                                    Logger.i(TAG, "[$botName] 不满足触发条件: ws=${currentRs.waitingSpeakerIndex} botCnt=${currentRs.botIds.size} fwd=${currentRs.forwardRound} " +
-                                        "matchA=${botIndex == currentRs.waitingSpeakerIndex} matchB=${currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0}")
-                                    replyText = ""
-                                }
-                            }
-                            if (shouldTrigger) {
-                                val reply = replyToForward
-                                viewModelScope.launch { triggerNextSpeaker(reply) }
-                            }
-                        }
-                    }
+                    is BotEvent.AiState -> handleAiStateEvent(event, ctx, botId, groupId, botName, service)
+                }
+                if (trigger != null && trigger.first) {
+                    val reply = trigger.second
+                    viewModelScope.launch { triggerNextSpeaker(reply) }
                 }
             }
         }
     }  // observeBotEvents
+
+    /**
+     * 单 bot 观察者内的可变状态，被 3 个 handler 共享：
+     * - replyText：流式累积 ttsText
+     * - hasSpoken：本 bot 是否进入过 SPEAKING（用于 IDLE 时是否触发下一轮）
+     * - speakerSession：进入 SPEAKING 时的 relaySessionId（用于 IDLE 时判断是否旧轮次）
+     */
+    private class SpeakerContext {
+        var replyText: String = ""
+        var hasSpoken: Boolean = false
+        var speakerSession: Long = 0L
+    }
+
+    /** Handler: 累积 TTS 文本到 ctx.replyText */
+    private fun handleTtsEvent(event: BotEvent.TtsText, ctx: SpeakerContext) {
+        // 流式文本累积：多个 ttsText 拼接为完整回复
+        ctx.replyText = if (ctx.replyText.isBlank()) event.text else "${ctx.replyText} ${event.text}"
+    }
+
+    /**
+     * Handler: 收到完整消息 → 去重检查 + 写入群聊消息流
+     *
+     * 去重时不清空 ctx.replyText —— 重复消息的文本仍需作为转发上下文
+     * 给下一个 bot（仅跳过 UI 显示），避免下一 bot 收到空白。
+     */
+    @Suppress("UNUSED_PARAMETER")  // ctx 是统一接口签名的一部分，Tts/AiState handler 需要它
+    private suspend fun handleMessageEvent(
+        event: BotEvent.Message,
+        ctx: SpeakerContext,
+        botId: String,
+        groupId: String,
+        botName: String
+    ) {
+        val msg = event.msg
+        if (msg.direction == MessageDirection.RECEIVED && msg.content.isNotBlank()) {
+            if (isDuplicateReply(botId, msg.content)) {
+                Logger.w(TAG, "[$botName] 跳过重复消息: ${msg.content.take(30)}")
+                return  // 等价于原 for 循环内的 `continue` —— 跳过当前事件处理
+            }
+            groupChatRepository.addMessage(groupId, ChatMessage(
+                id = java.util.UUID.randomUUID().toString(), groupId = groupId,
+                botId = botId, botName = botName, content = msg.content,
+                type = MessageType.TEXT, direction = MessageDirection.RECEIVED
+            ))
+        }
+    }
+
+    /**
+     * Handler: AI 状态机——SPEAKING 准备 / IDLE 触发下一轮
+     *
+     * 关键点：
+     * - SPEAKING：记录时间/会话/共享解码器预创建；非预期发言清文本但保留状态机
+     * - IDLE+hasSpoken：排空音频后，在 speakerMutex 保护下判断是否触发下一轮
+     *   路径 A：自己是 waitingSpeaker → 正常触发
+     *   路径 B：ws=-1 + forwardRound>=0 → 自动继续
+     *   路径 C：3+ 人群非预期 bot 完成 → 主动清 ws + 重选人
+     *
+     * @return (shouldTrigger, replyToForward)；非触发场景返回 null
+     */
+    private suspend fun handleAiStateEvent(
+        event: BotEvent.AiState,
+        ctx: SpeakerContext,
+        botId: String,
+        groupId: String,
+        botName: String,
+        service: BotConnection
+    ): Pair<Boolean, String>? {
+        val state = event.state
+        val rs = _relayState.value
+        Logger.i(TAG, "[$botName] aiState=$state reply='${ctx.replyText.take(60)}' fwd=${rs.forwardRound} ws=${rs.waitingSpeakerIndex}")
+
+        if (state == AiStateStr.SPEAKING) {
+            // ── AI 开始说话 ──
+            audioService.requestAudioFocus()
+            // 记录该 bot 进入 speaking 的时间，audioData 过滤据此做 3 秒 grace
+            botSpeakingTime[botId] = System.currentTimeMillis()
+            val botIndex = rs.botIds.indexOf(botId)
+            // 修复 3+ 人群：非预期发言不 continue，让后续 IDLE 也能进回收路径
+            // 双人群 ws 100% 命中 → 此条件不成立；3+ 人服务器 TTS 路由错乱时非预期 bot 也会完成
+            val isUnexpected = rs.waitingSpeakerIndex >= 0 && botIndex >= 0 && botIndex != rs.waitingSpeakerIndex
+            if (isUnexpected && System.currentTimeMillis() - lastWaitingChangeMs > 2000) {
+                Logger.w(TAG, "[$botName] 非预期发言(idx=$botIndex, expected=${rs.waitingSpeakerIndex})，清文本但保留状态机")
+                ctx.replyText = ""  // 清空累积文本，避免下次转发旧数据
+            }
+            ctx.hasSpoken = true
+            ctx.speakerSession = rs.sessionId
+            // 首 bot 开始说话 → 自动停止用户录音
+            if (botId == rs.botIds.firstOrNull()) {
+                if (_isRecording.value) {
+                    Logger.i(TAG, "AI开始说话，自动停止录音")
+                    stopVoiceInput(userExplicitStop = false)
+                }
+                sttCollectorJob?.cancel()
+            }
+            // 预创建共享解码器（减少音频到达时的首帧延迟）
+            // 注意：按采样率区分 sourceId，避免切换 bot 时频繁重建
+            val serverRate = service.getServerSampleRate()
+            val serverCh = service.getServerChannels()
+            val volume = AudioSettings.getOutputVolume(context)
+            val currentSourceId = "${groupId}_shared_${serverRate}"
+            if (!playbackManager.contains(currentSourceId)) {
+                decoderCache[serverRate] = currentSourceId
+                playbackManager.getOrCreate(currentSourceId, serverRate, serverCh, volume)
+                Logger.i(TAG, "[$botName] 预创建共享解码器 (${serverRate}Hz, 音量=$volume%)")
+            }
+        }
+
+        if (state == AiStateStr.IDLE && ctx.hasSpoken) {
+            // ── AI 说完话 → 触发下一轮 ──
+            ctx.hasSpoken = false
+            val drainRate = service.getServerSampleRate()
+            drainPreviousBotAudio(botId, "${groupId}_shared_${drainRate}")
+
+            var shouldTrigger = false
+            var replyToForward = ""
+            speakerMutex.withLock {
+                val currentRs = _relayState.value
+                val botIndex = currentRs.botIds.indexOf(botId)
+
+                // ═══ 诊断日志 ═══
+                Logger.i(TAG, "[$botName] IDLE诊断: session(speaker=${ctx.speakerSession}/current=${currentRs.sessionId}) " +
+                    "botIdx=$botIndex ws=${currentRs.waitingSpeakerIndex} fwd=${currentRs.forwardRound} " +
+                    "botCnt=${currentRs.botIds.size} reply='${ctx.replyText.take(60)}' bufSize=${audioForwardBuffer[botId]?.size ?: -1}")
+
+                if (ctx.speakerSession != currentRs.sessionId) {
+                    Logger.i(TAG, "[$botName] 跳过旧轮次 session=${ctx.speakerSession} current=${currentRs.sessionId}")
+                    return@withLock
+                }
+                if (botIndex < 0) return@withLock
+
+                if (botIndex == currentRs.waitingSpeakerIndex && currentRs.botIds.size > 1) {
+                    replyToForward = ctx.replyText.also { ctx.replyText = "" }
+                    shouldTrigger = true
+                    Logger.i(TAG, "[$botName] triggering next, fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
+                }
+                else if (currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0) {
+                    replyToForward = ctx.replyText.also { ctx.replyText = "" }
+                    shouldTrigger = true
+                    Logger.i(TAG, "[$botName] 自动继续下一轮(ws=-1), fwd=${currentRs.forwardRound} reply='${replyToForward.take(60)}'")
+                }
+                // 路径 C：3+ 人群服务器 TTS 路由错乱时，非预期 bot 完成 → 主动清 ws + 重选人
+                // 不等 watchdog 30s 兜底，立即重试
+                else if (botIndex != currentRs.waitingSpeakerIndex && currentRs.waitingSpeakerIndex >= 0 && currentRs.botIds.size > 1) {
+                    replyToForward = ctx.replyText.also { ctx.replyText = "" }
+                    shouldTrigger = true
+                    Logger.w(TAG, "[$botName] 非预期bot完成(idx=$botIndex, ws=${currentRs.waitingSpeakerIndex})，清ws主动重试")
+                    _relayState.update { it.clearWaiting() }
+                    botConnectionPool.clearDead()
+                } else {
+                    Logger.i(TAG, "[$botName] 不满足触发条件: ws=${currentRs.waitingSpeakerIndex} botCnt=${currentRs.botIds.size} fwd=${currentRs.forwardRound} " +
+                        "matchA=${botIndex == currentRs.waitingSpeakerIndex} matchB=${currentRs.waitingSpeakerIndex < 0 && currentRs.botIds.size > 1 && currentRs.forwardRound >= 0}")
+                    ctx.replyText = ""
+                }
+            }
+            return if (shouldTrigger) Pair(true, replyToForward) else null
+        }
+        return null
+    }
 
     // ═══════════════════════════════════════════
     // 接龙引擎
