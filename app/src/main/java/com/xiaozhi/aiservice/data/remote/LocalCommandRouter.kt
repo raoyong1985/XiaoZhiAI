@@ -196,7 +196,9 @@ object LocalCommandRouter {
                     val responseText = if (success) {
                         rule.ttsTemplate
                     } else {
-                        "${rule.ttsTemplate}，但执行失败: $result"
+                        // 把原始 JsonObject/异常 转成用户可读描述（避免 `{"key":"value"}` 念出来）
+                        val errDetail = formatToolResult(result) ?: "未知错误"
+                        "${rule.ttsTemplate}，但执行失败: $errDetail"
                     }
 
                     return LocalCommandResult(

@@ -637,7 +637,8 @@ class XiaoZhiBackendService(
                     if (result != null) {
                         // 让服务器TTS播报反馈——把反馈文字发给服务器
                         val feedbackText = if (result.success) result.responseText
-                            else "执行${result.toolName}失败了: ${result.rawResult}"
+                            // 失败时把 rawResult 转成可读描述，避免 `{"key":"value"}` 念给用户听
+                            else "执行${result.toolName}失败了: ${formatToolResult(result.rawResult) ?: "未知错误"}"
                         val detectMsg = JsonObject().apply {
                             addProperty("session_id", sessionId)
                             addProperty("type", "listen")
@@ -650,10 +651,13 @@ class XiaoZhiBackendService(
                         // 显示到聊天
                         if (result.success && result.rawResult is JsonObject) {
                             val toolResult = result.rawResult as JsonObject
-                            if (toolResult.size() > 1) {
+                            // 提取用户友好字段（message/text/content/result/...），
+                            // 避免把 `{"key":"value"}` 原始 JSON 当消息显示在聊天界面
+                            val displayText = formatToolResult(toolResult)
+                            if (displayText != null) {
                                 val chatMsg = ChatMessage(
                                     id = java.util.UUID.randomUUID().toString(),
-                                    content = toolResult.toString(),
+                                    content = displayText,
                                     type = MessageType.TEXT,
                                     direction = MessageDirection.RECEIVED,
                                     status = MessageStatus.SENT,
