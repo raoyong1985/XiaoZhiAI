@@ -309,8 +309,8 @@ class NativeOpusDecoder(
                             }
                         } else {
                             // poll 超时：空闲时每 3s 写 500B 保活，防 AudioFlinger 杀 track
-                            val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs >= keepAliveTimer + 400) {
+                            val now = System.currentTimeMillis()
+                            if (now - keepAliveTimer >= 400) {
                                 keepAliveTimer = System.currentTimeMillis()
                                 try {
                                     audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
@@ -428,8 +428,8 @@ class NativeOpusDecoder(
                                 lastAudioActivityMs.set(System.currentTimeMillis())
                             }
                         } else {
-                            val idleMs = System.currentTimeMillis() - lastAudioActivityMs.get()
-                            if (idleMs >= keepAliveTimer + 400) {
+                            val now = System.currentTimeMillis()
+                            if (now - keepAliveTimer >= 400) {
                                 keepAliveTimer = System.currentTimeMillis()
                                 try {
                                     audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)

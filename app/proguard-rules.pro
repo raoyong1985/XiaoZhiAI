@@ -64,3 +64,4 @@
 -keep class com.xiaozhi.aiservice.domain.repository.ConnectionState { *; }
 -keep class com.xiaozhi.aiservice.domain.repository.DeviceState { *; }
 -keep class com.xiaozhi.aiservice.domain.model.AiState { *; }
+-keep class com.xiaozhi.aiservice.domain.model.GroupChat { *; }

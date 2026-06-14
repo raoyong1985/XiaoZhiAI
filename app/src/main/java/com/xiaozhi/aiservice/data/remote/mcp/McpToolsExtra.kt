@@ -134,6 +134,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             audioManager.setStreamVolume(android.media.AudioManager.STREAM_RING, maxVol, 0)
 
             // 震动
+            @Suppress("DEPRECATION")
             val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
             if (vibrator != null) {
                 if (Build.VERSION.SDK_INT >= 26) {
@@ -201,6 +202,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         }
 
         // 触发扫描
+        @Suppress("DEPRECATION")
         val scanSuccess = wifiManager.startScan()
         if (!scanSuccess) {
             // 可能扫描太频繁，返回上次结果
@@ -258,8 +260,12 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             if (btPerm != null) return@registerTool btPerm
         }
 
-        val adapter = BluetoothAdapter.getDefaultAdapter()
-            ?: throw Exception("此设备不支持蓝牙")
+        val adapter = if (Build.VERSION.SDK_INT >= 31) {
+            (ctx.getSystemService(android.bluetooth.BluetoothManager::class.java))?.adapter
+        } else {
+            @Suppress("DEPRECATION")
+            BluetoothAdapter.getDefaultAdapter()
+        } ?: throw Exception("此设备不支持蓝牙")
 
         if (!adapter.isEnabled) throw Exception("蓝牙已关闭，请先开启蓝牙")
 
@@ -270,7 +276,12 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context, intent: android.content.Intent) {
                 if (intent.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) return
-                val device = intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                val device = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                }
                 if (device != null) {
                     val name = device.name ?: "(未知)"
                     if (foundDevices.none { it.second == device.address }) {
@@ -280,9 +291,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             }
         }
 
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_STARTED))
-        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND))
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED))
+        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_STARTED), Context.RECEIVER_NOT_EXPORTED)
+        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
+        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED), Context.RECEIVER_NOT_EXPORTED)
 
         adapter.startDiscovery()
         delay(5000) // 扫描 5 秒
@@ -326,6 +337,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
 
         data class SensorReading(val name: String, val values: List<Float>, val accuracy: Int)
 
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
         suspend fun readSensor(type: Int, sensorName: String): SensorReading? {
             val sensor = sensorManager.getDefaultSensor(type) ?: return null
             return suspendCancellableCoroutine { cont ->
@@ -392,6 +404,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         var vpnName = ""
 
         // 方法1：NetworkCapabilities
+        @Suppress("DEPRECATION")
         if (Build.VERSION.SDK_INT >= 21) {
             val networks = cm?.allNetworks ?: emptyArray()
             for (network in networks) {
