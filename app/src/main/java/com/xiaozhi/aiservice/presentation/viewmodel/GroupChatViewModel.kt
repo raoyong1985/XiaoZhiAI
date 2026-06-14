@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.logging.AndroidLogger
+import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
@@ -82,6 +83,7 @@ class GroupChatViewModel @Inject constructor(
     private val botConnectionPool: BotConnectionPoolRepository,
     private val playbackManager: AudioPlaybackManager,
     private val audioService: AudioService,
+    private val connectionRepository: ConnectionRepositoryImpl,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -238,6 +240,7 @@ class GroupChatViewModel @Inject constructor(
      * @param groupId 目标群聊的 UUID
      */
     fun connectGroup(groupId: String) {
+        connectionRepository.suppressAutoListening = true
         observeJob?.cancel()
         observeJob = null
         // 先 cancel 所有观察者，再断开连接（防止旧事件通道消费断线状态变更）
@@ -777,7 +780,9 @@ class GroupChatViewModel @Inject constructor(
                     Logger.i(TAG, "AI开始说话，自动停止录音")
                     stopVoiceInput(userExplicitStop = false)
                 }
-                sttCollectorJob?.cancel()
+                // ⚠️ 不取消 sttCollectorJob！服务器 ASR 可能在录音停止后才返回结果，
+                // 取消会导致 STT 文字收不到、聊天框不显示用户语音内容。
+                // 下次 startVoiceInput 会自动取消旧的 sttCollectorJob。
             }
             // 预创建共享解码器（减少音频到达时的首帧延迟）
             // 注意：按采样率区分 sourceId，避免切换 bot 时频繁重建
@@ -975,6 +980,7 @@ class GroupChatViewModel @Inject constructor(
      * 清理所有资源：录音、监听 Job、WebSocket 连接、播放器、缓存
      */
     fun disconnectGroup() {
+        connectionRepository.suppressAutoListening = false
         stopVoiceInput()
         sttCollectorJob?.cancel()
         stuckRelayWatcher?.cancel()

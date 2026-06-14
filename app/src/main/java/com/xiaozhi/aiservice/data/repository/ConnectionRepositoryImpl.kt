@@ -100,6 +100,13 @@ class ConnectionRepositoryImpl @Inject constructor(
     @Volatile
     private var lastSpeakingEndMs = 0L
 
+    /**
+     * 群聊接龙活跃中时，ConnectionRepositoryImpl 不应自动重启录音或唤醒检测。
+     * 由 GroupChatViewModel 在 connect/disconnect 时设置。
+     */
+    @Volatile
+    var suppressAutoListening = false
+
     // 当前联系人 ID，用于消息路由
     private var _currentContactId: String = ""
     override val currentContactId: String get() = _currentContactId
@@ -230,6 +237,10 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // AUTO 模式：AI 说完话回到 IDLE → 等播放排空后重启监听
                     // 文本模式下(textInputActive=true)不自动重启（参考 ESP32: 非 REALTIME 走 IDLE）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && isAutoMode) {
+                        if (suppressAutoListening) {
+                            Logger.i(TAG, "AUTO 模式：群聊活跃中，不重启监听")
+                            return@withLock
+                        }
                         lastSpeakingEndMs = System.currentTimeMillis()
                         if (textInputActive) {
                             Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听，启动唤醒词检测")
@@ -246,6 +257,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // Manual Stop 模式：TTS 结束后回到 IDLE，不自动重启监听，等待用户手动触发
                     // 参考 ESP32 kListeningModeManualStop 行为
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.MANUAL) {
+                        if (suppressAutoListening) { Logger.i(TAG, "MANUAL 模式：群聊活跃中，跳过"); return@withLock }
                         lastSpeakingEndMs = System.currentTimeMillis()
                         Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，启动唤醒词检测")
                         _deviceState.value = DeviceState.IDLE
@@ -257,6 +269,7 @@ class ConnectionRepositoryImpl @Inject constructor(
 
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.REALTIME) {
+                        if (suppressAutoListening) { Logger.i(TAG, "REALTIME 模式：群聊活跃中，跳过"); return@withLock }
                         lastSpeakingEndMs = System.currentTimeMillis()
                         if (textInputActive) {
                             Logger.i(TAG, "Realtime 模式：文本输入中，不重启监听")
