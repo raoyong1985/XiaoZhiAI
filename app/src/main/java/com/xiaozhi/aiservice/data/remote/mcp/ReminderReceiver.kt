@@ -21,6 +21,13 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val message = intent.getStringExtra("message") ?: "提醒"
         val reminderId = intent.getStringExtra("reminder_id")
+        // 支持笔记提醒（从 save_note 发起的）
+        val noteTitle = intent.getStringExtra("note_title")
+        val noteContent = intent.getStringExtra("note_content")
+        val noteId = intent.getStringExtra("note_id")
+
+        val displayTitle = if (noteTitle != null) "📝 $noteTitle" else "🔔 $message"
+        val displayContent = noteContent ?: "小智 AI 提醒您"
 
         // 触发后删除持久化记录
         if (!reminderId.isNullOrEmpty()) {
@@ -41,8 +48,8 @@ class ReminderReceiver : BroadcastReceiver() {
 
             val notification = NotificationCompat.Builder(context, "reminder_channel")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("🔔 $message")
-                .setContentText("小智 AI 提醒您")
+                .setContentTitle(displayTitle)
+                .setContentText(displayContent)
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
