@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import java.util.Collections
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.logging.AndroidLogger
@@ -632,7 +633,7 @@ class GroupChatViewModel @Inject constructor(
                     }
                 }
                 playbackManager.decodeAndPlay(currentSourceId, serverRate, serverCh, audioData, volume)
-                val buf = audioForwardBuffer.getOrPut(botId) { mutableListOf() }
+                val buf = audioForwardBuffer.getOrPut(botId) { Collections.synchronizedList(mutableListOf()) }
                 buf.add(audioData)
                 if (buf.size > RelayConfig.MAX_FORWARD_BUFFER_SIZE) {
                     buf.removeAt(0) // 超出上限时丢弃最早的数据

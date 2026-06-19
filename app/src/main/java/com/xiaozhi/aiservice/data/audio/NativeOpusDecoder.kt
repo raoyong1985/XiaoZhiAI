@@ -204,7 +204,7 @@ class NativeOpusDecoder(
 
     // 音量缩放因子：volumeScale / 100，范围 0-100
     // 参考 ESP32 audio_codec.cc SetOutputVolume()
-    private var volumeScale: Int = initialVolume.coerceIn(0, 100)
+    @Volatile private var volumeScale: Int = initialVolume.coerceIn(0, 100)
 
     init {
         System.loadLibrary("native_opus_decoder")

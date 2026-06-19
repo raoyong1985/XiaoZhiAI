@@ -26,7 +26,7 @@ class NativeOpusEncoder(
     }
 
     private var encoderPtr: Long = 0
-    private var isEncoding = false
+    @Volatile private var isEncoding = false
     private var encodingThread: Thread? = null
     private val pcmQueue = LinkedBlockingQueue<ByteArray>()
     private var onOpusData: ((ByteArray) -> Unit)? = null
