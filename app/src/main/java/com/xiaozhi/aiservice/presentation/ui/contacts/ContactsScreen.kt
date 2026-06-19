@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,7 @@ import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -87,7 +89,7 @@ fun ContactsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(vertical = 2.dp)
+                contentPadding = PaddingValues(vertical = 4.dp)
             ) {
                 items(contacts, key = { it.id }) { contact ->
                     ContactItem(
@@ -133,6 +135,7 @@ fun ContactsScreen(
     contactToDelete?.let { contact ->
         AlertDialog(
             onDismissRequest = { contactToDelete = null },
+            shape = AppShapes.dialog,
             title = { Text("删除联系人") },
             text = { Text("确定删除 \"${contact.name}\" 吗？") },
             confirmButton = {
@@ -178,7 +181,9 @@ private fun ContactItem(
     var showMenu by remember { mutableStateOf(false) }
 
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp),
         headlineContent = {
             Text(
                 text = contact.name,
@@ -238,23 +243,23 @@ private fun ContactItem(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(AppShapes.menu)
                         .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            0.5.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                            AppShapes.menu
+                        )
                 ) {
-                    // 基本设置
-                    Text(
-                        "基本设置",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
+                    // ── 基本设置 ──
+                    SectionHeader("基本设置")
                     DropdownMenuItem(
                         text = { Text("编辑联系人") },
                         onClick = {
                             showMenu = false
                             onEdit()
                         },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2196F3)) }
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                     )
                     DropdownMenuItem(
                         text = {
@@ -274,15 +279,10 @@ private fun ContactItem(
                             )
                         }
                     )
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    MenuDivider()
 
-                    // 数据管理
-                    Text(
-                        "数据管理",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
+                    // ── 数据管理 ──
+                    SectionHeader("数据管理")
                     DropdownMenuItem(
                         text = { Text("清空聊天记录") },
                         onClick = {
@@ -297,11 +297,11 @@ private fun ContactItem(
                             showMenu = false
                             onExportMessages()
                         },
-                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF9C27B0)) }
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                     )
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    MenuDivider()
 
-                    // 危险操作
+                    // ── 危险操作 ──
                     DropdownMenuItem(
                         text = { Text("删除联系人", color = MaterialTheme.colorScheme.error) },
                         onClick = {
@@ -324,8 +324,9 @@ private fun ContactItem(
         )
     )
     Divider(
-        modifier = Modifier.padding(start = 80.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        modifier = Modifier.padding(start = 76.dp, end = 4.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        thickness = 0.5.dp
     )
 }
 
@@ -467,4 +468,34 @@ fun AddEditContactDialog(
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════
+// 共享菜单辅助组件
+// ═══════════════════════════════════════════
+
+/**
+ * 菜单分组标题
+ */
+@Composable
+fun SectionHeader(title: String) {
+    Text(
+        title,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+}
+
+/**
+ * 菜单分隔线（较细，双侧留边）
+ */
+@Composable
+fun MenuDivider() {
+    Divider(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        thickness = 0.5.dp
+    )
 }

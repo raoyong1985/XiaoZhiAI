@@ -32,6 +32,9 @@
     <!-- Calendar read -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
 
+    <!-- SMS read -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+
     <!-- Storage for chat history (Android 9 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -106,7 +109,8 @@
             android:name=".presentation.ui.MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.XiaoZhiAI">
+            android:theme="@style/Theme.XiaoZhiAI"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -122,6 +126,24 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity="" />
+
+        <!-- 透明截图 Activity (使用 MediaProjection API) -->
+        <activity
+            android:name=".presentation.ui.ScreenshotCaptureActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
+        <!-- 二维码扫描 Activity (显示相机预览 + 扫码框) -->
+        <activity
+            android:name=".presentation.ui.QrScannerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:screenOrientation="portrait" />
 
         <!-- FileProvider for camera capture (image URI) -->
         <provider
@@ -139,7 +161,12 @@
             android:name=".data.remote.mcp.AlarmReceiver"
             android:exported="false" />
 
-        <!-- 设备开机/应用升级后重新注册闹钟 -->
+        <!-- Reminder receiver for set_reminder -->
+        <receiver
+            android:name=".data.remote.mcp.ReminderReceiver"
+            android:exported="false" />
+
+        <!-- 设备开机/应用升级后重新注册闹钟和提醒 -->
         <receiver
             android:name=".data.remote.mcp.BootReceiver"
             android:exported="true">

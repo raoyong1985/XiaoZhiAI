@@ -10,6 +10,8 @@ import com.xiaozhi.aiservice.di.ServicesEntryPoint
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.android.EntryPointAccessors
 
+import com.xiaozhi.aiservice.utils.WebViewSpeaker
+
 @HiltAndroidApp
 class XiaoZhiApplication : Application() {
     override fun onCreate() {
@@ -27,5 +29,7 @@ class XiaoZhiApplication : Application() {
         GlobalServices.xiaozhiBackend = entryPoint.xiaozhiBackend()
         // AudioService 由 Hilt @Singleton 管理
         entryPoint.audioService().init(this)
+        // 初始化 WebView 语音播报（备用 TTS，不依赖系统引擎）
+        WebViewSpeaker.init(this)
     }
 }

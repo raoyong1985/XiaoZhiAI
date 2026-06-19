@@ -6,7 +6,7 @@ import android.content.Intent
 import com.xiaozhi.aiservice.utils.Logger
 
 /**
- * 设备重启/应用升级后重新注册所有未触发的闹钟
+ * 设备重启/应用升级后重新注册所有未触发的闹钟和提醒
  *
  * 触发场景：
  * - BOOT_COMPLETED — 设备开机
@@ -23,11 +23,16 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             return
         }
-        Logger.i("BootReceiver", "恢复闹钟: action=$action")
+        Logger.i("BootReceiver", "恢复闹钟和提醒: action=$action")
         try {
             AlarmPersistence.restoreAll(context)
         } catch (e: Exception) {
             Logger.e("BootReceiver", "恢复闹钟失败: ${e.message}")
+        }
+        try {
+            ReminderPersistence.restoreAll(context)
+        } catch (e: Exception) {
+            Logger.e("BootReceiver", "恢复提醒失败: ${e.message}")
         }
     }
 }

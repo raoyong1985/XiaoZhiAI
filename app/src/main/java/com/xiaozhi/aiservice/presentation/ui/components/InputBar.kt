@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -157,7 +158,7 @@ fun InputBar(
                                         focusedContainerColor = Color.Transparent,
                                         unfocusedContainerColor = Color.Transparent,
                                     ),
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = AppShapes.menu,
                                     textStyle = MaterialTheme.typography.bodyMedium,
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
@@ -181,7 +182,7 @@ fun InputBar(
                                     },
                                     enabled = text.isNotBlank() && !sending && !isAiResponding,
                                     modifier = Modifier.size(42.dp),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = AppShapes.menu
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Send,

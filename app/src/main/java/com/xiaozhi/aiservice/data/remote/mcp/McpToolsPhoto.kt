@@ -62,7 +62,7 @@ fun registerCameraTool(registry: MCPToolRegistry) {
                         id = java.util.UUID.randomUUID().toString(),
                         content = photoFile.absolutePath,
                         type = com.xiaozhi.aiservice.domain.model.MessageType.IMAGE,
-                        direction = com.xiaozhi.aiservice.domain.model.MessageDirection.SENT,
+                        direction = com.xiaozhi.aiservice.domain.model.MessageDirection.RECEIVED,
                         status = com.xiaozhi.aiservice.domain.model.MessageStatus.SENT,
                         timestamp = System.currentTimeMillis()
                     )

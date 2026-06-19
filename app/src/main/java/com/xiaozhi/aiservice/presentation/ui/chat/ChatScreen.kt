@@ -46,9 +46,7 @@ fun ChatScreen(
     onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
-
-    var inputMode by remember { mutableIntStateOf(if (contact.inputMode == InputMode.VOICE) 0 else 1) }
-
+    val isVoiceMode = contact.inputMode == InputMode.VOICE
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -98,14 +96,14 @@ fun ChatScreen(
     )
 
     val stateText = when (uiState.aiState) {
-        AiState.LISTENING -> if (inputMode == 0) "正在倾听..." else ""
+        AiState.LISTENING -> if (isVoiceMode) "正在倾听..." else ""
         AiState.SPEAKING -> "正在回答..."
         AiState.PROCESSING -> "思考中..."
         else -> ""
     }
 
     val stateIcon = when (uiState.aiState) {
-        AiState.LISTENING -> if (inputMode == 0) Icons.Default.Mic else null
+        AiState.LISTENING -> if (isVoiceMode) Icons.Default.Mic else null
         AiState.SPEAKING -> Icons.Default.VolumeUp
         AiState.PROCESSING -> Icons.Default.Psychology
         else -> null
@@ -141,7 +139,7 @@ fun ChatScreen(
         bottomBar = {
             InputBar(
                 isRecording = uiState.isRecording,
-                inputMode = inputMode,
+                inputMode = if (isVoiceMode) 0 else 1,
                 isAiResponding = uiState.isAiResponding,
                 onSendText = { text ->
                     viewModel.sendTextMessage(text)
@@ -214,7 +212,9 @@ fun ChatScreen(
             messages = uiState.messages,
             listState = listState,
             coroutineScope = coroutineScope,
-            modifier = Modifier.fillMaxSize().padding(padding)
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
         ) { message, index ->
             ChatMessageItem(
                 message = message,

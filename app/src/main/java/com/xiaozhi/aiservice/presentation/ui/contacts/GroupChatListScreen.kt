@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.presentation.ui.contacts
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,6 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.xiaozhi.aiservice.presentation.theme.AppShapes
+import com.xiaozhi.aiservice.presentation.ui.components.AvatarView
+import com.xiaozhi.aiservice.presentation.ui.components.BotColorScheme
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -147,20 +151,20 @@ fun GroupChatListScreen(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false },
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
+                                        .clip(AppShapes.menu)
                                         .background(MaterialTheme.colorScheme.surface)
+                                        .border(
+                                            0.5.dp,
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                            AppShapes.menu
+                                        )
                                 ) {
-                                    // 基本设置
-                                    Text(
-                                        "基本设置",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                                    )
+                                    // ── 基本设置 ──
+                                    SectionHeader("基本设置")
                                     DropdownMenuItem(
                                         text = { Text("编辑名称") },
                                         onClick = { showMenu = false; editingGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2196F3)) }
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                                     )
                                     DropdownMenuItem(
                                         text = {
@@ -181,15 +185,10 @@ fun GroupChatListScreen(
                                             )
                                         }
                                     )
-                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                    MenuDivider()
 
-                                    // 成员管理
-                                    Text(
-                                        "成员管理",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                                    )
+                                    // ── 成员管理 ──
+                                    SectionHeader("成员管理")
                                     DropdownMenuItem(
                                         text = { Text("添加成员") },
                                         onClick = { showMenu = false; addingMemberGroup = group },
@@ -200,15 +199,10 @@ fun GroupChatListScreen(
                                         onClick = { showMenu = false; removingMemberGroup = group },
                                         leadingIcon = { Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFFF9800)) }
                                     )
-                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                    MenuDivider()
 
-                                    // 数据管理
-                                    Text(
-                                        "数据管理",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                                    )
+                                    // ── 数据管理 ──
+                                    SectionHeader("数据管理")
                                     DropdownMenuItem(
                                         text = { Text("清空群聊记录") },
                                         onClick = { showMenu = false; clearingGroup = group },
@@ -220,11 +214,11 @@ fun GroupChatListScreen(
                                             showMenu = false
                                             viewModel.exportGroupMessages(group.id, context)
                                         },
-                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF9C27B0)) }
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                                     )
-                                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                    MenuDivider()
 
-                                    // 危险操作
+                                    // ── 危险操作 ──
                                     DropdownMenuItem(
                                         text = { Text("解散该群", color = MaterialTheme.colorScheme.error) },
                                         onClick = { showMenu = false; deletingGroup = group },
@@ -252,6 +246,7 @@ fun GroupChatListScreen(
         var newName by remember(group.id) { mutableStateOf(group.name) }
         AlertDialog(
             onDismissRequest = { editingGroup = null },
+            shape = AppShapes.dialog,
             title = { Text("编辑群聊名称") },
             text = {
                 OutlinedTextField(
@@ -286,6 +281,7 @@ fun GroupChatListScreen(
     deletingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { deletingGroup = null },
+            shape = AppShapes.dialog,
             title = { Text("删除群聊") },
             text = { Text("确定要删除 \"${group.name}\" 吗？") },
             confirmButton = {
@@ -312,28 +308,93 @@ fun GroupChatListScreen(
         val available = contacts.filter { c -> !group.botIds.contains(c.id) }
         AlertDialog(
             onDismissRequest = { addingMemberGroup = null },
-            title = { Text("添加成员到 ${group.name}") },
+            shape = AppShapes.dialog,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.PersonAdd,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("添加成员", fontWeight = FontWeight.SemiBold)
+                }
+            },
             text = {
                 if (available.isEmpty()) {
-                    Text("没有可添加的智能体")
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "没有可添加的智能体",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 } else {
-                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        Text("选择要添加的智能体：")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        available.forEach { contact ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        coroutineScope.launch {
-                                            viewModel.addBotToGroup(group.id, contact.id)
-                                            addingMemberGroup = null
+                    Column {
+                        Text(
+                            "选择要添加的智能体：",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Column(
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        ) {
+                            available.forEachIndexed { index, contact ->
+                                val botColor = BotColorScheme.forName(contact.name)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(AppShapes.menu)
+                                        .clickable {
+                                            coroutineScope.launch {
+                                                viewModel.addBotToGroup(group.id, contact.id)
+                                                addingMemberGroup = null
+                                            }
                                         }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .then(
+                                            Modifier.padding(vertical = 6.dp)
+                                        ),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AvatarView(
+                                        name = contact.name,
+                                        size = 40.dp,
+                                        avatarColor = botColor.avatarColor
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            contact.name,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            "ID: ${contact.deviceId.takeLast(8)}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        )
                                     }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(contact.name, fontSize = 16.sp)
+                                    Icon(
+                                        Icons.Default.AddCircle,
+                                        contentDescription = "添加",
+                                        tint = Color(0xFF4CAF50),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                if (index < available.size - 1) {
+                                    Divider(
+                                        modifier = Modifier.padding(start = 52.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                        thickness = 0.5.dp
+                                    )
+                                }
                             }
                         }
                     }
@@ -351,29 +412,97 @@ fun GroupChatListScreen(
     removingMemberGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { removingMemberGroup = null },
-            title = { Text("从 ${group.name} 删除成员") },
+            shape = AppShapes.dialog,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.PersonRemove,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("删除成员", fontWeight = FontWeight.SemiBold)
+                }
+            },
             text = {
                 if (group.botIds.isEmpty()) {
-                    Text("群聊中没有成员")
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "群聊中没有成员",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 } else {
-                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        Text("选择要删除的智能体：")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        group.botIds.forEach { botId ->
-                            val contact = contacts.find { it.id == botId }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        coroutineScope.launch {
-                                            viewModel.removeBotFromGroup(group.id, botId)
-                                            removingMemberGroup = null
+                    Column {
+                        Text(
+                            "选择要删除的智能体：",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Column(
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        ) {
+                            group.botIds.forEachIndexed { index, botId ->
+                                val contact = contacts.find { it.id == botId }
+                                val displayName = contact?.name ?: botId
+                                val botColor = BotColorScheme.forName(displayName)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(AppShapes.menu)
+                                        .clickable {
+                                            coroutineScope.launch {
+                                                viewModel.removeBotFromGroup(group.id, botId)
+                                                removingMemberGroup = null
+                                            }
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .then(
+                                            Modifier.padding(vertical = 6.dp)
+                                        ),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AvatarView(
+                                        name = displayName,
+                                        size = 40.dp,
+                                        avatarColor = botColor.avatarColor
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            displayName,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        contact?.let {
+                                            Text(
+                                                "ID: ${it.deviceId.takeLast(8)}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                            )
                                         }
                                     }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(contact?.name ?: botId, fontSize = 16.sp)
+                                    Icon(
+                                        Icons.Default.RemoveCircle,
+                                        contentDescription = "移除",
+                                        tint = Color(0xFFFF5252),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                if (index < group.botIds.size - 1) {
+                                    Divider(
+                                        modifier = Modifier.padding(start = 52.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                        thickness = 0.5.dp
+                                    )
+                                }
                             }
                         }
                     }
@@ -390,6 +519,7 @@ fun GroupChatListScreen(
     clearingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { clearingGroup = null },
+            shape = AppShapes.dialog,
             title = { Text("清空聊天记录") },
             text = { Text("确定要清空 \"${group.name}\" 的所有聊天记录吗？") },
             confirmButton = {

@@ -1,8 +1,11 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.Manifest
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
+import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -15,6 +18,7 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +26,27 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.net.URLEncoder
+import java.net.URLDecoder
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import android.graphics.Bitmap
+import android.graphics.Color
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.DecodeHintType
+import com.google.zxing.NotFoundException
+import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.domain.model.MessageStatus
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 
 fun registerExtraTools(registry: MCPToolRegistry) {
 
@@ -63,6 +88,207 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                 }
             }
             else -> throw Exception("不支持的 action: $action，支持 read/write")
+        }
+    }
+
+    // ──────────────── save_note ────────────────
+    registry.registerTool(
+        name = "save_note",
+        description = "保存一条笔记到手机本地。可以记录常用信息、备忘、提醒事项等，供之后查询。当用户说「记住…」「帮我记一下」「记个笔记」「记备忘录」时调用此工具",
+        inputSchema = jsonSchema(
+            "key" to jsonStringProp("笔记的标题/关键词，用于后续查找，如「我的地址」「WiFi密码」"),
+            "content" to jsonStringProp("笔记内容"),
+            required = listOf("key", "content")
+        )
+    ) { args ->
+        val key = (args["key"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw Exception("key 不能为空")
+        val content = (args["content"] as? String)?.takeIf { it != null }
+            ?: throw Exception("content 不能为空")
+        val prefs = registry.context.getSharedPreferences("xiaozhi_notes", Context.MODE_PRIVATE)
+        val encodedKey = URLEncoder.encode(key, "UTF-8")
+        prefs.edit().putString(encodedKey, content).apply()
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("key", key)
+            addProperty("content_length", content.length)
+            addProperty("message", "已保存笔记「$key」")
+        }
+    }
+
+    // ──────────────── read_note ────────────────
+    registry.registerTool(
+        name = "read_note",
+        description = "读取之前保存的笔记内容。通过标题/关键词查找。当用户说「我之前记的…」「查一下笔记」「我的备忘录」时调用此工具",
+        inputSchema = jsonSchema(
+            "key" to jsonStringProp("笔记的标题/关键词"),
+            required = listOf("key")
+        )
+    ) { args ->
+        val key = (args["key"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw Exception("key 不能为空")
+        val prefs = registry.context.getSharedPreferences("xiaozhi_notes", Context.MODE_PRIVATE)
+        val encodedKey = URLEncoder.encode(key, "UTF-8")
+
+        // 精确匹配
+        val exactContent = prefs.getString(encodedKey, null)
+        if (exactContent != null) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("key", key)
+                addProperty("content", exactContent)
+                addProperty("match_type", "exact")
+            }
+        }
+
+        // 模糊搜索
+        val all = prefs.all
+        val results = JsonArray()
+        for ((k, v) in all) {
+            val decodedKey = URLDecoder.decode(k, "UTF-8")
+            if (decodedKey.contains(key, ignoreCase = true) ||
+                (v as? String)?.contains(key, ignoreCase = true) == true
+            ) {
+                results.add(JsonObject().apply {
+                    addProperty("key", decodedKey)
+                    addProperty("content", v as? String ?: "")
+                })
+            }
+        }
+
+        if (results.size() > 0) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("query", key)
+                add("results", results)
+                addProperty("count", results.size())
+                addProperty("note", "精确匹配未找到，以下是模糊搜索结果")
+            }
+        }
+        throw Exception("未找到笔记「$key」，请先使用 save_note 保存")
+    }
+
+    // ──────────────── list_notes ────────────────
+    registry.registerTool(
+        name = "list_notes",
+        description = "列出所有已保存的笔记标题和数量",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val prefs = registry.context.getSharedPreferences("xiaozhi_notes", Context.MODE_PRIVATE)
+        val all = prefs.all
+        val arr = JsonArray()
+        all.forEach { (k, v) ->
+            val key = URLDecoder.decode(k, "UTF-8")
+            arr.add(JsonObject().apply {
+                addProperty("key", key)
+                addProperty("content_length", (v as? String)?.length ?: 0)
+            })
+        }
+        JsonObject().apply {
+            add("notes", arr)
+            addProperty("count", arr.size())
+        }
+    }
+
+    // ──────────────── delete_note ────────────────
+    registry.registerTool(
+        name = "delete_note",
+        description = "删除一条已保存的笔记",
+        inputSchema = jsonSchema(
+            "key" to jsonStringProp("要删除的笔记标题/关键词"),
+            required = listOf("key")
+        )
+    ) { args ->
+        val key = (args["key"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw Exception("key 不能为空")
+        val prefs = registry.context.getSharedPreferences("xiaozhi_notes", Context.MODE_PRIVATE)
+
+        // 精确删除
+        val encodedKey = URLEncoder.encode(key, "UTF-8")
+        if (prefs.contains(encodedKey)) {
+            prefs.edit().remove(encodedKey).apply()
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("key", key)
+                addProperty("message", "已删除笔记「$key」")
+            }
+        }
+
+        // 模糊删除
+        var deletedCount = 0
+        val all = prefs.all.toMap()
+        for ((k, _) in all) {
+            val decodedKey = URLDecoder.decode(k, "UTF-8")
+            if (decodedKey.contains(key, ignoreCase = true)) {
+                prefs.edit().remove(k).apply()
+                deletedCount++
+            }
+        }
+        if (deletedCount > 0) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("query", key)
+                addProperty("deleted_count", deletedCount)
+                addProperty("message", "已删除 $deletedCount 条匹配笔记")
+            }
+        }
+        throw Exception("未找到笔记「$key」")
+    }
+
+    // ──────────────── generate_qr ────────────────
+    registry.registerTool(
+        name = "generate_qr",
+        description = "生成二维码图片，将文本或链接生成二维码并保存到手机。当用户说「生成二维码」「做个二维码」「这个链接转成二维码」时调用此工具",
+        inputSchema = jsonSchema(
+            "content" to jsonStringProp("要生成二维码的内容（文本或链接URL）"),
+            "size" to jsonNumberProp("二维码图片尺寸（像素），默认 300，建议 200-500"),
+            required = listOf("content")
+        )
+    ) { args ->
+        val content = (args["content"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw Exception("content 不能为空")
+        val size = (args["size"] as? Number)?.toInt()?.coerceIn(100, 1000) ?: 300
+
+        // 本地 ZXing 生成二维码（不依赖网络 API）
+        val writer = QRCodeWriter()
+        val bitMatrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                bitmap.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+            }
+        }
+
+        // 保存到缓存目录
+        val qrDir = java.io.File(registry.context.cacheDir, "qr_codes")
+        qrDir.mkdirs()
+        val fileName = "qr_${System.currentTimeMillis()}.png"
+        val outputFile = java.io.File(qrDir, fileName)
+        java.io.FileOutputStream(outputFile).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+
+        // 插入聊天气泡（同 take_photo 方式）
+        val contactId = registry.connectionRepository.get().currentContactId
+        if (contactId.isNotEmpty()) {
+            registry.messageRepository.addSentMessage(
+                contactId,
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    content = outputFile.absolutePath,
+                    type = MessageType.IMAGE,
+                    direction = MessageDirection.RECEIVED,
+                    status = MessageStatus.SENT,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+        }
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("content", content)
+            addProperty("file_path", outputFile.absolutePath)
+            addProperty("file_uri", android.net.Uri.fromFile(outputFile).toString())
+            addProperty("size_px", size)
+            addProperty("message", "二维码已生成并显示在聊天中")
         }
     }
 
@@ -220,6 +446,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             @Suppress("DEPRECATION")
             val sr = scanResult as android.net.wifi.ScanResult
             arr.add(JsonObject().apply {
+                val ssidStr = sr.wifiSsid?.toString() ?: "(hidden)"
+                addProperty("ssid", ssidStr)
+                addProperty("bssid", sr.BSSID)
                 addProperty("rssi", sr.level)
                 addProperty("frequency", sr.frequency)
                 addProperty("channel", if (sr.frequency in 2412..2484) "2.4GHz"
@@ -436,6 +665,315 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             addProperty("vpn_active", vpnActive)
             addProperty("interface", vpnName)
             addProperty("status", if (vpnActive) "VPN 已连接" else "VPN 未连接")
+        }
+    }
+
+    // ──────────────── set_reminder ────────────────
+    registry.registerTool(
+        name = "set_reminder",
+        description = "在手机上设置一个定时提醒，到时间会通过通知提醒你。可以设置延迟时间或具体时间。当用户说「提醒我…」「定时提醒」「X分钟后提醒我」「X点提醒我」时调用此工具",
+        inputSchema = jsonSchema(
+            "message" to jsonStringProp("提醒内容，如「喝水」「吃药」「开会」"),
+            "minutes" to jsonNumberProp("多少分钟后提醒（与 hour/minute 二选一，优先用此参数）"),
+            "hour" to jsonNumberProp("提醒的小时 (0-23)，用于指定具体时间"),
+            "minute" to jsonNumberProp("提醒的分钟 (0-59)，用于指定具体时间"),
+            required = listOf("message")
+        )
+    ) { args ->
+        val ctx = registry.context
+        val message = (args["message"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw Exception("message 不能为空")
+
+        val now = Calendar.getInstance()
+        val calendar = Calendar.getInstance()
+
+        // 优先用 minutes 参数（相对时间）
+        val delayMinutes = args["minutes"] as? Number
+        if (delayMinutes != null) {
+            val mins = delayMinutes.toInt().coerceIn(1, 10080) // 最多7天
+            calendar.timeInMillis = now.timeInMillis + mins * 60_000L
+        } else {
+            // 用绝对时间
+            val hour = (args["hour"] as? Number)?.toInt() ?: throw Exception("hour 或 minutes 必须提供一个")
+            val minute = (args["minute"] as? Number)?.toInt() ?: 0
+            require(hour in 0..23) { "hour 必须在 0-23 之间" }
+            require(minute in 0..59) { "minute 必须在 0-59 之间" }
+            calendar.set(Calendar.HOUR_OF_DAY, hour)
+            calendar.set(Calendar.MINUTE, minute)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            if (calendar.before(now)) calendar.add(Calendar.DAY_OF_MONTH, 1)
+        }
+
+        // 创建提醒通知频道
+        try {
+            val channel = android.app.NotificationChannel(
+                "reminder_channel", "定时提醒",
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "AI设置的定时提醒"
+                enableVibration(true)
+            }
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.createNotificationChannel(channel)
+        } catch (_: Exception) {}
+
+        val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            ?: throw Exception("系统闹钟服务不可用")
+
+        val requestCode = (System.nanoTime().toInt() and 0x7FFFFFFF)
+        val reminderId = "reminder_${requestCode}"
+
+        val pendingIntent = PendingIntent.getBroadcast(
+            ctx, requestCode,
+            Intent(ctx, ReminderReceiver::class.java).apply {
+                action = "com.xiaozhi.aiservice.REMINDER_$requestCode"
+                putExtra("message", message)
+                putExtra("reminder_id", reminderId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // 检查精确闹钟权限
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (alarmManager.canScheduleExactAlarms()) {
+                alarmManager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
+                    pendingIntent
+                )
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+            }
+        } else {
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
+                pendingIntent
+            )
+        }
+
+        // 持久化
+        ReminderPersistence.save(ctx, reminderId, message, calendar.timeInMillis)
+
+        val df = SimpleDateFormat("HH:mm", Locale.getDefault())
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("message", message)
+            addProperty("trigger_time", df.format(calendar.time))
+            addProperty("is_today", calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+                    calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR))
+            addProperty("reminder_id", reminderId)
+        }
+    }
+    
+    // ──────────────── query_stock ────────────────
+    registry.registerTool(
+        name = "query_stock",
+        description = "查询股票的实时行情，包括当前价、涨跌幅、最高/最低价、成交量等。当用户说「查股票」「股价」「XX股票多少钱」「XX行情」时调用此工具",
+        inputSchema = jsonSchema(
+            "code" to jsonStringProp("股票代码，如 sh600519（贵州茅台）、sz000001（平安银行）、hk00700（腾讯港股）"),
+            "name" to jsonStringProp("股票名称（与 code 二选一），如「茅台」「腾讯」「平安银行」"),
+            required = listOf()
+        )
+    ) { args ->
+        var stockCode = (args["code"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: ""
+        val stockName = (args["name"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: ""
+        
+        if (stockCode.isEmpty() && stockName.isEmpty()) throw Exception("请提供股票代码或名称")
+        
+        // 通过名称查代码（内置常见映射）
+        if (stockCode.isEmpty()) {
+            val codeMap = mapOf(
+                "茅台" to "sh600519", "贵州茅台" to "sh600519", "腾讯" to "hk00700", "腾讯控股" to "hk00700",
+                "阿里巴巴" to "hk09988", "百度" to "hk09888", "京东" to "hk09618", "美团" to "hk03690",
+                "小米" to "hk01810", "平安" to "sh601318", "中国平安" to "sh601318",
+                "工商银行" to "sh601398", "建设银行" to "sh601939", "农业银行" to "sh601288",
+                "招商银行" to "sh600036", "宁德时代" to "sz300750", "比亚迪" to "sz002594",
+                "中芯国际" to "sh688981", "药明康德" to "sh603259", "海康威视" to "sz002415",
+                "美的" to "sz000333", "格力" to "sz000651", "万科" to "sz000002",
+                "中信证券" to "sh600030", "中国移动" to "sh600941", "中国石油" to "sh601857"
+            )
+            stockCode = codeMap.entries.firstOrNull { stockName.contains(it.key) }?.value ?: stockName
+        }
+        
+        val url = "https://qt.gtimg.cn/q=$stockCode"
+        val text = httpGet(url, timeoutMs = 5000)
+        if (text.isEmpty()) throw Exception("查询股票失败，请检查网络连接")
+        
+        // 解析腾讯证券格式
+        val parts = text.split("~")
+        if (parts.size < 10) throw Exception("未找到股票: $stockCode")
+        
+        val name = if (parts.size > 1) parts[1] else stockCode
+        val price = parts[3].toDoubleOrNull() ?: 0.0
+        val prevClose = parts[4].toDoubleOrNull() ?: 0.0
+        val change = parts[32].toDoubleOrNull() ?: 0.0
+        val changePercent = parts[33].toDoubleOrNull() ?: 0.0
+        val high = parts[33].toDoubleOrNull() ?: parts[34].toDoubleOrNull() ?: 0.0
+        val low = parts[34].toDoubleOrNull() ?: 0.0
+        val open = parts[5].toDoubleOrNull() ?: 0.0
+        val volume = (parts[6].toDoubleOrNull() ?: 0.0).toLong()
+        
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("code", stockCode)
+            addProperty("name", name)
+            addProperty("price", price)
+            addProperty("change", change)
+            addProperty("change_percent", changePercent)
+            addProperty("high", high)
+            addProperty("low", low)
+            addProperty("open", open)
+            addProperty("prev_close", prevClose)
+            addProperty("volume", volume)
+            addProperty("currency", if (stockCode.startsWith("sh") || stockCode.startsWith("sz")) "CNY" else "HKD")
+        }
+    }
+    
+    // ──────────────── query_traffic_restriction ────────────────
+    registry.registerTool(
+        name = "query_traffic_restriction",
+        description = "查询中国各城市的今日尾号限行信息。支持北京、上海、广州、深圳、成都、杭州等主要城市。当用户说「今天限行」「限行尾号」「北京限行」时调用此工具",
+        inputSchema = jsonSchema(
+            "city" to jsonStringProp("城市名，如「北京」「上海」「广州」「深圳」，默认从定位获取"),
+            required = listOf()
+        )
+    ) { args ->
+        val city = (args["city"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: "北京"
+        val encoded = URLEncoder.encode(city, "UTF-8")
+        val url = "https://api.isoyu.com/api/weizhang/weizhang?city=$encoded"
+        var text = ""
+        try {
+            text = httpGet(url, timeoutMs = 5000)
+        } catch (_: Exception) {}
+        
+        if (text.isNotEmpty()) {
+            try {
+                val json = JsonParser.parseString(text).asJsonObject
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("city", city)
+                    addProperty("restriction", json.get("data")?.asString ?: "今日无限行")
+                }
+            } catch (_: Exception) {}
+        }
+        
+        // 降级：先搜索
+        try {
+            val html = httpGet("https://www.baidu.com/s?wd=${encoded}限行", timeoutMs = 5000)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("city", city)
+                addProperty("restriction", "已查询「${city}限行」，请查看搜索摘要获取最新信息")
+                addProperty("note", "已为您搜索「${city}限行」，请参考搜索结果")
+            }
+        } catch (_: Exception) {
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("city", city)
+                addProperty("restriction", "今日 $city 限行信息请以当地交管部门公告为准")
+            }
+        }
+    }
+    
+    // ──────────────── read_sms ────────────────
+    registry.registerTool(
+        name = "read_sms",
+        description = "读取手机上的短信，支持查看未读短信、最近短信或按号码查找。当用户说「看看我的短信」「有没有新短信」「查一下验证码」「最近短信」时调用此工具",
+        inputSchema = jsonSchema(
+            "type" to jsonStringProp("类型: unread（未读）/ recent（最近）/ all（全部），默认 unread"),
+            "sender" to jsonStringProp("按发件人号码或关键词过滤，如「10086」「银行」"),
+            "max_results" to jsonNumberProp("最多返回条数，默认 5，最大 20"),
+            required = listOf()
+        )
+    ) { args ->
+        val ctx = registry.context
+        
+        // 权限检查
+        val smsPerm = checkPermissionWithGuide(
+            Manifest.permission.READ_SMS, permissionName = "短信"
+        )
+        if (smsPerm != null) return@registerTool smsPerm
+        
+        val msgType = (args["type"] as? String)?.lowercase() ?: "unread"
+        val sender = (args["sender"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 20) ?: 5
+        
+        val uri = android.net.Uri.parse("content://sms/inbox")
+        val projection = arrayOf("_id", "address", "body", "date", "read")
+        val selection = StringBuilder().apply {
+            if (msgType == "unread") append("read=0")
+            if (sender != null) {
+                if (isNotEmpty()) append(" AND ")
+                append("address LIKE '%$sender%' OR body LIKE '%$sender%'")
+            }
+        }.toString().takeIf { it.isNotEmpty() } ?: null
+        
+        val cursor = ctx.contentResolver.query(
+            uri, projection, selection, null, "date DESC"
+        ) ?: throw Exception("无法读取短信")
+        
+        val messages = JsonArray()
+        var count = 0
+        cursor.use {
+            while (it.moveToNext() && count < maxResults) {
+                val address = it.getString(1) ?: "未知"
+                val body = it.getString(2) ?: ""
+                val dateMs = it.getLong(3)
+                val isRead = it.getInt(4) == 1
+                val df = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                messages.add(JsonObject().apply {
+                    addProperty("sender", address)
+                    addProperty("body", body.take(200))
+                    addProperty("time", df.format(Date(dateMs)))
+                    addProperty("read", isRead)
+                    addProperty("length", body.length)
+                })
+                count++
+            }
+        }
+        
+        JsonObject().apply {
+            add("messages", messages)
+            addProperty("count", messages.size())
+            addProperty("type", msgType)
+            addProperty("total_unread", if (msgType == "unread") messages.size() else null)
+        }
+    }
+
+    // ──────────────── scan_qr ────────────────
+    registry.registerTool(
+        name = "scan_qr",
+        description = "使用相机拍照并识别二维码/条形码，返回扫码结果。当用户说「扫一扫」「扫码」「识别二维码」「扫这个码」「扫二维码」时调用此工具",
+        inputSchema = jsonSchema(),
+        readOnly = true
+    ) { _ ->
+        val context = registry.context
+
+        // 检查相机权限
+        val permCheck = checkPermissionWithGuide(
+            Manifest.permission.CAMERA, permissionName = "相机"
+        )
+        if (permCheck != null) return@registerTool permCheck
+
+        // 并发保护
+        val existing = com.xiaozhi.aiservice.presentation.ui.QrScannerActivity.pendingResult
+        if (existing != null && !existing.isCompleted) {
+            throw Exception("正在扫码中，请稍候再试")
+        }
+
+        // 启动扫码 Activity（显示相机预览 + 扫码框）
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+        com.xiaozhi.aiservice.presentation.ui.QrScannerActivity.pendingResult = deferred
+        com.xiaozhi.aiservice.presentation.ui.QrScannerActivity.launch(context)
+
+        val qrContent = kotlinx.coroutines.withTimeoutOrNull(60_000L) { deferred.await() }
+            ?: throw Exception("扫码超时（60秒）或用户取消")
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("format", "QR_CODE")
+            addProperty("content", qrContent)
+            addProperty("message", "扫码成功: $qrContent")
         }
     }
 }

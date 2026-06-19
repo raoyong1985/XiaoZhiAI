@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
  * 每个bot一个颜色族：
  * - bubbleColor = 淡色（气泡背景）
  * - avatarColor = 饱和色（头像背景）
+ * - borderColor = 深色（气泡边框）
  *
  * 共8个色系，单聊固定用第一个色系。
  */
@@ -31,47 +32,48 @@ object BotColorScheme {
     data class BotColor(
         val bubbleColor: Color,   // 气泡背景（淡）
         val avatarColor: Color,   // 头像背景（饱和）
-        val nameColor: Color      // 名字文字色（适中）
+        val nameColor: Color,      // 名字文字色（适中）
+        val borderColor: Color    // 气泡边框色（比 bubbleColor 深）
     )
 
-    // 浅色模式（16色淡雅系）
+    // 浅色模式（16色淡雅系）— 边框只比气泡深一点点
     private val lightColors = listOf(
-        BotColor(Color(0xFFE8F5E9), Color(0xFF66BB6A), Color(0xFF388E3C)),  // 茶绿
-        BotColor(Color(0xFFE3F2FD), Color(0xFF42A5F5), Color(0xFF1976D2)),  // 天蓝
-        BotColor(Color(0xFFFFF3E0), Color(0xFFFFB74D), Color(0xFFF57C00)),  // 暖橙
-        BotColor(Color(0xFFF3E5F5), Color(0xFFAB47BC), Color(0xFF7B1FA2)),  // 薰衣草
-        BotColor(Color(0xFFE0F7FA), Color(0xFF26C6DA), Color(0xFF00838F)),  // 青瓷
-        BotColor(Color(0xFFFFEBEE), Color(0xFFEC407A), Color(0xFFC62828)),  // 绯红
-        BotColor(Color(0xFFE8EAF6), Color(0xFF5C6BC0), Color(0xFF283593)),  // 靛蓝
-        BotColor(Color(0xFFFBE9E7), Color(0xFFFF7043), Color(0xFFD84315)),  // 陶土
-        BotColor(Color(0xFFE0F2F1), Color(0xFF26A69A), Color(0xFF00695C)),  // 薄荷
-        BotColor(Color(0xFFFFF8E1), Color(0xFFFFCA28), Color(0xFFF57F17)),  // 柠檬
-        BotColor(Color(0xFFEDE7F6), Color(0xFF7E57C2), Color(0xFF4527A0)),  // 淡紫灰
-        BotColor(Color(0xFFE0F2F1), Color(0xFF00897B), Color(0xFF004D40)),  // 青碧
-        BotColor(Color(0xFFECEFF1), Color(0xFF78909C), Color(0xFF37474F)),  // 雾蓝
-        BotColor(Color(0xFFFCE4EC), Color(0xFFF48FB1), Color(0xFFC2185B)),  // 樱粉
-        BotColor(Color(0xFFF1F8E9), Color(0xFF8BC34A), Color(0xFF558B2F)),  // 草绿
-        BotColor(Color(0xFFE1F5FE), Color(0xFF4FC3F7), Color(0xFF0277BD)),  // 湖蓝
+        BotColor(Color(0xFFE8F5E9), Color(0xFF66BB6A), Color(0xFF388E3C), Color(0xFFD7EDD8)),
+        BotColor(Color(0xFFE3F2FD), Color(0xFF42A5F5), Color(0xFF1976D2), Color(0xFFD3E9FC)),
+        BotColor(Color(0xFFFFF3E0), Color(0xFFFFB74D), Color(0xFFF57C00), Color(0xFFF5E6D0)),
+        BotColor(Color(0xFFF3E5F5), Color(0xFFAB47BC), Color(0xFF7B1FA2), Color(0xFFEFE2F1)),
+        BotColor(Color(0xFFE0F7FA), Color(0xFF26C6DA), Color(0xFF00838F), Color(0xFFDCF4F7)),
+        BotColor(Color(0xFFFFEBEE), Color(0xFFEC407A), Color(0xFFC62828), Color(0xFFFBE8EB)),
+        BotColor(Color(0xFFE8EAF6), Color(0xFF5C6BC0), Color(0xFF283593), Color(0xFFE4E7F2)),
+        BotColor(Color(0xFFFBE9E7), Color(0xFFFF7043), Color(0xFFD84315), Color(0xFFF7E6E4)),
+        BotColor(Color(0xFFE0F2F1), Color(0xFF26A69A), Color(0xFF00695C), Color(0xFFDCEFEE)),
+        BotColor(Color(0xFFFFF8E1), Color(0xFFFFCA28), Color(0xFFF57F17), Color(0xFFFBF5DE)),
+        BotColor(Color(0xFFEDE7F6), Color(0xFF7E57C2), Color(0xFF4527A0), Color(0xFFE9E4F2)),
+        BotColor(Color(0xFFE0F2F1), Color(0xFF00897B), Color(0xFF004D40), Color(0xFFDCEFEE)),
+        BotColor(Color(0xFFECEFF1), Color(0xFF78909C), Color(0xFF37474F), Color(0xFFE8ECEE)),
+        BotColor(Color(0xFFFCE4EC), Color(0xFFF48FB1), Color(0xFFC2185B), Color(0xFFF8E1E9)),
+        BotColor(Color(0xFFF1F8E9), Color(0xFF8BC34A), Color(0xFF558B2F), Color(0xFFEDF5E6)),
+        BotColor(Color(0xFFE1F5FE), Color(0xFF4FC3F7), Color(0xFF0277BD), Color(0xFFDDF2FB)),
     )
 
-    // 深色模式（高对比度：深色纯色气泡 + 亮白文字）
+    // 深色模式 — 边框只比气泡稍亮，不突兀
     private val darkColors = listOf(
-        BotColor(Color(0xFF2E7D32), Color(0xFF66BB6A), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF1565C0), Color(0xFF42A5F5), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFFE65100), Color(0xFFFFB74D), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF6A1B9A), Color(0xFFAB47BC), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF00695C), Color(0xFF26C6DA), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFFC62828), Color(0xFFEC407A), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF283593), Color(0xFF5C6BC0), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFFBF360C), Color(0xFFFF7043), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF00695C), Color(0xFF26A69A), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFFF57F17), Color(0xFFFFCA28), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF4527A0), Color(0xFF7E57C2), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF004D40), Color(0xFF00897B), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF37474F), Color(0xFF78909C), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFFAD1457), Color(0xFFF48FB1), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF558B2F), Color(0xFF8BC34A), Color(0xFFFFFFFF)),
-        BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF)),
+        BotColor(Color(0xFF2E7D32), Color(0xFF66BB6A), Color(0xFFFFFFFF), Color(0xFF357D38)),
+        BotColor(Color(0xFF1565C0), Color(0xFF42A5F5), Color(0xFFFFFFFF), Color(0xFF1D65BC)),
+        BotColor(Color(0xFFE65100), Color(0xFFFFB74D), Color(0xFFFFFFFF), Color(0xFFE65408)),
+        BotColor(Color(0xFF6A1B9A), Color(0xFFAB47BC), Color(0xFFFFFFFF), Color(0xFF6E1E9A)),
+        BotColor(Color(0xFF00695C), Color(0xFF26C6DA), Color(0xFFFFFFFF), Color(0xFF086A5D)),
+        BotColor(Color(0xFFC62828), Color(0xFFEC407A), Color(0xFFFFFFFF), Color(0xFFC82C2C)),
+        BotColor(Color(0xFF283593), Color(0xFF5C6BC0), Color(0xFFFFFFFF), Color(0xFF2C3893)),
+        BotColor(Color(0xFFBF360C), Color(0xFFFF7043), Color(0xFFFFFFFF), Color(0xFFC03912)),
+        BotColor(Color(0xFF00695C), Color(0xFF26A69A), Color(0xFFFFFFFF), Color(0xFF086A5D)),
+        BotColor(Color(0xFFF57F17), Color(0xFFFFCA28), Color(0xFFFFFFFF), Color(0xFFF0821D)),
+        BotColor(Color(0xFF4527A0), Color(0xFF7E57C2), Color(0xFFFFFFFF), Color(0xFF482BA0)),
+        BotColor(Color(0xFF004D40), Color(0xFF00897B), Color(0xFFFFFFFF), Color(0xFF064E42)),
+        BotColor(Color(0xFF37474F), Color(0xFF78909C), Color(0xFFFFFFFF), Color(0xFF3A4A52)),
+        BotColor(Color(0xFFAD1457), Color(0xFFF48FB1), Color(0xFFFFFFFF), Color(0xFFB0185A)),
+        BotColor(Color(0xFF558B2F), Color(0xFF8BC34A), Color(0xFFFFFFFF), Color(0xFF588C33)),
+        BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF), Color(0xFF0879BD)),
     )
 
     /** 用户自己的主题色 — 仅头像色 */

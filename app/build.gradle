@@ -13,8 +13,8 @@ android {
         applicationId "com.xiaozhi.aiservice"
         minSdk 26
         targetSdk 34
-        versionCode 87
-        versionName "1.5.47"
+        versionCode 90
+        versionName "1.5.50"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -140,6 +140,9 @@ dependencies {
     // Debug
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    // QR 码生成
+    implementation 'com.google.zxing:core:3.5.3'
 
     // 唤醒词引擎：使用 OpenWakeWord (ONNX)，已由 MfccExtractor + ONNX Runtime 替代
     // 移除 Picovoice Porcupine（需要企业授权 AccessKey）

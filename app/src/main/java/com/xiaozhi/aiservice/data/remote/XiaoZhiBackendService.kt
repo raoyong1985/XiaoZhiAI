@@ -9,6 +9,7 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.utils.WebViewSpeaker
 import com.xiaozhi.aiservice.domain.model.AiStateStr
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.audio.AudioService
@@ -205,6 +206,10 @@ class XiaoZhiBackendService(
                         val activation = json.getAsJsonObject("activation")
                         val code = activation?.get("code")?.asString ?: ""
                         Logger.i(TAG, "设备需要激活，验证码: $code")
+                        // 语音播报
+                        if (code.isNotEmpty()) {
+                            WebViewSpeaker.speak("设备需要激活，验证码 $code")
+                        }
                         // 显示验证码到聊天界面
                         val message = ChatMessage(
                             id = java.util.UUID.randomUUID().toString(),
@@ -582,6 +587,9 @@ class XiaoZhiBackendService(
         val code = json.get("code")?.asString
         Logger.i(TAG, "收到激活码: $code")
         _textMessage.value = "激活码: $code"
+        if (!code.isNullOrEmpty()) {
+            WebViewSpeaker.speak("设备需要激活，验证码 $code")
+        }
     }
 
     private fun handleStt(json: JsonObject) {
@@ -635,19 +643,13 @@ class XiaoZhiBackendService(
                     delay(100)
                     val result = LocalCommandRouter.matchAndExecute(textContent)
                     if (result != null) {
-                        // 让服务器TTS播报反馈——把反馈文字发给服务器
+                        // ⚠️ 不要再把反馈文字当用户语音发给服务器
+                        // 以前这里用 type="listen", state="detect" 发送工具结果给服务器TTS，
+                        // 但服务器LLM会把它当成用户说话去响应，导致多一句乱码/回声。
+                        // 工具结果直接在本地聊天显示（下面已实现），用户看得见就够了。
                         val feedbackText = if (result.success) result.responseText
-                            // 失败时把 rawResult 转成可读描述，避免 `{"key":"value"}` 念给用户听
                             else "执行${result.toolName}失败了: ${formatToolResult(result.rawResult) ?: "未知错误"}"
-                        val detectMsg = JsonObject().apply {
-                            addProperty("session_id", sessionId)
-                            addProperty("type", "listen")
-                            addProperty("state", "detect")
-                            addProperty("text", feedbackText)
-                            addProperty("from_local", true)
-                        }
-                        Logger.i(TAG, "发送反馈文字到服务器TTS: $feedbackText")
-                        sendTextMessage(detectMsg.toString())
+                        Logger.i(TAG, "本地命令完成(不转发服务器): $feedbackText")
                         // 显示到聊天
                         if (result.success && result.rawResult is JsonObject) {
                             val toolResult = result.rawResult as JsonObject

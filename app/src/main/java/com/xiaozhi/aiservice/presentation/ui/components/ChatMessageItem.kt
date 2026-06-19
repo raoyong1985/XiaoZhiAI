@@ -1,7 +1,9 @@
 package com.xiaozhi.aiservice.presentation.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -15,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -30,6 +33,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.tween
+import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -64,10 +68,10 @@ fun ChatMessageItem(
     }
 
     val bubbleColor = when {
-        isFromMe -> if (isDark) MaterialTheme.colorScheme.primary.copy(alpha = 1.0f)
-                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+        isFromMe -> if (isDark) Color(0xFF1E3A6F) else Color(0xFFB8D4FF)
         else -> effectiveBotColor.bubbleColor
     }
+
     val displayName = remember(message.botName, contactName) {
         message.botName.ifEmpty { contactName.ifEmpty { "" } }
     }
@@ -106,13 +110,13 @@ fun ChatMessageItem(
         Box {
             Box(
                 modifier = Modifier
-                    .widthIn(max = 240.dp)
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (isFromMe) 16.dp else 4.dp,
-                            bottomEnd = if (isFromMe) 4.dp else 16.dp
+                    .widthIn(max = 280.dp)
+                    .shadow(1.dp, AppShapes.bubble, ambientColor = Color.Black.copy(alpha = 0.06f), spotColor = Color.Black.copy(alpha = 0.1f))
+                    .clip(RoundedCornerShape(
+                            topStart = 12.dp,
+                            topEnd = 12.dp,
+                            bottomStart = if (isFromMe) 12.dp else 3.dp,
+                            bottomEnd = if (isFromMe) 3.dp else 12.dp
                         )
                     )
                     .background(bubbleColor)
@@ -120,7 +124,7 @@ fun ChatMessageItem(
                         onClick = {},
                         onLongClick = { showContextMenu = true }
                     )
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
             Column {
                 // bot 回复显示名称
@@ -145,7 +149,6 @@ fun ChatMessageItem(
                             modifier = Modifier
                                 .widthIn(max = 220.dp)
                                 .heightIn(max = 360.dp)
-                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { showImageViewer = true },
                             contentScale = ContentScale.Fit
                         )
@@ -159,28 +162,32 @@ fun ChatMessageItem(
                         }
                         Text(
                             text = displayText,
-                            color = if (isFromMe) MaterialTheme.colorScheme.onPrimary
-                                    else if (isDark) MaterialTheme.colorScheme.onSurface
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isFromMe) if (isDark) Color.White else Color(0xFF333333).copy(alpha = 0.85f)
+                                    else if (isDark) Color.White.copy(alpha = 0.92f)
+                                    else Color(0xFF333333).copy(alpha = 0.85f),
                             fontSize = 15.sp
                         )
                     }
                     else -> {
                         Text(
                             text = message.content,
-                            color = if (isFromMe) MaterialTheme.colorScheme.onPrimary
-                                    else if (isDark) MaterialTheme.colorScheme.onSurface
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isFromMe) if (isDark) Color.White else Color(0xFF333333).copy(alpha = 0.85f)
+                                    else if (isDark) Color.White.copy(alpha = 0.92f)
+                                    else Color(0xFF333333).copy(alpha = 0.85f),
                             fontSize = 15.sp
                         )
                     }
                 }
                 if (showTimestamp) {
                     Spacer(modifier = Modifier.height(2.dp))
+                    val timestampColor = when {
+                        isFromMe -> if (isDark) Color.White.copy(alpha = 0.7f) else Color(0xFF666666).copy(alpha = 0.65f)
+                        isDark -> Color.White.copy(alpha = 0.7f)
+                        else -> Color(0xFF666666).copy(alpha = 0.65f)
+                    }
                     Text(
                         text = timeText,
-                        color = if (isDark) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        color = timestampColor,
                         fontSize = 10.sp,
                         modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
                     )
@@ -224,7 +231,7 @@ fun ChatMessageItem(
             AvatarView(
                 name = "我",
                 size = 36.dp,
-                avatarColor = MaterialTheme.colorScheme.primary
+                avatarColor = if (isDark) Color(0xFF3A6FDF) else Color(0xFF5B8DEF)
             )
         }
     }  // Row

@@ -18,6 +18,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.di.GlobalServices
 import java.net.URLEncoder
 import java.util.Calendar
@@ -779,40 +780,60 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "take_screenshot",
-        description = "对手机当前屏幕进行截图（需要 Android 11+ 或辅助功能权限）",
+        description = "对手机当前屏幕进行截图。当用户说「截屏」「截图」「截个图」「屏幕截图」时，调用此工具。截图后会在聊天框中显示图片",
         inputSchema = jsonSchema()
     ) { _ ->
-        val ctx = registry.context
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            try {
-                // Use MediaProjection for screenshot on Android 11+
-                val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? android.media.projection.MediaProjectionManager
-                if (mgr != null) {
-                    JsonObject().apply {
-                        addProperty("success", false)
-                        addProperty("message", "截图需要系统授权，请使用系统截图快捷键（音量减+电源键）")
-                        addProperty("guide", "Android 11+ 截图可通过同时按住音量减键和电源键实现。如需编程截图，需在应用中集成 MediaProjection API 并请求用户授权屏幕录制权限。")
-                    }
-                } else {
-                    JsonObject().apply {
-                        addProperty("success", false)
-                        addProperty("message", "此设备不支持截图 API")
-                        addProperty("guide", "请使用系统截图快捷键（音量减+电源键）进行截图")
-                    }
-                }
-            } catch (e: Exception) {
-                JsonObject().apply {
-                    addProperty("success", false)
-                    addProperty("message", "截图失败: ${e.message}")
-                    addProperty("guide", "请使用系统截图快捷键（音量减+电源键）")
-                }
-            }
-        } else {
-            JsonObject().apply {
+        val context = registry.context
+
+        if (android.os.Build.VERSION.SDK_INT < 31) {
+            return@registerTool JsonObject().apply {
                 addProperty("success", false)
-                addProperty("message", "此设备不支持自动截图")
-                addProperty("guide", "请使用系统截图快捷键（音量减+电源键）手动截图")
+                addProperty("message", "此设备不支持自动截图，请使用系统截图快捷键（音量减+电源键）")
             }
+        }
+
+        // 并发保护：如果上一次截图还没回来，拒绝本次请求
+        val existing = com.xiaozhi.aiservice.presentation.ui.ScreenshotCaptureActivity.pendingResult
+        if (existing != null && !existing.isCompleted) {
+            throw Exception("正在截图中，请稍候再试")
+        }
+
+        // 启动截图 Activity 并等待结果
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+        com.xiaozhi.aiservice.presentation.ui.ScreenshotCaptureActivity.pendingResult = deferred
+        com.xiaozhi.aiservice.presentation.ui.ScreenshotCaptureActivity.launch(context)
+
+        val filePath = kotlinx.coroutines.withTimeoutOrNull(15_000L) { deferred.await() }
+            ?: throw Exception("截图超时（15秒），请重试")
+
+        // 检查文件是否存在
+        val file = java.io.File(filePath)
+        if (!file.exists()) {
+            throw Exception("截图文件保存失败")
+        }
+
+        // 将截图插入聊天消息，显示为图片气泡
+        val contactId = registry.connectionRepository.get().currentContactId
+        if (contactId.isNotEmpty()) {
+            registry.messageRepository.addSentMessage(
+                contactId,
+                com.xiaozhi.aiservice.domain.model.ChatMessage(
+                    id = java.util.UUID.randomUUID().toString(),
+                    content = file.absolutePath,
+                    type = com.xiaozhi.aiservice.domain.model.MessageType.IMAGE,
+                    direction = com.xiaozhi.aiservice.domain.model.MessageDirection.RECEIVED,
+                    status = com.xiaozhi.aiservice.domain.model.MessageStatus.SENT,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            Logger.i("MCPToolRegistry", "截图已添加到聊天: ${file.absolutePath}")
+        }
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("message", "截屏已保存到相册")
+            addProperty("file_path", file.absolutePath)
+            addProperty("file_size", file.length())
         }
     }
 
