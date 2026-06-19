@@ -278,6 +278,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             addProperty("message", message)
             addProperty("time", timeStr)
             addProperty("alarm_time", alarmTimeText)
+            addProperty("alarm_id", alarmId)
         }
     }
 

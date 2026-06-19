@@ -825,6 +825,153 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             addProperty("reminder_id", reminderId)
         }
     }
+
+    // ──────────────── list_reminders ────────────────
+    registry.registerTool(
+        name = "list_reminders",
+        description = "列出所有尚未触发的定时提醒。当用户说「有哪些提醒」「查看提醒」「我的提醒」时调用此工具",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = registry.context
+        val records = ReminderPersistence.getAll(ctx)
+        val df = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+        val arr = JsonArray()
+        records.forEach { r ->
+            arr.add(JsonObject().apply {
+                addProperty("id", r.id)
+                addProperty("message", r.message)
+                addProperty("trigger_time", df.format(Date(r.triggerAt)))
+            })
+        }
+        JsonObject().apply {
+            add("reminders", arr)
+            addProperty("count", arr.size())
+        }
+    }
+
+    // ──────────────── cancel_reminder ────────────────
+    registry.registerTool(
+        name = "cancel_reminder",
+        description = "取消一个尚未触发的定时提醒。通过提醒ID或内容查找取消。当用户说「取消提醒」「删掉提醒」「取消XX提醒」时调用此工具",
+        inputSchema = jsonSchema(
+            "reminder_id" to jsonStringProp("要取消的提醒ID（从 list_reminders 获取）"),
+            "message" to jsonStringProp("要取消的提醒内容关键词，匹配后取消第一个匹配项"),
+            required = listOf()
+        )
+    ) { args ->
+        val ctx = registry.context
+        val reminderId = (args["reminder_id"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+        val msg = (args["message"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+
+        if (reminderId != null) {
+            val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            ReminderPersistence.remove(ctx, reminderId)
+            // 取消已注册的 PendingIntent
+            val requestCode = reminderId.removePrefix("reminder_").toIntOrNull()
+            if (requestCode != null && alarmManager != null) {
+                val pi = PendingIntent.getBroadcast(
+                    ctx, requestCode,
+                    Intent(ctx, ReminderReceiver::class.java).apply { action = "com.xiaozhi.aiservice.REMINDER_$requestCode" },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
+                )
+                pi?.cancel()
+            }
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("message", "已取消提醒")
+            }
+        }
+
+        if (msg != null) {
+            val records = ReminderPersistence.getAll(ctx)
+            val match = records.find { it.message.contains(msg, ignoreCase = true) }
+            if (match != null) {
+                ReminderPersistence.remove(ctx, match.id)
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("cancelled_message", match.message)
+                    addProperty("message", "已取消提醒「${match.message}」")
+                }
+            }
+            throw Exception("未找到包含「$msg」的提醒")
+        }
+
+        throw Exception("请提供 reminder_id 或 message")
+    }
+
+    // ──────────────── list_alarms ────────────────
+    registry.registerTool(
+        name = "list_alarms",
+        description = "列出所有已设置的闹钟。当用户说「有哪些闹钟」「查看闹钟」「我的闹钟」时调用此工具",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = registry.context
+        val records = AlarmPersistence.getAll(ctx)
+        val arr = JsonArray()
+        records.forEach { r ->
+            arr.add(JsonObject().apply {
+                addProperty("id", r.id)
+                addProperty("time", String.format(Locale.getDefault(), "%02d:%02d", r.hour, r.minute))
+                addProperty("message", r.message)
+            })
+        }
+        JsonObject().apply {
+            add("alarms", arr)
+            addProperty("count", arr.size())
+        }
+    }
+
+    // ──────────────── cancel_alarm ────────────────
+    registry.registerTool(
+        name = "cancel_alarm",
+        description = "取消一个已设置的闹钟。通过闹钟ID或时间取消。当用户说「取消闹钟」「删掉闹钟」「取消XX点的闹钟」时调用此工具",
+        inputSchema = jsonSchema(
+            "alarm_id" to jsonStringProp("要取消的闹钟ID（从 list_alarms 获取）"),
+            "hour" to jsonNumberProp("要取消的闹钟小时 (0-23)，与 minute 配合使用"),
+            "minute" to jsonNumberProp("要取消的闹钟分钟 (0-59)，与 hour 配合使用"),
+            required = listOf()
+        )
+    ) { args ->
+        val ctx = registry.context
+        val alarmId = (args["alarm_id"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+        val hour = (args["hour"] as? Number)?.toInt()
+        val minute = (args["minute"] as? Number)?.toInt()
+
+        if (alarmId != null) {
+            val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            AlarmPersistence.remove(ctx, alarmId)
+            // 取消 PendingIntent
+            val requestCode = alarmId.substringAfterLast('_').toIntOrNull()
+            if (requestCode != null && alarmManager != null) {
+                val pi = PendingIntent.getBroadcast(
+                    ctx, requestCode,
+                    Intent(ctx, AlarmReceiver::class.java).apply { action = "com.xiaozhi.aiservice.ALARM_$requestCode" },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
+                )
+                pi?.cancel()
+            }
+            return@registerTool JsonObject().apply {
+                addProperty("success", true)
+                addProperty("message", "已取消闹钟")
+            }
+        }
+
+        if (hour != null && minute != null) {
+            val records = AlarmPersistence.getAll(ctx)
+            val match = records.find { it.hour == hour && it.minute == minute }
+                ?: records.filter { it.hour == hour }.firstOrNull()
+            if (match != null) {
+                AlarmPersistence.remove(ctx, match.id)
+                return@registerTool JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("message", "已取消 ${match.hour}:${String.format(Locale.getDefault(), "%02d", match.minute)} 的闹钟")
+                }
+            }
+            throw Exception("未找到 %02d:%02d 的闹钟")
+        }
+
+        throw Exception("请提供 alarm_id 或 hour+minute")
+    }
     
     // ──────────────── query_stock ────────────────
     registry.registerTool(
