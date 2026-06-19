@@ -230,43 +230,65 @@ fun registerIntentTools(registry: MCPToolRegistry) {
                 calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
         val alarmTimeText = if (isToday) "今天 $timeStr" else "明天 $timeStr"
 
-        val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            ?: throw Exception("系统闹钟服务不可用")
+        // ── 优先方案：调用系统时钟 App（AlarmClock.ACTION_SET_ALARM）──
+        // 系统闹钟不受 OPPO/ColorOS 限制，响铃 100% 可靠
+        val hasSkipUiPerm = Build.VERSION.SDK_INT < 31 ||
+            (ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager)
+                ?.canScheduleExactAlarms() == true
 
-        // 唯一 requestCode：时间戳 + 分钟偏移
-        val requestCode = ((hour * 60 + minute) and 0x7FFFFFFF) xor (System.nanoTime().toInt() and 0xFFFF)
-        // 闹钟唯一 ID（用于 SharedPreferences 持久化，重启后用同一 ID 重新注册）
-        val alarmId = "${hour}_${minute}_$requestCode"
-
-        // 共用 PendingIntent 实例（避免之前代码创建两次 → 第二次实际覆盖第一次）
-        val pendingIntent = PendingIntent.getBroadcast(
-            ctx, requestCode,
-            Intent(ctx, AlarmReceiver::class.java).apply {
-                action = "com.xiaozhi.aiservice.ALARM_$requestCode"
-                putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
-                putExtra("alarm_id", alarmId)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // 检查 SCHEDULE_EXACT_ALARM 权限
-        val hasExactPerm = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
-        if (hasExactPerm) {
-            alarmManager.setAlarmClock(
-                AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
-                pendingIntent
-            )
-        } else {
-            // setExactAndAllowWhileIdle 不需要 SCHEDULE_EXACT_ALARM，不精确但可接受
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
-            )
-            // 引导用户开启精确闹钟权限
-            sendPermissionGuideNotification("精确闹钟")
+        var usedSystemAlarm = false
+        try {
+            ctx.startActivity(Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(AlarmClock.EXTRA_HOUR, hour)
+                putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                putExtra(AlarmClock.EXTRA_MESSAGE, message)
+                if (hasSkipUiPerm) {
+                    // Android 12+ 需要 SCHEDULE_EXACT_ALARM 权限才能静默设置
+                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                }
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+            usedSystemAlarm = true
+        } catch (_: Exception) {
+            // 厂商时钟 App 不支持 ACTION_SET_ALARM → 回退 AlarmManager
         }
 
-        // 持久化闹钟到 SharedPreferences（用于设备重启后由 BootReceiver 重新注册）
-        AlarmPersistence.save(ctx, alarmId, hour, minute, message, calendar.timeInMillis)
+        var alarmId: String? = null
+        var hasExactPerm = false
+
+        if (!usedSystemAlarm) {
+            // ── 回退方案：AlarmManager.setAlarmClock ──
+            val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: throw Exception("系统闹钟服务不可用")
+
+            val requestCode = ((hour * 60 + minute) and 0x7FFFFFFF) xor (System.nanoTime().toInt() and 0xFFFF)
+            alarmId = "${hour}_${minute}_$requestCode"
+
+            val pendingIntent = PendingIntent.getBroadcast(
+                ctx, requestCode,
+                Intent(ctx, AlarmReceiver::class.java).apply {
+                    action = "com.xiaozhi.aiservice.ALARM_$requestCode"
+                    putExtra("hour", hour); putExtra("minute", minute); putExtra("message", message)
+                    putExtra("alarm_id", alarmId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            hasExactPerm = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+            if (hasExactPerm) {
+                alarmManager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
+                )
+                sendPermissionGuideNotification("精确闹钟")
+            }
+
+            AlarmPersistence.save(ctx, alarmId, hour, minute, message, calendar.timeInMillis)
+        }
 
         JsonObject().apply {
             addProperty("success", true)
@@ -275,8 +297,9 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             addProperty("message", message)
             addProperty("time", timeStr)
             addProperty("alarm_time", alarmTimeText)
-            addProperty("alarm_id", alarmId)
-            if (!hasExactPerm) {
+            addProperty("alarm_source", if (usedSystemAlarm) "system_clock" else "alarm_manager")
+            if (alarmId != null) addProperty("alarm_id", alarmId)
+            if (!usedSystemAlarm && !hasExactPerm) {
                 addProperty("permission_note", "需要手动开启「精确闹钟」权限→设置→应用管理→小智→其他权限，否则闹钟可能延迟或不响")
             }
         }
