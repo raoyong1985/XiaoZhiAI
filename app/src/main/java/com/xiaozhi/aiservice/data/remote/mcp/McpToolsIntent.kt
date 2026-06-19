@@ -250,22 +250,19 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         )
 
         // 检查 SCHEDULE_EXACT_ALARM 权限
-        if (Build.VERSION.SDK_INT >= 31) {
-            val hasPerm = alarmManager.canScheduleExactAlarms()
-            if (!hasPerm) {
-                sendPermissionGuideNotification("精确闹钟")
-                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
-            } else {
-                alarmManager.setAlarmClock(
-                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
-                    pendingIntent
-                )
-            }
-        } else {
+        val hasExactPerm = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+        if (hasExactPerm) {
             alarmManager.setAlarmClock(
                 AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
                 pendingIntent
             )
+        } else {
+            // setExactAndAllowWhileIdle 不需要 SCHEDULE_EXACT_ALARM，不精确但可接受
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
+            )
+            // 引导用户开启精确闹钟权限
+            sendPermissionGuideNotification("精确闹钟")
         }
 
         // 持久化闹钟到 SharedPreferences（用于设备重启后由 BootReceiver 重新注册）
@@ -279,6 +276,9 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             addProperty("time", timeStr)
             addProperty("alarm_time", alarmTimeText)
             addProperty("alarm_id", alarmId)
+            if (!hasExactPerm) {
+                addProperty("permission_note", "需要手动开启「精确闹钟」权限→设置→应用管理→小智→其他权限，否则闹钟可能延迟或不响")
+            }
         }
     }
 

@@ -796,20 +796,18 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         )
 
         // 检查精确闹钟权限
-        if (Build.VERSION.SDK_INT >= 31) {
-            if (alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAlarmClock(
-                    AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
-                    pendingIntent
-                )
-            } else {
-                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
-            }
-        } else {
+        val hasExactPerm = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+        if (hasExactPerm) {
             alarmManager.setAlarmClock(
                 AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent),
                 pendingIntent
             )
+        } else {
+            // setExactAndAllowWhileIdle 不需要 SCHEDULE_EXACT_ALARM，在 Doze 模式下也能触发
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
+            )
+            sendPermissionGuideNotification("精确闹钟")
         }
 
         // 持久化
@@ -823,6 +821,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             addProperty("is_today", calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
                     calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR))
             addProperty("reminder_id", reminderId)
+            if (!hasExactPerm) {
+                addProperty("permission_note", "需要手动开启「精确闹钟」权限→设置→应用管理→小智→其他权限，否则提醒可能延迟或不响")
+            }
         }
     }
 
