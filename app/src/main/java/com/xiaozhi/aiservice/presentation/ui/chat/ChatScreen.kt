@@ -218,6 +218,7 @@ fun ChatScreen(
         ) { message, index ->
             ChatMessageItem(
                 message = message,
+                index = index,
                 botColor = botColor,
                 contactName = contact.name,
                 showTimestamp = true,

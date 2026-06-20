@@ -121,6 +121,7 @@ fun InputBar(
                                     modifier = Modifier
                                         .size(60.dp)
                                         .scale(if (isRecording) scale else 1f)
+                                        .bounceClick(pressedScale = 0.88f, stiffness = Spring.StiffnessLow)
                                         .clip(CircleShape)
                                         .background(buttonColor)
                                 ) {
@@ -181,7 +182,9 @@ fun InputBar(
                                         }
                                     },
                                     enabled = text.isNotBlank() && !sending && !isAiResponding,
-                                    modifier = Modifier.size(42.dp),
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .bounceClick(pressedScale = 0.90f, stiffness = Spring.StiffnessLow),
                                     shape = AppShapes.menu
                                 ) {
                                     Icon(

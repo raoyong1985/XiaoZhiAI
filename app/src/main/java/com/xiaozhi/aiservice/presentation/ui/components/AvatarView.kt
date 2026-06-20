@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.presentation.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -19,24 +20,16 @@ import androidx.compose.ui.unit.sp
 
 /**
  * 统一Bot色彩方案（淡雅系）
- *
- * 每个bot一个颜色族：
- * - bubbleColor = 淡色（气泡背景）
- * - avatarColor = 饱和色（头像背景）
- * - borderColor = 深色（气泡边框）
- *
- * 共8个色系，单聊固定用第一个色系。
  */
 object BotColorScheme {
 
     data class BotColor(
-        val bubbleColor: Color,   // 气泡背景（淡）
-        val avatarColor: Color,   // 头像背景（饱和）
-        val nameColor: Color,      // 名字文字色（适中）
-        val borderColor: Color    // 气泡边框色（比 bubbleColor 深）
+        val bubbleColor: Color,
+        val avatarColor: Color,
+        val nameColor: Color,
+        val borderColor: Color
     )
 
-    // 浅色模式（16色淡雅系）— 边框只比气泡深一点点
     private val lightColors = listOf(
         BotColor(Color(0xFFE8F5E9), Color(0xFF66BB6A), Color(0xFF388E3C), Color(0xFFD7EDD8)),
         BotColor(Color(0xFFE3F2FD), Color(0xFF42A5F5), Color(0xFF1976D2), Color(0xFFD3E9FC)),
@@ -56,7 +49,6 @@ object BotColorScheme {
         BotColor(Color(0xFFE1F5FE), Color(0xFF4FC3F7), Color(0xFF0277BD), Color(0xFFDDF2FB)),
     )
 
-    // 深色模式 — 边框只比气泡稍亮，不突兀
     private val darkColors = listOf(
         BotColor(Color(0xFF2E7D32), Color(0xFF66BB6A), Color(0xFFFFFFFF), Color(0xFF357D38)),
         BotColor(Color(0xFF1565C0), Color(0xFF42A5F5), Color(0xFFFFFFFF), Color(0xFF1D65BC)),
@@ -76,39 +68,33 @@ object BotColorScheme {
         BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF), Color(0xFF0879BD)),
     )
 
-    /** 用户自己的主题色 — 仅头像色 */
     fun selfAvatarColor(isDark: Boolean): Color =
         if (isDark) Color(0xFF42A5F5) else Color(0xFF42A5F5)
 
-    /** 根据索引取色 */
     fun get(index: Int, isDark: Boolean = false): BotColor {
         val palette = if (isDark) darkColors else lightColors
         val idx = (if (index < 0) -index else index) % palette.size
         return palette[idx]
     }
 
-    /** 根据名字哈希取色（同名单次会话内同色） */
     fun forName(name: String, isDark: Boolean = false): BotColor {
         val idx = name.hashCode().let { if (it < 0) -it else it } % lightColors.size
         return get(idx, isDark)
     }
 
-    /** 调色板大小 */
     const val SIZE = 16
 }
 
 /**
- * 淡雅风格圆形头像
- *
- * 默认用 BotColorScheme 选色（名字哈希决定），
- * 也可传自定义 avatarColor 覆盖（用于群聊中与气泡统一）。
+ * 淡雅风格圆形头像 — 点击时产生弹性形变
  */
 @Composable
 fun AvatarView(
     name: String,
     size: Dp = 40.dp,
     isSelf: Boolean = false,
-    avatarColor: Color? = null,     // 覆盖自定义颜色（群聊传气泡对应色）
+    avatarColor: Color? = null,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isDark = isSystemInDarkTheme()
@@ -127,7 +113,11 @@ fun AvatarView(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(bgColor),
+            .background(bgColor)
+            .then(
+                if (onClick != null) Modifier.bounceClick().clickable(onClick = onClick)
+                else Modifier
+            ),
         contentAlignment = Alignment.Center
     ) {
         Text(

@@ -31,7 +31,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import coil.compose.AsyncImage
@@ -43,18 +46,18 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * 共享消息气泡组件 — 群聊/私聊共用
  *
- * @param botColor 传入预计算的 BotColor，为 null 时自动 fallback
- * @param contactName 私聊时用作 bot 名称的 fallback（群聊传空）
- * @param onCopy 长按复制回调
+ * @param index 消息在列表中的位置（用于序列入场动画，越靠后延迟越大）
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatMessageItem(
     message: ChatMessage,
+    index: Int = 0,
     botColor: BotColorScheme.BotColor? = null,
     contactName: String = "",
     showTimestamp: Boolean = true,
@@ -82,10 +85,20 @@ fun ChatMessageItem(
     var showContextMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
 
+    // ── 序列入场动画（按 index 延迟，越靠后越晚出现）──
+    val entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(index * 25L)
+        // 进入动画由 AnimatedVisibility 的 enter 参数控制
+    }
+
     AnimatedVisibility(
         visible = true,
-        enter = fadeIn(animationSpec = tween(300)) +
-                slideInVertically(animationSpec = tween(300)) { it / 2 }
+        enter = fadeIn(animationSpec = tween(250 + index * 15)) +
+                slideInVertically(
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 200f)
+                ) { it / 2 },
+        exit = fadeOut(animationSpec = tween(200))
     ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
@@ -120,6 +133,7 @@ fun ChatMessageItem(
                         )
                     )
                     .background(bubbleColor)
+                    .bounceClick(pressedScale = 0.97f, stiffness = androidx.compose.animation.core.Spring.StiffnessVeryLow)
                     .combinedClickable(
                         onClick = {},
                         onLongClick = { showContextMenu = true }
