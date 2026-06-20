@@ -207,7 +207,7 @@ fun ChatMessageItem(
                         }
 
                         val displayText = remember(displayedLen, fullText, isComplete) {
-                            if (!isComplete) fullText.take(displayedLen) + "▌"
+                            if (!isComplete) fullText.take(displayedLen)
                             else fullText
                         }
 
