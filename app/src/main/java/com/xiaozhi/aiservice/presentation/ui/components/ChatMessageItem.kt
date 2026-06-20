@@ -52,14 +52,12 @@ import kotlinx.coroutines.delay
  * 共享消息气泡组件 — 群聊/私聊共用
  *
  * @param index 消息在列表中的位置（用于序列入场动画，越靠后延迟越大）
- * @param typingMsPerChar 打字机速度（毫秒/字），默认 30，传 0 关闭
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatMessageItem(
     message: ChatMessage,
     index: Int = 0,
-    typingMsPerChar: Long = 30L,
     botColor: BotColorScheme.BotColor? = null,
     contactName: String = "",
     showTimestamp: Boolean = true,
@@ -185,34 +183,8 @@ fun ChatMessageItem(
                         )
                     }
                     else -> {
-                        // ── 打字机效果：仅 RECEIVED 文本逐字显示 ──
-                        val fullText = message.content
-                        val isBotText = !isFromMe && typingMsPerChar > 0 && fullText.length > 3
-
-                        var displayedLen by remember(fullText, message.id) {
-                            mutableIntStateOf(if (isBotText) 0 else fullText.length)
-                        }
-                        val isComplete = displayedLen >= fullText.length
-                        val showCursor by remember { mutableStateOf(!isComplete) }
-
-                        // 打字机逐字递增
-                        LaunchedEffect(fullText, message.id, isBotText) {
-                            if (!isBotText) return@LaunchedEffect
-                            val speed = if (fullText.length < 20) maxOf(15L, typingMsPerChar / 2)
-                                        else typingMsPerChar
-                            while (displayedLen < fullText.length) {
-                                delay(speed)
-                                displayedLen++
-                            }
-                        }
-
-                        val displayText = remember(displayedLen, fullText, isComplete) {
-                            if (!isComplete) fullText.take(displayedLen)
-                            else fullText
-                        }
-
                         Text(
-                            text = displayText,
+                            text = message.content,
                             color = if (isFromMe) if (isDark) Color.White else Color(0xFF333333).copy(alpha = 0.85f)
                                     else if (isDark) Color.White.copy(alpha = 0.92f)
                                     else Color(0xFF333333).copy(alpha = 0.85f),

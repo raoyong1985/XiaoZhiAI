@@ -24,7 +24,7 @@ import kotlin.concurrent.withLock
 
 class NativeOpusDecoder(
     private val serverSampleRate: Int = 24000,
-    private val clientSampleRate: Int = 16000,
+    private val clientSampleRate: Int = 24000,
     private val channels: Int = 1,
     initialVolume: Int = 100  // 0-100, default 100
 ) {
@@ -45,6 +45,15 @@ class NativeOpusDecoder(
 
         private var audioManager: AudioManager? = null
         private var focusRequest: AudioFocusRequest? = null
+
+        // ── PCM 16-bit 输出（全设备兼容，DSP 在 float 域处理）──
+        const val AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT
+        // 样本字节数：float=4, 16-bit short=2
+        const val BYTES_PER_SAMPLE = 2
+        // Headroom：EQ boost 预留余量，防止 DSP 削波
+        // 曲线最大 boost +7dB → 10^(7/20)=2.24x → 余量因子 ~0.45
+        // 但 <100Hz 能量通常很小，实际用 0.75 (-2.5dB) 平衡响度和余量
+        const val HEADROOM_GAIN = 0.75f
 
         fun initAudioManager(context: Context) {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -110,22 +119,28 @@ class NativeOpusDecoder(
     // 每次 restartPlayback 后重置，用于调试首次解码
     private val packetsSinceRestart = AtomicInteger(0)
 
+    // ── 音频效果管理器（均衡器 + 低音增强）──
+    private var audioEffects: AudioEffectsManager? = null
+
     /**
      * 创建 AudioTrack（使用 Builder 模式，消除 deprecated 警告）
      */
     private fun createAudioTrack(bufferSize: Int): AudioTrack {
+        val channelMask = if (channels >= 2) AudioFormat.CHANNEL_OUT_STEREO
+                          else AudioFormat.CHANNEL_OUT_MONO
         return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .setContentType(if (channels >= 2) AudioAttributes.CONTENT_TYPE_MUSIC
+                                    else AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
             .setAudioFormat(
                 AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setEncoding(AUDIO_ENCODING)
                     .setSampleRate(clientSampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setChannelMask(channelMask)
                     .build()
             )
             .setBufferSizeInBytes(bufferSize)
@@ -178,7 +193,7 @@ class NativeOpusDecoder(
             val minBuffer = AudioTrack.getMinBufferSize(
                 clientSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
+                AUDIO_ENCODING
             )
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
             val track = createAudioTrack(bufferSize)
@@ -211,13 +226,23 @@ class NativeOpusDecoder(
     }
 
     /**
-     * 设置输出音量
+     * 设置输出音量 — 硬件音量（AudioTrack.setVolume）
+     * 代替软件乘法，保持 32-bit Float 全精度
      * 参考 ESP32 audio_codec.cc SetOutputVolume()
      * @param level 音量 0-100
      */
     fun setVolume(level: Int) {
         volumeScale = level.coerceIn(0, 100)
-        Logger.i(TAG, "音量设置为 $volumeScale%")
+        // 硬件音量：由 AudioFlinger mixer 在 float 域处理，无精度损失
+        val vol = volumeScale / 100f
+        try {
+            audioTrackRef.get()?.let { track ->
+                track.setVolume(vol)
+            }
+        } catch (e: Exception) {
+            Logger.w(TAG, "硬件音量设置失败: ${e.message}")
+        }
+        Logger.i(TAG, "音量设置为 $volumeScale% (硬件音量)")
     }
 
     fun getVolume(): Int = volumeScale
@@ -237,7 +262,7 @@ class NativeOpusDecoder(
             val minBuffer = AudioTrack.getMinBufferSize(
                 clientSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
+                AUDIO_ENCODING
             )
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
             Logger.i(TAG, "minBuffer=$minBuffer, using=$bufferSize")
@@ -255,11 +280,20 @@ class NativeOpusDecoder(
                 return
             }
 
-            Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz mono STREAM_MUSIC buffer=$minBuffer")
+            Logger.i(TAG, "AudioTrack: ${clientSampleRate}Hz 16-bit buffer=$minBuffer")
 
             // 先写预填静音再 play()，防止空缓冲启动导致立即 underrun（华为等设备不恢复）
             try { audioTrackRef.get()?.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
             audioTrackRef.get()?.play()
+
+            // ── 初始化音频效果（均衡器 + 低音增强）──
+            audioTrackRef.get()?.audioSessionId?.let { sessionId ->
+                AudioEffectsManager(sessionId).also { effects ->
+                    effects.init()
+                    audioEffects = effects
+                }
+            }
+
             isPlaying.set(true)
 
             playThread = Thread {
@@ -353,7 +387,7 @@ class NativeOpusDecoder(
             val minBuffer = AudioTrack.getMinBufferSize(
                 clientSampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
+                AUDIO_ENCODING
             )
             val bufferSize = maxOf(minBuffer * BUFFER_MULTIPLIER, 32768)
 
@@ -387,6 +421,15 @@ class NativeOpusDecoder(
             // 先写预填静音再 play()，与 init() 保持一致
             try { track.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
             track.play()
+
+            // ── 初始化音频效果（均衡器 + 低音增强）──
+            track.audioSessionId.let { sessionId ->
+                AudioEffectsManager(sessionId).also { effects ->
+                    effects.init()
+                    audioEffects = effects
+                }
+            }
+
             isPlaying.set(true)
 
             // 重建播放线程
@@ -489,16 +532,17 @@ class NativeOpusDecoder(
                         Logger.i(TAG, "decodePacket 解码成功 (samples=$samples, resample=${resampleUs}us, queueSize=${audioQueue.size})")
                     }
 
-                    val pcmLimiter = applyLimiter(pcmResampled)
-                    val pcmWithVolume = if (volumeScale < 100) {
-                        applyVolume(pcmLimiter, volumeScale)
-                    } else {
-                        pcmLimiter
-                    }
+                    val pcmFloat = shortsToFloat(pcmResampled)
+                    // ── 电子管温暖音色（偶次谐波 + 软饱和）──
+                    val pcmTube = applyTubeWarmth(pcmFloat)
+                    // Headroom gain: 为 EQ boost 预留余量，防 DSP 削波
+                    val pcmHeadroom = applyFloatHeadroom(pcmTube)
+                    // 音量由 AudioTrack.setVolume（硬件）控制，不做软件乘法
 
-                    val byteBuffer = ByteBuffer.allocate(pcmWithVolume.size * 2)
+                    val pcmShortsOut = floatToShorts(pcmHeadroom)
+                    val byteBuffer = ByteBuffer.allocate(pcmShortsOut.size * BYTES_PER_SAMPLE)
                         .order(ByteOrder.LITTLE_ENDIAN)
-                    byteBuffer.asShortBuffer().put(pcmWithVolume)
+                    byteBuffer.asShortBuffer().put(pcmShortsOut)
                     val pcmBytes = byteBuffer.array()
 
                     onPcm?.invoke(pcmBytes)
@@ -544,48 +588,93 @@ class NativeOpusDecoder(
         return output
     }
 
-    private fun applyLimiter(pcm: ShortArray): ShortArray {
-        val HARD_CLIP = Short.MAX_VALUE.toInt()
-
-        var peak = 0
-        for (v in pcm) {
-            val abs = abs(v.toInt())
-            if (abs > peak) peak = abs
+    /**
+     * 16-bit Short → 32-bit Float 转换
+     * Float 范围 -1.0 ~ 1.0，适配 ENCODING_PCM_FLOAT
+     */
+    private fun shortsToFloat(shorts: ShortArray): FloatArray {
+        val floats = FloatArray(shorts.size)
+        for (i in shorts.indices) {
+            floats[i] = shorts[i] / 32768.0f
         }
+        return floats
+    }
 
-        // 无削峰时直接返回，避免不必要的内存分配
-        if (peak <= HARD_CLIP) return pcm
-
-        val ratio = HARD_CLIP.toDouble() / peak
+    /**
+     * 电子管温暖音色 DSP
+     *
+     * 效果链：
+     * 1. 偶次谐波生成（电子管标志性染色） — input + warmth × input²
+     * 2. 软饱和（arctan 限幅，平滑不刺耳） — smooth tube-like clipping
+     *
+     * 参考设计：Poweramp 的 "Tube" 效果、Neutron 的 "Valve Warmth"
+     * 驱动强度 drive=1.8 → 轻度饱和不糊
+     * 温暖量 warmth=0.12 → 12% 谐波混入，有感觉不刻意
+     */
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
+    private fun applyTubeWarmth(pcm: FloatArray): FloatArray {
+        val drive = 1.8f
+        val warmth = 0.12f
+        val atanDrive = kotlin.math.atan(drive.toDouble()).toFloat()
         for (i in pcm.indices) {
-            val s = pcm[i].toInt()
-            val compressed = if (s >= 0) {
-                ((s * ratio) + (s - s * ratio) * kotlin.math.sqrt(s.toDouble() / peak)).toInt()
-            } else {
-                -((abs(s) * ratio) + (abs(s) - abs(s) * ratio) * kotlin.math.sqrt(abs(s).toDouble() / peak)).toInt()
-            }
-            pcm[i] = compressed.coerceIn(-HARD_CLIP, HARD_CLIP).toShort()
+            val s = pcm[i]
+            // 偶次谐波：input + warmth × input × |input|
+            val harmonic = s + warmth * s * abs(s)
+            // 软饱和：arctan 管式限幅，平滑压缩不硬切
+            pcm[i] = kotlin.math.atan(harmonic * drive) / atanDrive
         }
         return pcm
     }
 
     /**
-     * 应用音量缩放
-     * 参考 ESP32 audio_codec.cc 音量处理
-     * @param pcm PCM样本数组（16-bit，就地修改）
-     * @param volume 音量 0-100
+     * Headroom 增益：为均衡器 boost 预留动态余量
+     * 防止 EQ 在 DSP 域 boost 后超过 0dBFS 削波
      */
-    private fun applyVolume(pcm: ShortArray, volume: Int): ShortArray {
-        if (volume <= 0) {
-            pcm.fill(0)
-            return pcm
-        }
-        if (volume >= 100) return pcm
-        val scale = volume.toFloat() / 100f
+    private fun applyFloatHeadroom(pcm: FloatArray): FloatArray {
+        if (HEADROOM_GAIN >= 1.0f) return pcm
         for (i in pcm.indices) {
-            pcm[i] = (pcm[i].toInt() * scale).toInt().coerceIn(-32768, 32767).toShort()
+            pcm[i] *= HEADROOM_GAIN
         }
         return pcm
+    }
+
+    /**
+     * Float 域软限幅器：防极端峰值超出 DAC 范围
+     */
+    private fun applyFloatLimiter(pcm: FloatArray): FloatArray {
+        val CLIP = 1.0f
+        var peak = 0f
+        for (v in pcm) {
+            val abs = abs(v)
+            if (abs > peak) peak = abs
+        }
+        if (peak <= CLIP) return pcm
+
+        val ratio = CLIP / peak
+        for (i in pcm.indices) {
+            val s = pcm[i]
+            val absS = abs(s)
+            val compressed = if (s >= 0) {
+                s * ratio + (s - s * ratio) * kotlin.math.sqrt(absS / peak)
+            } else {
+                -(absS * ratio + (absS - absS * ratio) * kotlin.math.sqrt(absS / peak))
+            }
+            pcm[i] = compressed.coerceIn(-CLIP, CLIP)
+        }
+        return pcm
+    }
+
+    /**
+     * 32-bit Float → 16-bit Short 转换
+     * Float 域 DSP 处理完成后转回兼容的 16-bit PCM
+     */
+    private fun floatToShorts(floats: FloatArray): ShortArray {
+        val shorts = ShortArray(floats.size)
+        for (i in floats.indices) {
+            val clamped = floats[i].coerceIn(-1f, 1f)
+            shorts[i] = (clamped * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        return shorts
     }
 
     /**
@@ -596,7 +685,7 @@ class NativeOpusDecoder(
         try {
             val track = audioTrackRef.get() ?: return 0L
             val playedFrames = track.playbackHeadPosition.toLong()
-            val playedBytes = playedFrames * 2L * channels
+            val playedBytes = playedFrames * BYTES_PER_SAMPLE.toLong() * channels
             return (totalBytesWritten.get() - playedBytes).coerceAtLeast(0L)
         } catch (e: Exception) {
             return 0L
@@ -652,7 +741,7 @@ class NativeOpusDecoder(
         while (System.currentTimeMillis() < deadline) {
             val remaining = getRemainingBytes()
             if (remaining <= 0) return true
-            val estMs = remaining * 1000L / (clientSampleRate * 2 * channels)
+            val estMs = remaining * 1000L / (clientSampleRate * BYTES_PER_SAMPLE * channels)
             // 剩很少了直接等完，省一次轮询
             if (estMs < 30) {
                 delay(estMs + 20)
@@ -668,6 +757,9 @@ class NativeOpusDecoder(
             released = true
             isPlaying.set(false)
             playThread?.interrupt()
+            // ── 释放音频效果（均衡器 + 低音增强）──
+            audioEffects?.release()
+            audioEffects = null
             try {
                 audioTrackRef.get()?.stop()
                 audioTrackRef.get()?.release()

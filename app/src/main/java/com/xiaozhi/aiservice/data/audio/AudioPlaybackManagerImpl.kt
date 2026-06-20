@@ -40,7 +40,7 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
             }
         }
         decoders.getOrPut(sourceId) {
-            NativeOpusDecoder(serverRate, 16000, channels, volume).also {
+            NativeOpusDecoder(serverRate, serverRate, channels, volume).also {
                 it.init()
                 if (volume < 100) it.setVolume(volume)
             }

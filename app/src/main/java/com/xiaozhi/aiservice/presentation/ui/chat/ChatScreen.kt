@@ -217,13 +217,9 @@ fun ChatScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) { message, index ->
-            val isLatestBot = remember(uiState.messages) {
-                index == uiState.messages.indexOfLast { it.direction == MessageDirection.RECEIVED }
-            }
             ChatMessageItem(
                 message = message,
                 index = index,
-                typingMsPerChar = if (isLatestBot) 30L else 0L,
                 botColor = botColor,
                 contactName = contact.name,
                 showTimestamp = true,
