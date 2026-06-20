@@ -9,30 +9,7 @@ import java.util.Date
 import java.util.Locale
 
 fun registerBasicTools(registry: MCPToolRegistry) {
-    registry.registerTool(
-        name = "get_device_info",
-        description = "获取Android设备的基本信息，包括厂商、型号、系统版本、屏幕分辨率等",
-        inputSchema = jsonSchema()
-    ) { _ ->
-        val ctx = registry.context
-        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
-        val metrics = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION")
-        wm?.defaultDisplay?.getRealMetrics(metrics)
-        JsonObject().apply {
-            addProperty("manufacturer", android.os.Build.MANUFACTURER)
-            addProperty("model", android.os.Build.MODEL)
-            addProperty("android_version", android.os.Build.VERSION.RELEASE)
-            addProperty("sdk_int", android.os.Build.VERSION.SDK_INT)
-            addProperty("brand", android.os.Build.BRAND)
-            addProperty("device", android.os.Build.DEVICE)
-            addProperty("screen_width_px", metrics.widthPixels)
-            addProperty("screen_height_px", metrics.heightPixels)
-            addProperty("screen_density", metrics.densityDpi)
-            addProperty("screen_density_dp", "${(metrics.widthPixels / metrics.density).toInt()}x${(metrics.heightPixels / metrics.density).toInt()}")
-            addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
-        }
-    }
+    // 已合并到 get_system_info（get_device_info 删除）
 
     registry.registerTool(
         name = "get_current_time",
@@ -83,62 +60,7 @@ fun registerBasicTools(registry: MCPToolRegistry) {
         }
     }
 
-    registry.registerTool(
-        name = "calculate",
-        description = "执行简单的四则运算，支持加减乘除和括号，如 1+2*3",
-        inputSchema = jsonSchema(
-            "expression" to jsonStringProp("数学表达式"),
-            required = listOf("expression")
-        )
-    ) { args ->
-        val expr = args["expression"] as? String ?: ""
-        JsonObject().apply {
-            addProperty("expression", expr)
-            addProperty("result", evaluateSimpleExpression(expr))
-        }
-    }
-
-    registry.registerTool(
-        name = "random_number",
-        description = "生成指定范围内的随机整数，或随机浮点数",
-        inputSchema = jsonSchema(
-            "min" to jsonNumberProp("最小值（含），默认 0"),
-            "max" to jsonNumberProp("最大值（含），默认 100"),
-            "type" to jsonStringProp("类型：int/float，默认 int"),
-        )
-    ) { args ->
-        val min = (args["min"] as? Number)?.toInt() ?: 0
-        val max = (args["max"] as? Number)?.toInt() ?: 100
-        val type = (args["type"] as? String)?.lowercase() ?: "int"
-        require(min <= max) { "min 必须 <= max" }
-        if (type == "float") {
-            val v = min + Math.random() * (max - min)
-            JsonObject().apply { addProperty("result", v); addProperty("min", min); addProperty("max", max); addProperty("type", "float") }
-        } else {
-            val v = (min + Math.random() * (max - min + 1)).toInt()
-            JsonObject().apply { addProperty("result", v); addProperty("min", min); addProperty("max", max); addProperty("type", "int") }
-        }
-    }
-
-    registry.registerTool(
-        name = "encode_decode",
-        description = "对文本进行 Base64 或 URL 编码/解码",
-        inputSchema = jsonSchema(
-            "text" to jsonStringProp("要编解码的文本"),
-            "mode" to jsonStringProp("模式：base64_encode/base64_decode/url_encode/url_decode"),
-            required = listOf("text", "mode")
-        )
-    ) { args ->
-        val text = (args["text"] as? String).takeIf { it != null } ?: throw Exception("text 不能为空")
-        val mode = (args["mode"] as? String)?.lowercase() ?: throw Exception("mode 不能为空")
-        when (mode) {
-            "base64_encode" -> JsonObject().apply { addProperty("result", android.util.Base64.encodeToString(text.toByteArray(), android.util.Base64.NO_WRAP)) }
-            "base64_decode" -> JsonObject().apply { addProperty("result", String(android.util.Base64.decode(text, android.util.Base64.DEFAULT))) }
-            "url_encode" -> JsonObject().apply { addProperty("result", java.net.URLEncoder.encode(text, "UTF-8")) }
-            "url_decode" -> JsonObject().apply { addProperty("result", java.net.URLDecoder.decode(text, "UTF-8")) }
-            else -> throw Exception("不支持的 mode：$mode，支持 base64_encode/base64_decode/url_encode/url_decode")
-        }.also { it.addProperty("mode", mode) }
-    }
+    // [已删除: calculate/random_number/encode_decode — LLM 自身能力，无需 MCP 工具占用流量]
 
     registry.registerTool(
         name = "get_orientation",
@@ -173,16 +95,20 @@ fun registerBasicTools(registry: MCPToolRegistry) {
         description = "获取设备的内存（RAM）和存储空间使用情况",
         inputSchema = jsonSchema()
     ) { _ ->
+        val ctx = registry.context
         val stats = android.os.StatFs("/data")
         val blockSize = stats.blockSizeLong
         val totalBlocks = stats.blockCountLong
         val freeBlocks = stats.freeBlocksLong
         val availBlocks = stats.availableBlocksLong
-        val runtime = Runtime.getRuntime()
+        val activityManager = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val memoryInfo = android.app.ActivityManager.MemoryInfo()
+        activityManager?.getMemoryInfo(memoryInfo)
         JsonObject().apply {
-            addProperty("ram_total_mb", runtime.totalMemory() / 1024 / 1024)
-            addProperty("ram_free_mb", runtime.freeMemory() / 1024 / 1024)
-            addProperty("ram_max_mb", runtime.maxMemory() / 1024 / 1024)
+            addProperty("ram_total_mb", memoryInfo.totalMem / 1024 / 1024)
+            addProperty("ram_avail_mb", memoryInfo.availMem / 1024 / 1024)
+            addProperty("ram_threshold_mb", memoryInfo.threshold / 1024 / 1024)
+            addProperty("ram_low", memoryInfo.lowMemory)
             addProperty("storage_total_gb", String.format(Locale.US, "%.1f", totalBlocks * blockSize / 1e9))
             addProperty("storage_used_gb", String.format(Locale.US, "%.1f", (totalBlocks - freeBlocks) * blockSize / 1e9))
             addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
@@ -190,10 +116,10 @@ fun registerBasicTools(registry: MCPToolRegistry) {
         }
     }
 
-    // 统一系统信息工具（对应 ESP32 self.get_system_info）
+    // 统一系统信息工具（含 get_device_info 所有字段）
     registry.registerTool(
         name = "get_system_info",
-        description = "获取设备的完整系统信息，一次性返回厂商、型号、电量、内存、存储、时间等",
+        description = "获取设备的完整系统信息，一次性返回厂商、型号、屏幕、电量、内存、存储、时间等",
         inputSchema = jsonSchema()
     ) { _ ->
         val ctx = registry.context
@@ -203,18 +129,28 @@ fun registerBasicTools(registry: MCPToolRegistry) {
         val blockSize = stats.blockSizeLong
         val totalBlocks = stats.blockCountLong
         val freeBlocks = stats.freeBlocksLong
-        val runtime = Runtime.getRuntime()
+        val activityManager = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val memoryInfo = android.app.ActivityManager.MemoryInfo()
+        activityManager?.getMemoryInfo(memoryInfo)
+        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        wm?.defaultDisplay?.getRealMetrics(metrics)
         JsonObject().apply {
             addProperty("manufacturer", android.os.Build.MANUFACTURER)
             addProperty("model", android.os.Build.MODEL)
             addProperty("android_version", android.os.Build.VERSION.RELEASE)
             addProperty("sdk_int", android.os.Build.VERSION.SDK_INT)
             addProperty("brand", android.os.Build.BRAND)
+            addProperty("device", android.os.Build.DEVICE)
+            addProperty("screen_width_px", metrics.widthPixels)
+            addProperty("screen_height_px", metrics.heightPixels)
+            addProperty("screen_density", metrics.densityDpi)
             addProperty("battery_level", batteryLevel)
             addProperty("battery_status", if (batteryLevel >= 0) "ok" else "unavailable")
-            addProperty("ram_total_mb", runtime.totalMemory() / 1024 / 1024)
-            addProperty("ram_free_mb", runtime.freeMemory() / 1024 / 1024)
-            addProperty("ram_max_mb", runtime.maxMemory() / 1024 / 1024)
+            addProperty("ram_total_mb", memoryInfo.totalMem / 1024 / 1024)
+            addProperty("ram_avail_mb", memoryInfo.availMem / 1024 / 1024)
+            addProperty("ram_low", memoryInfo.lowMemory)
             addProperty("storage_total_gb", String.format(Locale.US, "%.1f", totalBlocks * blockSize / 1e9))
             addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
             addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)

@@ -533,12 +533,15 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── bluetooth_scan ────────────────
     registry.registerTool(
         name = "bluetooth_scan",
-        description = "扫描附近的蓝牙设备，返回设备名称、地址、类型等信息",
+        description = "扫描附近的蓝牙/BLE设备，返回设备名称、地址、类型等信息。API 21+ 使用 BLE 扫描（更快更低功耗），旧设备回退经典发现",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回数量，默认 20"),
+            "timeout_ms" to jsonNumberProp("扫描时长（毫秒），默认 4000，建议 3000-8000"),
         )
     ) { args ->
         val ctx = registry.context
+        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 20
+        val scanTimeout = (args["timeout_ms"] as? Number)?.toLong()?.coerceIn(2000, 15000) ?: 4000L
 
         // 检查权限
         if (Build.VERSION.SDK_INT >= 31) {
@@ -550,50 +553,83 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             if (btPerm != null) return@registerTool btPerm
         }
 
-        val adapter = if (Build.VERSION.SDK_INT >= 31) {
-            (ctx.getSystemService(android.bluetooth.BluetoothManager::class.java))?.adapter
+        val bluetoothManager = if (Build.VERSION.SDK_INT >= 31) {
+            ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)
         } else {
             @Suppress("DEPRECATION")
-            BluetoothAdapter.getDefaultAdapter()
-        } ?: throw Exception("此设备不支持蓝牙")
-
+            ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+        }
+        val adapter = bluetoothManager?.adapter ?: throw Exception("此设备不支持蓝牙")
         if (!adapter.isEnabled) throw Exception("蓝牙已关闭，请先开启蓝牙")
 
-        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 20
+        // ── BLE 扫描（API 21+，更高效）──
+        val foundBleDevices = mutableSetOf<Pair<String, String>>()  // name to address
+        val leScanner = if (Build.VERSION.SDK_INT >= 21) adapter.bluetoothLeScanner else null
+        var bleScanDone = false
 
-        // 开始扫描（使用旧 API 兼容）
-        val foundDevices = mutableListOf<Pair<String, String>>()
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: android.content.Intent) {
-                if (intent.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) return
-                val device = if (Build.VERSION.SDK_INT >= 33) {
-                    intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+        if (leScanner != null) {
+            val scanCallback = object : android.bluetooth.le.ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
+                    val device = result?.device ?: return
+                    val name = device.name ?: result?.scanRecord?.deviceName ?: "(未知)"
+                    if (name != "(未知)" || device.address.isNotEmpty()) {
+                        foundBleDevices.add(name to device.address)
+                    }
                 }
-                if (device != null) {
-                    val name = device.name ?: "(未知)"
-                    if (foundDevices.none { it.second == device.address }) {
-                        foundDevices.add(name to device.address)
+                override fun onBatchScanResults(results: MutableList<android.bluetooth.le.ScanResult>?) {
+                    results?.forEach { r ->
+                        val d = r.device ?: return@forEach
+                        foundBleDevices.add((d.name ?: "(未知)") to d.address)
                     }
                 }
             }
+            try {
+                val settings = android.bluetooth.le.ScanSettings.Builder()
+                    .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build()
+                leScanner.startScan(null, settings, scanCallback)
+                delay(scanTimeout)
+                leScanner.stopScan(scanCallback)
+                bleScanDone = true
+            } catch (_: Exception) {
+                // BLE 扫描失败（权限不足等），回退到经典扫描
+            }
         }
 
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_STARTED), Context.RECEIVER_NOT_EXPORTED)
-        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
-        ctx.registerReceiver(receiver, android.content.IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED), Context.RECEIVER_NOT_EXPORTED)
+        // ── 经典蓝牙发现（补全经典 BT 设备）──
+        val foundClassicDevices = mutableListOf<Pair<String, String>>()
+        if (!bleScanDone) {
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: android.content.Intent) {
+                    if (intent.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) return
+                    val device = if (Build.VERSION.SDK_INT >= 33) {
+                        intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    if (device != null) {
+                        val name = device.name ?: "(未知)"
+                        if (foundClassicDevices.none { it.second == device.address }) {
+                            foundClassicDevices.add(name to device.address)
+                        }
+                    }
+                }
+            }
+            ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
+            adapter.startDiscovery()
+            delay(minOf(scanTimeout, 8000L))
+            adapter.cancelDiscovery()
+            try { ctx.unregisterReceiver(receiver) } catch (_: Exception) {}
+        }
 
-        adapter.startDiscovery()
-        delay(5000) // 扫描 5 秒
-        adapter.cancelDiscovery()
-
-        try { ctx.unregisterReceiver(receiver) } catch (_: Exception) {}
-
-        // 也包含已配对设备
+        // ── 已配对设备（所有方式都包含）──
         val bonded = adapter.bondedDevices?.map { (it.name ?: "(未知)") to it.address } ?: emptyList()
-        val allDevices = (bonded + foundDevices).distinctBy { it.second }.take(maxResults)
+
+        // ── 合并去重 ──
+        val allDevices = (bonded + foundBleDevices + foundClassicDevices)
+            .distinctBy { it.second }
+            .take(maxResults)
 
         val arr = JsonArray()
         allDevices.forEach { (name, address) ->
@@ -601,13 +637,15 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                 addProperty("name", name)
                 addProperty("address", address)
                 addProperty("paired", bonded.any { it.second == address })
-                addProperty("nearby", foundDevices.any { it.second == address })
+                addProperty("nearby", foundBleDevices.any { it.second == address } || foundClassicDevices.any { it.second == address })
+                addProperty("scan_type", if (foundBleDevices.any { it.second == address }) "ble" else "classic")
             })
         }
 
         JsonObject().apply {
             add("devices", arr)
             addProperty("count", arr.size())
+            addProperty("scan_method", if (bleScanDone) "ble_scanner" else "classic_discovery")
             addProperty("bluetooth_enabled", adapter.isEnabled)
         }
     }
@@ -1183,6 +1221,206 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             addProperty("format", "QR_CODE")
             addProperty("content", qrContent)
             addProperty("message", "扫码成功: $qrContent")
+        }
+    }
+
+    // ──────────────── contact_manage ────────────────
+    registry.registerTool(
+        name = "contact_manage",
+        description = "管理手机联系人。支持搜索联系人（按姓名/号码）或添加新联系人（弹出系统联系人界面）。当用户说「查找联系人」「存一个电话」「保存联系人」「张三的电话」时调用此工具",
+        inputSchema = jsonSchema(
+            "action" to jsonStringProp("操作: search/add，默认 search"),
+            "query" to jsonStringProp("搜索模式下：姓名或电话号码关键词"),
+            "name" to jsonStringProp("添加模式下：联系人姓名"),
+            "phone" to jsonStringProp("添加模式下：电话号码"),
+            "max_results" to jsonNumberProp("搜索模式下：最多返回条数，默认 10"),
+            required = listOf("action")
+        )
+    ) { args ->
+        val action = (args["action"] as? String)?.lowercase() ?: "search"
+        val ctx = registry.context
+
+        when (action) {
+            "search" -> {
+                val query = (args["query"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+                val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 30) ?: 10
+
+                val uri = android.provider.ContactsContract.Contacts.CONTENT_URI
+                val projection = arrayOf(
+                    android.provider.ContactsContract.Contacts._ID,
+                    android.provider.ContactsContract.Contacts.DISPLAY_NAME,
+                    android.provider.ContactsContract.Contacts.HAS_PHONE_NUMBER
+                )
+                val selection = if (query != null)
+                    "${android.provider.ContactsContract.Contacts.DISPLAY_NAME} LIKE ?" else null
+                val args = if (query != null) arrayOf("%$query%") else null
+
+                val cursor = ctx.contentResolver.query(uri, projection, selection, args, null)
+                val arr = JsonArray()
+                var count = 0
+                cursor?.use { c ->
+                    while (c.moveToNext() && count < maxResults) {
+                        val contactId = c.getString(0)
+                        val name = c.getString(1) ?: "(无名称)"
+                        val hasPhone = c.getInt(2) > 0
+
+                        var phone = ""
+                        if (hasPhone) {
+                            // 查询电话号码
+                            val phoneCur = ctx.contentResolver.query(
+                                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+                                "${android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                                arrayOf(contactId), null
+                            )
+                            phoneCur?.use { pc ->
+                                if (pc.moveToFirst()) phone = pc.getString(0) ?: ""
+                            }
+                        }
+
+                        arr.add(JsonObject().apply {
+                            addProperty("id", contactId)
+                            addProperty("name", name)
+                            addProperty("phone", phone)
+                            addProperty("has_phone", hasPhone)
+                        })
+                        count++
+                    }
+                }
+
+                JsonObject().apply {
+                    add("contacts", arr)
+                    addProperty("count", arr.size())
+                    addProperty("query", query ?: "all")
+                }
+            }
+            "add" -> {
+                val name = (args["name"] as? String)?.takeIf { it.isNotBlank() }
+                    ?: throw Exception("添加联系人需要提供 name")
+                val phone = (args["phone"] as? String)?.takeIf { it.isNotBlank() } ?: ""
+
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+                        type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                        putExtra(android.provider.ContactsContract.Intents.Insert.NAME, name)
+                        if (phone.isNotEmpty()) {
+                            putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, phone)
+                        }
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    ctx.startActivity(intent)
+                } catch (e: Exception) {
+                    throw Exception("无法打开联系人界面: ${e.message}")
+                }
+
+                JsonObject().apply {
+                    addProperty("success", true)
+                    addProperty("name", name)
+                    addProperty("phone", phone)
+                    addProperty("message", "已打开系统联系人界面，请确认保存")
+                }
+            }
+            else -> throw Exception("不支持的 action: $action，支持 search/add")
+        }
+    }
+
+    // ──────────────── media_control ────────────────
+    registry.registerTool(
+        name = "media_control",
+        description = "控制手机上的媒体播放（音乐、视频），支持播放/暂停/上一首/下一首/快进/快退。当用户说「播放音乐」「暂停」「下一首」「上一曲」时调用此工具",
+        inputSchema = jsonSchema(
+            "action" to jsonStringProp("操作: play/pause/next/previous/stop，默认 play"),
+            required = listOf("action")
+        )
+    ) { args ->
+        val action = (args["action"] as? String)?.lowercase() ?: "play"
+        val ctx = registry.context
+        val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            ?: throw Exception("无法获取 AudioManager")
+
+        val keyCode = when (action) {
+            "play" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
+            "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            "stop" -> android.view.KeyEvent.KEYCODE_MEDIA_STOP
+            else -> throw Exception("不支持的 action: $action，支持 play/pause/next/previous/stop")
+        }
+        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
+        audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
+
+        try {
+            if (Build.VERSION.SDK_INT >= 21) {
+                val msm = ctx.getSystemService(Context.MEDIA_SESSION_SERVICE) as? android.media.session.MediaSessionManager
+                val sessions = msm?.getActiveSessions(null) ?: emptyList()
+                val target = sessions.firstOrNull()
+                if (target != null) {
+                    val transportControls = target.transportControls
+                    when (action) {
+                        "play" -> transportControls?.play()
+                        "pause" -> transportControls?.pause()
+                        "next" -> transportControls?.skipToNext()
+                        "previous" -> transportControls?.skipToPrevious()
+                        "stop" -> transportControls?.stop()
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("action", action)
+            addProperty("message", when (action) {
+                "play" -> "已发送播放指令"
+                "pause" -> "已暂停"
+                "next" -> "已切到下一首"
+                "previous" -> "已切到上一首"
+                "stop" -> "已停止播放"
+                else -> ""
+            })
+        }
+    }
+
+    // ──────────────── read_notifications ────────────────
+    registry.registerTool(
+        name = "read_notifications",
+        description = "读取当前 App 的活跃通知列表。当用户说「看看我的通知」「有什么通知」「通知栏有什么」时调用此工具",
+        inputSchema = jsonSchema(
+            "max_results" to jsonNumberProp("最多返回条数，默认 10"),
+        )
+    ) { args ->
+        val ctx = registry.context
+        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 10
+
+        if (Build.VERSION.SDK_INT < 23) {
+            return@registerTool JsonObject().apply {
+                addProperty("success", false)
+                addProperty("message", "Android 6.0 以下不支持读取通知")
+            }
+        }
+
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        val raw = nm?.getActiveNotifications()
+        val active = if (raw != null) raw.take(maxResults) else emptyList<android.service.notification.StatusBarNotification>()
+        val arr = JsonArray()
+        active.forEach { sbn ->
+            val n = sbn.notification
+            arr.add(JsonObject().apply {
+                addProperty("package", sbn.packageName)
+                addProperty("tag", sbn.tag ?: "")
+                addProperty("id", sbn.id)
+                addProperty("title", n.extras?.getString(android.app.Notification.EXTRA_TITLE) ?: "")
+                addProperty("text", n.extras?.getString(android.app.Notification.EXTRA_TEXT) ?: "")
+                addProperty("channel", n.channelId ?: "")
+                addProperty("time", sbn.postTime)
+                addProperty("is_clearable", (n.flags and android.app.Notification.FLAG_ONGOING_EVENT) == 0)
+            })
+        }
+        JsonObject().apply {
+            add("notifications", arr)
+            addProperty("count", arr.size())
+            addProperty("total_active", active.size)
+            addProperty("note", if (arr.size() == 0) "当前 App 没有活跃通知" else "仅显示本 App 通知，系统级通知读取需开启通知监听服务权限")
         }
     }
 }
