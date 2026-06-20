@@ -1423,4 +1423,456 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             addProperty("note", if (arr.size() == 0) "当前 App 没有活跃通知" else "仅显示本 App 通知，系统级通知读取需开启通知监听服务权限")
         }
     }
+
+    // ──────────────── nfc_check ────────────────
+    registry.registerTool(
+        name = "nfc_check",
+        description = "检查设备 NFC 功能状态（支持/开启/关闭）。当用户说「帮我刷门禁」「NFC」「打开NFC」「读NFC标签」时调用此工具",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = registry.context
+        val adapter = android.nfc.NfcAdapter.getDefaultAdapter(ctx)
+        if (adapter == null) {
+            JsonObject().apply {
+                addProperty("supported", false)
+                addProperty("enabled", false)
+                addProperty("message", "此设备不支持 NFC")
+            }
+        } else {
+            val enabled = adapter.isEnabled
+            JsonObject().apply {
+                addProperty("supported", true)
+                addProperty("enabled", enabled)
+                addProperty("message", if (enabled) "NFC 已开启，可将手机靠近 NFC 标签读取" else "NFC 已关闭。请先打开 NFC 开关后再读取标签")
+                if (!enabled) {
+                    addProperty("guide", "请在 设置 → 连接与共享 → NFC 中开启，或通过快捷开关打开")
+                }
+            }
+        }
+    }
+
+    // ──────────────── voice_memo ────────────────
+    registry.registerTool(
+        name = "voice_memo",
+        description = "录制一段语音备忘录并保存，支持指定录制时长。当用户说「帮我录一段」「语音备忘录」「录音」「记一下我说的话」时调用此工具",
+        inputSchema = jsonSchema(
+            "duration_seconds" to jsonNumberProp("录制时长（秒），默认 10，最大 120"),
+            "label" to jsonStringProp("录音标签/备注，用于后续查找"),
+            required = listOf("duration_seconds")
+        )
+    ) { args ->
+        val ctx = registry.context
+        val duration = (args["duration_seconds"] as? Number)?.toInt()?.coerceIn(1, 120) ?: 10
+        val label = (args["label"] as? String)?.takeIf { it.isNotBlank() } ?: "语音备忘录"
+
+        val permCheck = checkPermissionWithGuide(
+            Manifest.permission.RECORD_AUDIO, permissionName = "麦克风"
+        )
+        if (permCheck != null) return@registerTool permCheck
+
+        val voiceDir = java.io.File(ctx.cacheDir, "voice_memos")
+        voiceDir.mkdirs()
+        val fileName = "voice_${System.currentTimeMillis()}.mp4"
+        val outputFile = java.io.File(voiceDir, fileName)
+
+        val mediaRecorder = android.media.MediaRecorder()
+        try {
+            mediaRecorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            mediaRecorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            mediaRecorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            mediaRecorder.setAudioSamplingRate(16000)
+            mediaRecorder.setOutputFile(outputFile.absolutePath)
+            mediaRecorder.prepare()
+            mediaRecorder.start()
+        } catch (e: Exception) {
+            mediaRecorder.release()
+            throw Exception("无法开始录音: ${e.message}")
+        }
+
+        delay(duration * 1000L)
+        try { mediaRecorder.stop() } catch (_: Exception) {}
+        mediaRecorder.release()
+
+        val fileSize = outputFile.length()
+        if (fileSize < 100) {
+            outputFile.delete()
+            throw Exception("录音失败，录制内容为空")
+        }
+
+        val contactId = registry.connectionRepository.get().currentContactId
+        if (contactId.isNotEmpty()) {
+            registry.messageRepository.addSentMessage(
+                contactId,
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    content = outputFile.absolutePath,
+                    type = MessageType.VOICE,
+                    direction = MessageDirection.RECEIVED,
+                    status = MessageStatus.SENT,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+        }
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("label", label)
+            addProperty("duration_seconds", duration)
+            addProperty("file_path", outputFile.absolutePath)
+            addProperty("file_size_kb", fileSize / 1024)
+            addProperty("message", "已录制 ${duration} 秒语音备忘录「$label」")
+        }
+    }
+
+    // ──────────────── toggle_data ────────────────
+    registry.registerTool(
+        name = "toggle_data",
+        description = "开启或关闭移动数据网络。注意：Android 5.0+ 系统限制，部分厂商可能不支持。当用户说「打开数据」「关闭数据」「开启移动网络」「关掉流量」时调用此工具",
+        inputSchema = jsonSchema(
+            "enabled" to jsonBoolProp("true=开启移动数据，false=关闭"),
+            required = listOf("enabled")
+        )
+    ) { args ->
+        val enabled = (args["enabled"] as? Boolean) ?: throw Exception("enabled 必须为 true/false")
+        val ctx = registry.context
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: throw Exception("无法获取网络服务")
+
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                val method = cm.javaClass.getMethod("setDataEnabled", Boolean::class.javaPrimitiveType)
+                method.invoke(cm, enabled)
+            }
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("data_enabled", enabled)
+                addProperty("message", if (enabled) "已开启移动数据" else "已关闭移动数据")
+            }
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_DATA_ROAMING_SETTINGS).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                ctx.startActivity(intent)
+            } catch (_: Exception) {}
+            JsonObject().apply {
+                addProperty("success", false)
+                addProperty("note", "系统限制无法自动切换，已打开数据网络设置页，请手动操作")
+                addProperty("error", e.message)
+            }
+        }
+    }
+
+    // ──────────────── toggle_hotspot ────────────────
+    registry.registerTool(
+        name = "toggle_hotspot",
+        description = "开启或关闭 WiFi 热点。Android 8+ 通过反射调用（系统限制），部分设备可能不支持。当用户说「打开热点」「关闭热点」「开启WiFi热点」时调用此工具",
+        inputSchema = jsonSchema(
+            "enabled" to jsonBoolProp("true=开启热点，false=关闭"),
+            "ssid" to jsonStringProp("可选，热点名称，默认 \"XiaoZhi-Hotspot\""),
+            required = listOf("enabled")
+        )
+    ) { args ->
+        val enabled = (args["enabled"] as? Boolean) ?: throw Exception("enabled 必须为 true/false")
+        val ssid = (args["ssid"] as? String)?.takeIf { it.isNotBlank() } ?: "XiaoZhi-Hotspot"
+        val ctx = registry.context
+        val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: throw Exception("此设备不支持 WiFi")
+
+        try {
+            val method = wm.javaClass.getMethod("setWifiApEnabled", android.net.wifi.WifiConfiguration::class.java, Boolean::class.javaPrimitiveType)
+            val config = android.net.wifi.WifiConfiguration().apply {
+                SSID = ssid
+                allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE)
+            }
+            method.invoke(wm, if (enabled) config else null, enabled)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("hotspot_enabled", enabled)
+                addProperty("ssid", ssid)
+                addProperty("message", if (enabled) "热点已开启（SSID: $ssid）" else "热点已关闭")
+            }
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                ctx.startActivity(intent)
+            } catch (_: Exception) {}
+            JsonObject().apply {
+                addProperty("success", false)
+                addProperty("note", "系统限制无法自动切换热点，已打开 WiFi 设置页，请手动操作")
+                addProperty("error", e.message)
+            }
+        }
+    }
+
+    // ──────────────── calendar_event ────────────────
+    registry.registerTool(
+        name = "calendar_event",
+        description = "创建日历事件。支持指定标题、时间、地点和备注。当用户说「帮我记个日程」「创建日历提醒」「明天开会」「添加日历事件」时调用此工具",
+        inputSchema = jsonSchema(
+            "action" to jsonStringProp("操作: add，默认 add（目前只支持添加）"),
+            "title" to jsonStringProp("事件标题"),
+            "start_time" to jsonNumberProp("开始时间戳（毫秒），默认当前时间+1小时"),
+            "end_time" to jsonNumberProp("结束时间戳（毫秒），默认开始后1小时"),
+            "location" to jsonStringProp("可选，地点"),
+            "description" to jsonStringProp("可选，备注"),
+            required = listOf("title")
+        )
+    ) { args ->
+        val ctx = registry.context
+        val title = (args["title"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw Exception("title 不能为空")
+        val startTime = (args["start_time"] as? Number)?.toLong() ?: (System.currentTimeMillis() + 3600_000L)
+        val endTime = (args["end_time"] as? Number)?.toLong() ?: (startTime + 3600_000L)
+        val location = (args["location"] as? String) ?: ""
+        val desc = (args["description"] as? String) ?: ""
+
+        val calPerm = checkPermissionWithGuide(
+            Manifest.permission.WRITE_CALENDAR, permissionName = "日历"
+        )
+        if (calPerm != null) return@registerTool calPerm
+
+        val calendarsUri = android.provider.CalendarContract.Calendars.CONTENT_URI
+        var calId = -1L
+        val calCursor = ctx.contentResolver.query(calendarsUri, null, null, null, null)
+        calCursor?.use { c ->
+            if (c.moveToFirst()) {
+                calId = c.getLong(c.getColumnIndexOrThrow(android.provider.CalendarContract.Calendars._ID))
+            }
+        }
+        if (calId < 0) throw Exception("未找到可用日历")
+
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.DTSTART, startTime)
+            put(android.provider.CalendarContract.Events.DTEND, endTime)
+            put(android.provider.CalendarContract.Events.TITLE, title)
+            put(android.provider.CalendarContract.Events.DESCRIPTION, desc)
+            put(android.provider.CalendarContract.Events.EVENT_LOCATION, location)
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, calId)
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
+        }
+        val eventUri = ctx.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        val eventId = eventUri?.lastPathSegment ?: ""
+
+        val df = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+        JsonObject().apply {
+            addProperty("success", eventId.isNotEmpty())
+            addProperty("event_id", eventId)
+            addProperty("title", title)
+            addProperty("start", df.format(java.util.Date(startTime)))
+            addProperty("end", df.format(java.util.Date(endTime)))
+            if (location.isNotEmpty()) addProperty("location", location)
+            addProperty("message", "已创建日历事件「$title」")
+        }
+    }
+
+    // ──────────────── file_manager ────────────────
+    registry.registerTool(
+        name = "file_manager",
+        description = "管理手机文件。支持列出目录内容（list）和读取文本文件内容（read）。当用户说「看看我的文件」「下载了什么」「打开下载的文件」时调用此工具",
+        inputSchema = jsonSchema(
+            "action" to jsonStringProp("操作: list/read，默认 list"),
+            "path" to jsonStringProp("目录路径（list）或文件路径（read）。list 时默认 /storage/emulated/0/Download"),
+            "max_results" to jsonNumberProp("list 模式下最多返回数量，默认 30"),
+            required = listOf("action")
+        )
+    ) { args ->
+        val action = (args["action"] as? String)?.lowercase() ?: "list"
+        val pathStr = (args["path"] as? String)?.takeIf { it.isNotBlank() }
+            ?: if (action == "list") "/storage/emulated/0/Download" else throw Exception("read 模式需要提供 path")
+        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 100) ?: 30
+        val file = java.io.File(pathStr)
+
+        when (action) {
+            "list" -> {
+                if (!file.exists() || !file.isDirectory) throw Exception("目录不存在: $pathStr")
+                val files = file.listFiles()?.sortedByDescending { it.lastModified() }?.take(maxResults)
+                    ?: throw Exception("无法读取目录")
+                val arr = JsonArray()
+                files.forEach { f ->
+                    arr.add(JsonObject().apply {
+                        addProperty("name", f.name)
+                        addProperty("path", f.absolutePath)
+                        addProperty("is_dir", f.isDirectory)
+                        addProperty("size_bytes", if (f.isFile) f.length() else 0)
+                        addProperty("last_modified", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified())))
+                    })
+                }
+                JsonObject().apply { add("files", arr); addProperty("count", arr.size()); addProperty("path", pathStr) }
+            }
+            "read" -> {
+                if (!file.exists() || !file.isFile) throw Exception("文件不存在: $pathStr")
+                if (file.length() > 100 * 1024) throw Exception("文件过大（${file.length() / 1024}KB），仅支持 100KB 以下文本文件")
+                val text = file.readText(Charsets.UTF_8).take(5000)
+                JsonObject().apply { addProperty("success", true); addProperty("path", pathStr); addProperty("content", text); addProperty("size_bytes", file.length()) }
+            }
+            else -> throw Exception("不支持的 action: $action，支持 list/read")
+        }
+    }
+
+    // ──────────────── read_call_log ────────────────
+    registry.registerTool(
+        name = "read_call_log",
+        description = "读取最近通话记录。当用户说「最近通话」「通话记录」「谁打过电话」「未接来电」时调用此工具",
+        inputSchema = jsonSchema(
+            "max_results" to jsonNumberProp("最多返回条数，默认 10，最大 50"),
+            "type" to jsonStringProp("筛选类型: all/incoming/outgoing/missed，默认 all"),
+        )
+    ) { args ->
+        val ctx = registry.context
+        val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 10
+        val type = (args["type"] as? String)?.lowercase() ?: "all"
+
+        val callLogPerm = checkPermissionWithGuide(
+            Manifest.permission.READ_CALL_LOG, permissionName = "通话记录"
+        )
+        if (callLogPerm != null) return@registerTool callLogPerm
+
+        val uri = android.provider.CallLog.Calls.CONTENT_URI
+        val projection = arrayOf(
+            android.provider.CallLog.Calls.NUMBER,
+            android.provider.CallLog.Calls.CACHED_NAME,
+            android.provider.CallLog.Calls.TYPE,
+            android.provider.CallLog.Calls.DURATION,
+            android.provider.CallLog.Calls.DATE
+        )
+        val selection = when (type) {
+            "incoming" -> "${android.provider.CallLog.Calls.TYPE} = ${android.provider.CallLog.Calls.INCOMING_TYPE}"
+            "outgoing" -> "${android.provider.CallLog.Calls.TYPE} = ${android.provider.CallLog.Calls.OUTGOING_TYPE}"
+            "missed" -> "${android.provider.CallLog.Calls.TYPE} = ${android.provider.CallLog.Calls.MISSED_TYPE}"
+            else -> null
+        }
+        val cursor = ctx.contentResolver.query(uri, projection, selection, null, "${android.provider.CallLog.Calls.DATE} DESC LIMIT $maxResults")
+        val arr = JsonArray()
+        cursor?.use { c ->
+            while (c.moveToNext()) {
+                val number = c.getString(0) ?: ""
+                val name = c.getString(1) ?: number
+                arr.add(JsonObject().apply {
+                    addProperty("number", number)
+                    addProperty("name", name)
+                    addProperty("type", when (c.getInt(2)) {
+                        android.provider.CallLog.Calls.INCOMING_TYPE -> "来电"
+                        android.provider.CallLog.Calls.OUTGOING_TYPE -> "去电"
+                        android.provider.CallLog.Calls.MISSED_TYPE -> "未接"
+                        else -> "未知"
+                    })
+                    addProperty("duration_sec", c.getLong(3))
+                    addProperty("time", java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(c.getLong(4))))
+                })
+            }
+        }
+        JsonObject().apply { add("calls", arr); addProperty("count", arr.size()); addProperty("filter", type) }
+    }
+
+    // ──────────────── get_step_count ────────────────
+    registry.registerTool(
+        name = "get_step_count",
+        description = "读取设备步数（基于计步传感器）。当用户说「今天走了多少步」「步数」「计步器」时调用此工具",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = registry.context
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: throw Exception("此设备不支持传感器")
+        val stepSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        val detectSensor = sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+        if (stepSensor == null && detectSensor == null) {
+            return@registerTool JsonObject().apply {
+                addProperty("available", false)
+                addProperty("message", "此设备没有专用计步传感器")
+            }
+        }
+        val useSensor = stepSensor ?: detectSensor
+        val result = try {
+            var completed = false
+            suspendCancellableCoroutine<JsonObject> { cont ->
+                val listener = object : SensorEventListener {
+                    override fun onSensorChanged(event: SensorEvent) {
+                        if (completed) return
+                        completed = true
+                        sm.unregisterListener(this)
+                        cont.resume(JsonObject().apply {
+                            addProperty("available", true)
+                            addProperty("steps", event.values[0].toInt())
+                            addProperty("sensor", if (stepSensor != null) "step_counter" else "step_detector")
+                        }, null)
+                    }
+                    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+                }
+                sm.registerListener(listener, useSensor, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        } catch (_: Exception) {
+            JsonObject().apply {
+                addProperty("available", false)
+                addProperty("steps", 0)
+                addProperty("message", "读取步数失败")
+            }
+        }
+        result
+    }
+
+    // ──────────────── share_wifi_qr ────────────────
+    registry.registerTool(
+        name = "share_wifi_qr",
+        description = "生成当前连接 WiFi 的二维码（SSID），供其他手机扫码连接。当用户说「WiFi二维码」「分享WiFi」「生成WiFi二维码」时调用此工具",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val ctx = registry.context
+        val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: throw Exception("此设备不支持 WiFi")
+        val wifiInfo = wm.connectionInfo ?: throw Exception("未连接到 WiFi")
+        val ssid = wifiInfo.ssid?.replace("\"", "") ?: throw Exception("无法获取 SSID")
+        val wifiContent = "WIFI:S:$ssid;T:WPA;;;"
+
+        val writer = com.google.zxing.qrcode.QRCodeWriter()
+        val size = 300
+        val bitMatrix = writer.encode(wifiContent, com.google.zxing.BarcodeFormat.QR_CODE, size, size)
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.RGB_565)
+        for (x in 0 until size) for (y in 0 until size) bitmap.setPixel(x, y, if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+
+        val qrDir = java.io.File(ctx.cacheDir, "wifi_qr"); qrDir.mkdirs()
+        val outputFile = java.io.File(qrDir, "wifi_${System.currentTimeMillis()}.png")
+        java.io.FileOutputStream(outputFile).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+
+        val contactId = registry.connectionRepository.get().currentContactId
+        if (contactId.isNotEmpty()) {
+            registry.messageRepository.addSentMessage(contactId, ChatMessage(id = UUID.randomUUID().toString(), content = outputFile.absolutePath, type = MessageType.IMAGE, direction = MessageDirection.RECEIVED, status = MessageStatus.SENT, timestamp = System.currentTimeMillis()))
+        }
+
+        JsonObject().apply {
+            addProperty("success", true)
+            addProperty("ssid", ssid)
+            addProperty("file_path", outputFile.absolutePath)
+            addProperty("message", "WiFi「$ssid」二维码已生成并显示在聊天中（不含密码）")
+        }
+    }
+
+    // ──────────────── open_app_settings ────────────────
+    registry.registerTool(
+        name = "open_app_settings",
+        description = "打开系统设置中指定应用的详情页（权限、通知、电池优化）。当用户说「打开微信的权限设置」「看看XX的应用信息」「应用的权限」时调用此工具",
+        inputSchema = jsonSchema(
+            "package_name" to jsonStringProp("应用包名，如 com.tencent.mm（微信）"),
+            required = listOf("package_name")
+        )
+    ) { args ->
+        val pkg = (args["package_name"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw Exception("package_name 不能为空")
+        val ctx = registry.context
+        try {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = android.net.Uri.parse("package:$pkg")
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            ctx.startActivity(intent)
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("package", pkg)
+                addProperty("message", "已打开「$pkg」的应用详情页")
+            }
+        } catch (e: Exception) {
+            throw Exception("无法打开应用设置: ${e.message}")
+        }
+    }
 }
