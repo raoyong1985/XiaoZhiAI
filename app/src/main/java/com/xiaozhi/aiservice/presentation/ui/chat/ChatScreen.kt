@@ -33,6 +33,7 @@ import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
+import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageList
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageItem
 import com.xiaozhi.aiservice.presentation.ui.components.InputBar
@@ -216,9 +217,13 @@ fun ChatScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) { message, index ->
+            val isLatestBot = remember(uiState.messages) {
+                index == uiState.messages.indexOfLast { it.direction == MessageDirection.RECEIVED }
+            }
             ChatMessageItem(
                 message = message,
                 index = index,
+                typingMsPerChar = if (isLatestBot) 30L else 0L,
                 botColor = botColor,
                 contactName = contact.name,
                 showTimestamp = true,
