@@ -779,7 +779,7 @@ class XiaoZhiBackendService(
                         add("id", msgId)
                         val result = JsonObject().apply {
                             addProperty("protocolVersion", "2024-11-05")
-                            add("capabilities", JsonObject().apply { addProperty("tools", true) })
+                            add("capabilities", JsonObject().apply { add("tools", JsonObject()) })
                             val serverInfo = JsonObject().apply {
                                 addProperty("name", "xiaozhi-android")
                                 addProperty("version", "1.0.0")
