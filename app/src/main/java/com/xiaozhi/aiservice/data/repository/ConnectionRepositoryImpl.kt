@@ -64,18 +64,21 @@ class ConnectionRepositoryImpl @Inject constructor(
     init {
         // AI 说话/停止时自动管理唤醒锁
         // 用 collectLatest：state 变化时取消当前块，新 state 立即接管
-        // 内部 while + delay(25s) 循环续期，避免 30s 超时后 state 没变导致锁丢失
+        // 内部 while + delay(20s) 循环续期，避免 30s 超时后 state 没变导致锁丢失
+        // 用 emitted state 而非 _aiState.value 避免 collectLatest 取消期间的竞态
         scope.launch {
             _aiState.collectLatest { state ->
                 if (state == AiState.SPEAKING) {
-                    // 循环续期：每 25s 重新 acquire，state 变化时 collectLatest 取消本块
-                    while (_aiState.value == AiState.SPEAKING) {
-                        if (wakeLock?.isHeld != true) {
-                            wakeLock?.acquire(30_000L)
+                    try {
+                        while (true) {
+                            if (wakeLock?.isHeld != true) {
+                                wakeLock?.acquire(30_000L)
+                            }
+                            delay(20_000L)
                         }
-                        delay(25_000L)
+                    } finally {
+                        if (wakeLock?.isHeld == true) wakeLock.release()
                     }
-                    if (wakeLock?.isHeld == true) wakeLock.release()
                 } else {
                     if (wakeLock?.isHeld == true) wakeLock.release()
                 }

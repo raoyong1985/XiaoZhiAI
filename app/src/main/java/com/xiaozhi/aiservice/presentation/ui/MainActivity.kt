@@ -38,11 +38,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         Logger.i(TAG, "权限结果: RECORD_AUDIO=$audioGranted")
-        setContent {
-            XiaoZhiTheme {
-                MainNavigation()
-            }
-        }
+        // onCreate 中已 setContent，不需要重复调用
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,18 +55,13 @@ class MainActivity : ComponentActivity() {
     private fun checkAndRequestPermissions() {
         val permissionsToRequest = mutableListOf<String>()
 
-        val basePermissions = listOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.INTERNET,
-            Manifest.permission.ACCESS_NETWORK_STATE
-        )
-
-        for (permission in basePermissions) {
-            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(permission)
-            }
+        // RECORD_AUDIO 是核心功能权限
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.RECORD_AUDIO)
         }
 
+        // Android 13+ 通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -78,6 +69,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Android 12+ 蓝牙权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -89,21 +81,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 定位权限
+        // 定位（WiFi 扫描 + MCP 定位工具）
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
             permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
-        // 日历读取权限
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR)
+        // 相机（MCP 拍照、扫码）
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.READ_CALENDAR)
+            permissionsToRequest.add(Manifest.permission.CAMERA)
         }
 
-        if (permissionsToRequest.isEmpty()) {
-            // 权限已有，onCreate 中已调用 setContent
-        } else {
+        // 读取联系人（MCP 拨号、短信）
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.READ_CONTACTS)
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
             requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }

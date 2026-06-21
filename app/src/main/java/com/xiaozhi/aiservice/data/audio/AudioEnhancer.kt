@@ -65,9 +65,10 @@ class AudioEnhancer {
         // AEC
         if (aecEnabled && AcousticEchoCanceler.isAvailable()) {
             try {
-                aec = AcousticEchoCanceler.create(audioSessionId)
-                if (aec != null) {
-                    aec!!.enabled = true
+                val effect = AcousticEchoCanceler.create(audioSessionId)
+                if (effect != null) {
+                    effect.enabled = true
+                    aec = effect
                     Logger.i(TAG, "AEC 初始化成功 session=$audioSessionId")
                     anySuccess = true
                 } else {
@@ -82,9 +83,10 @@ class AudioEnhancer {
         // AGC
         if (agcEnabled && AutomaticGainControl.isAvailable()) {
             try {
-                agc = AutomaticGainControl.create(audioSessionId)
-                if (agc != null) {
-                    agc!!.enabled = true
+                val effect = AutomaticGainControl.create(audioSessionId)
+                if (effect != null) {
+                    effect.enabled = true
+                    agc = effect
                     Logger.i(TAG, "AGC 初始化成功 session=$audioSessionId")
                     anySuccess = true
                 } else {
@@ -99,9 +101,10 @@ class AudioEnhancer {
         // NS
         if (nsEnabled && NoiseSuppressor.isAvailable()) {
             try {
-                ns = NoiseSuppressor.create(audioSessionId)
-                if (ns != null) {
-                    ns!!.enabled = true
+                val effect = NoiseSuppressor.create(audioSessionId)
+                if (effect != null) {
+                    effect.enabled = true
+                    ns = effect
                     Logger.i(TAG, "NS 初始化成功 session=$audioSessionId")
                     anySuccess = true
                 } else {

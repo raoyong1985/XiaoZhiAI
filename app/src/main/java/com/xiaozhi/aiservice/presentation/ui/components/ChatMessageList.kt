@@ -32,10 +32,14 @@ fun ChatMessageList(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     coroutineScope: CoroutineScope = rememberCoroutineScope(),
-    messageContent: @Composable (chatMessage: ChatMessage, index: Int) -> Unit
+    messageContent: @Composable (chatMessage: ChatMessage, index: Int, isNewMessage: Boolean) -> Unit
 ) {
+    // ── 记录初始消息数：初始加载的消息不做入场动画 ──
+    var initialCount by remember { mutableStateOf(messages.size) }
+    LaunchedEffect(Unit) { initialCount = messages.size }  // 初始快照
+    // 后续新增的消息（newCount > initialCount）做动画，历史消息不动画
+
     // ── 自动滚动到最新消息 ──
-    // 首次加载无动画；后续若用户在底部则平滑滚动，若滚上去了则不打扰阅读
     var initialLoad by remember { mutableStateOf(true) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -70,7 +74,7 @@ fun ChatMessageList(
                 if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
                     DateSeparator(message.timestamp)
                 }
-                messageContent(message, index)
+                messageContent(message, index, index >= initialCount)
             }
         }
 
