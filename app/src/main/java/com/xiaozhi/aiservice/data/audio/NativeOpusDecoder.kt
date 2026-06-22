@@ -652,33 +652,7 @@ class NativeOpusDecoder(
     }
 
     /**
-     * Float 域软限幅器：防极端峰值超出 DAC 范围
-     */
-    private fun applyFloatLimiter(pcm: FloatArray): FloatArray {
-        val CLIP = 1.0f
-        var peak = 0f
-        for (v in pcm) {
-            val abs = abs(v)
-            if (abs > peak) peak = abs
-        }
-        if (peak <= CLIP) return pcm
-
-        val ratio = CLIP / peak
-        for (i in pcm.indices) {
-            val s = pcm[i]
-            val absS = abs(s)
-            val compressed = if (s >= 0) {
-                s * ratio + (s - s * ratio) * kotlin.math.sqrt(absS / peak)
-            } else {
-                -(absS * ratio + (absS - absS * ratio) * kotlin.math.sqrt(absS / peak))
-            }
-            pcm[i] = compressed.coerceIn(-CLIP, CLIP)
-        }
-        return pcm
-    }
-
-    /**
-     * 32-bit Float → 16-bit Short 转换
+     * Float → Short 转换
      * Float 域 DSP 处理完成后转回兼容的 16-bit PCM
      */
     private fun floatToShorts(floats: FloatArray): ShortArray {
