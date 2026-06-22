@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.presentation.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -32,15 +33,12 @@ fun ChatMessageList(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     coroutineScope: CoroutineScope = rememberCoroutineScope(),
-    messageContent: @Composable (chatMessage: ChatMessage, index: Int, isNewMessage: Boolean) -> Unit
+    messageContent: @Composable (chatMessage: ChatMessage, index: Int) -> Unit
 ) {
-    // ── 记录初始消息数：初始加载的消息不做入场动画 ──
-    var initialCount by remember { mutableStateOf(messages.size) }
-    LaunchedEffect(Unit) { initialCount = messages.size }  // 初始快照
-    // 后续新增的消息（newCount > initialCount）做动画，历史消息不动画
-
     // ── 自动滚动到最新消息 ──
+    // 首次加载无动画；后续若用户在底部则平滑滚动，若滚上去了则不打扰阅读
     var initialLoad by remember { mutableStateOf(true) }
+    val initialItemCount by remember { mutableIntStateOf(messages.size) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             if (initialLoad) {
@@ -55,12 +53,15 @@ fun ChatMessageList(
         }
     }
     // ── 回到底部按钮状态 ──
-    val showScrollToBottom by remember(messages.size, messages.isNotEmpty()) {
+    // ⚠️ derivedStateOf 不套 remember(key)，否则每次消息变化重建 entire state
+    // derivedStateOf 通过 Compose 快照系统追踪 listState.layoutInfo 的读取，
+    // 滚动时自动更新，新增消息时 totalItemsCount 变化也自动触发
+    val showScrollToBottom by remember {
         derivedStateOf {
             val visInfo = listState.layoutInfo.visibleItemsInfo
             val lastVisible = visInfo.lastOrNull()?.index ?: -1
             val totalItems = listState.layoutInfo.totalItemsCount
-            messages.isNotEmpty() && totalItems > 0 && lastVisible < totalItems - 1
+            totalItems > 0 && lastVisible < totalItems - 1
         }
     }
 
@@ -74,7 +75,17 @@ fun ChatMessageList(
                 if (index == 0 || !isSameDay(messages[index - 1].timestamp, message.timestamp)) {
                     DateSeparator(message.timestamp)
                 }
-                messageContent(message, index, index >= initialCount)
+                if (index >= initialItemCount) {
+                    // 新消息：轻量 fadeIn 入场，无 slide/spring 减少布局开销
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(animationSpec = tween(200)),
+                        exit = fadeOut(animationSpec = tween(200))
+                    ) { messageContent(message, index) }
+                } else {
+                    // 历史消息（初始加载）：瞬间显示，零动画开销
+                    messageContent(message, index)
+                }
             }
         }
 

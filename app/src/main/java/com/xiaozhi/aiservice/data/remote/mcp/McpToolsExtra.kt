@@ -1006,7 +1006,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                     addProperty("message", "已取消 ${match.hour}:${String.format(Locale.getDefault(), "%02d", match.minute)} 的闹钟")
                 }
             }
-            throw Exception("未找到 %02d:%02d 的闹钟")
+            throw Exception("未找到 ${String.format(Locale.getDefault(), "%02d:%02d", hour, minute)} 的闹钟")
         }
 
         throw Exception("请提供 alarm_id 或 hour+minute")
@@ -1507,7 +1507,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                     id = UUID.randomUUID().toString(),
                     content = outputFile.absolutePath,
                     type = MessageType.VOICE,
-                    direction = MessageDirection.RECEIVED,
+                    direction = MessageDirection.SENT,
                     status = MessageStatus.SENT,
                     timestamp = System.currentTimeMillis()
                 )
@@ -1837,7 +1837,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
 
         val contactId = registry.connectionRepository.get().currentContactId
         if (contactId.isNotEmpty()) {
-            registry.messageRepository.addSentMessage(contactId, ChatMessage(id = UUID.randomUUID().toString(), content = outputFile.absolutePath, type = MessageType.IMAGE, direction = MessageDirection.RECEIVED, status = MessageStatus.SENT, timestamp = System.currentTimeMillis()))
+            registry.messageRepository.addSentMessage(contactId, ChatMessage(id = UUID.randomUUID().toString(), content = outputFile.absolutePath, type = MessageType.IMAGE, direction = MessageDirection.SENT, status = MessageStatus.SENT, timestamp = System.currentTimeMillis()))
         }
 
         JsonObject().apply {

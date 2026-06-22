@@ -76,5 +76,4 @@ class ContactsRepositoryImpl @Inject constructor(
         }
     }
 
-    
-    }
+}

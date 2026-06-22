@@ -104,7 +104,7 @@ fun GroupChatScreen(
             listState = listState,
             coroutineScope = coroutineScope,
             modifier = Modifier.fillMaxSize().padding(padding)
-        ) { message, index, isNewMessage ->
+        ) { message, index ->
             val isDark = isSystemInDarkTheme()
             val botColor = remember(message.botName, isDark) {
                 if (message.botName.isNotEmpty())
@@ -114,8 +114,6 @@ fun GroupChatScreen(
             }
             ChatMessageItem(
                 message = message,
-                index = index,
-                animateIn = isNewMessage,
                 botColor = botColor,
                 showTimestamp = true,
                 onCopy = { text ->

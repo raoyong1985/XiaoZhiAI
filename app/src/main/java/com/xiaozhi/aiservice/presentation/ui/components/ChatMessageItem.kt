@@ -33,7 +33,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -59,7 +58,6 @@ import kotlinx.coroutines.delay
 fun ChatMessageItem(
     message: ChatMessage,
     index: Int = 0,
-    animateIn: Boolean = false,  // true: 新增消息做入场动画; false: 历史消息瞬间显示
     botColor: BotColorScheme.BotColor? = null,
     contactName: String = "",
     showTimestamp: Boolean = true,
@@ -87,25 +85,7 @@ fun ChatMessageItem(
     var showContextMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
 
-    // ── 序列入场动画（按 index 延迟，越靠后越晚出现）──
-    // ── 入场动画：历史消息瞬间显示，新增消息做序列入场动画 ──
-    @Composable
-    fun MessageEntry(content: @Composable () -> Unit) {
-        if (animateIn) {
-            AnimatedVisibility(
-                visible = true,
-                enter = fadeIn(animationSpec = tween(250 + index * 15)) +
-                        slideInVertically(
-                            animationSpec = spring(dampingRatio = 0.7f, stiffness = 200f)
-                        ) { it / 2 },
-                exit = fadeOut(animationSpec = tween(200))
-            ) { content() }
-        } else {
-            content()
-        }
-    }
-
-    MessageEntry {
+    // ── 入场动画由 ChatMessageList 控制（仅新消息 fadeIn）──
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
         horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start,
@@ -129,8 +109,8 @@ fun ChatMessageItem(
         Box {
             Box(
                 modifier = Modifier
-                    .widthIn(max = 320.dp, min = 60.dp)
-                    .shadow(1.dp, AppShapes.bubble, ambientColor = Color.Black.copy(alpha = 0.06f), spotColor = Color.Black.copy(alpha = 0.1f))
+                    .widthIn(min = 60.dp, max = 320.dp)
+                    .shadow(1.dp, AppShapes.bubble)
                     .clip(RoundedCornerShape(
                             topStart = 12.dp,
                             topEnd = 12.dp,
@@ -139,7 +119,7 @@ fun ChatMessageItem(
                         )
                     )
                     .background(bubbleColor)
-                    .bounceClick(pressedScale = 0.97f, stiffness = Spring.StiffnessVeryLow)
+                    .bounceClick(pressedScale = 0.97f, stiffness = androidx.compose.animation.core.Spring.StiffnessVeryLow)
                     .combinedClickable(
                         onClick = {},
                         onLongClick = { showContextMenu = true }
@@ -255,7 +235,6 @@ fun ChatMessageItem(
             )
         }
     }  // Row
-    }  // AnimatedVisibility
 
     // 全屏图片查看器
     if (showImageViewer) {

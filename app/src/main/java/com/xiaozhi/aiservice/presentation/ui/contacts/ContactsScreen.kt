@@ -193,7 +193,6 @@ private fun ContactItem(
         },
         supportingContent = {
             Column {
-                // 最近消息预览
                 if (lastMessage != null && lastMessage.content.isNotEmpty()) {
                     val prefix = if (lastMessage.direction == MessageDirection.SENT) "我: " else ""
                     Text(
@@ -251,7 +250,6 @@ private fun ContactItem(
                             AppShapes.menu
                         )
                 ) {
-                    // ── 基本设置 ──
                     SectionHeader("基本设置")
                     DropdownMenuItem(
                         text = { Text("编辑联系人") },
@@ -281,7 +279,6 @@ private fun ContactItem(
                     )
                     MenuDivider()
 
-                    // ── 数据管理 ──
                     SectionHeader("数据管理")
                     DropdownMenuItem(
                         text = { Text("清空聊天记录") },
@@ -301,7 +298,6 @@ private fun ContactItem(
                     )
                     MenuDivider()
 
-                    // ── 危险操作 ──
                     DropdownMenuItem(
                         text = { Text("删除联系人", color = MaterialTheme.colorScheme.error) },
                         onClick = {
@@ -336,11 +332,11 @@ fun AddEditContactDialog(
     contact: BotContact?,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
-    ) {
+) {
     val isEditing = contact != null
     var name by remember { mutableStateOf(contact?.name ?: "") }
-    var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().serverUrl) }
-    var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: com.xiaozhi.aiservice.domain.model.BotContact().otaUrl) }
+    var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
+    var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
 
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
@@ -355,7 +351,6 @@ fun AddEditContactDialog(
             color = MaterialTheme.colorScheme.surface
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // 顶部导航栏
                 TopAppBar(
                     title = {
                         Text(
@@ -374,7 +369,6 @@ fun AddEditContactDialog(
                     )
                 )
 
-                // 可滚动内容区
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -383,7 +377,6 @@ fun AddEditContactDialog(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 基本配置
                     Text("基本配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
                     OutlinedTextField(
                         value = name,
@@ -396,7 +389,6 @@ fun AddEditContactDialog(
 
                     Divider()
 
-                    // 服务器配置
                     Text("服务器配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
                     OutlinedTextField(
                         value = serverUrl,
@@ -417,7 +409,6 @@ fun AddEditContactDialog(
 
                     Divider()
 
-                    // ID 信息（只读）
                     Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
                     Text("版本：${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("设备ID：$generatedDeviceId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -426,7 +417,6 @@ fun AddEditContactDialog(
                     Spacer(modifier = Modifier.height(80.dp))
                 }
 
-                // 底部固定按钮栏
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     tonalElevation = 3.dp,
@@ -474,9 +464,6 @@ fun AddEditContactDialog(
 // 共享菜单辅助组件
 // ═══════════════════════════════════════════
 
-/**
- * 菜单分组标题
- */
 @Composable
 fun SectionHeader(title: String) {
     Text(
@@ -488,9 +475,6 @@ fun SectionHeader(title: String) {
     )
 }
 
-/**
- * 菜单分隔线（较细，双侧留边）
- */
 @Composable
 fun MenuDivider() {
     Divider(

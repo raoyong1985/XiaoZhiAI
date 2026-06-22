@@ -64,11 +64,13 @@ class ConnectionRepositoryImpl @Inject constructor(
     init {
         // AI 说话/停止时自动管理唤醒锁
         // 用 collectLatest：state 变化时取消当前块，新 state 立即接管
-        // 内部 while + delay(20s) 循环续期，避免 30s 超时后 state 没变导致锁丢失
-        // 用 emitted state 而非 _aiState.value 避免 collectLatest 取消期间的竞态
+        // 内部 while + delay(25s) 循环续期，避免 30s 超时后 state 没变导致锁丢失
         scope.launch {
             _aiState.collectLatest { state ->
                 if (state == AiState.SPEAKING) {
+                    // 循环续期：每 20s 重新 acquire，state 变化时 collectLatest 取消本块
+                    // ⚠️ 必须用 try/finally：collectLatest 取消时 delay 抛 CancellationException，
+                    // 没有 finally 的锁释放会永不被执行，导致唤醒锁一直持有
                     try {
                         while (true) {
                             if (wakeLock?.isHeld != true) {
@@ -111,10 +113,12 @@ class ConnectionRepositoryImpl @Inject constructor(
     var suppressAutoListening = false
 
     // 当前联系人 ID，用于消息路由
+    @Volatile
     private var _currentContactId: String = ""
     override val currentContactId: String get() = _currentContactId
 
     // 当前联系人唤醒词（空=说话即唤醒，非空=需要验证）
+    @Volatile
     var currentWakeWord: String = ""
 
     // 唤醒词验证中：第一次 STT 结果需要匹配唤醒词

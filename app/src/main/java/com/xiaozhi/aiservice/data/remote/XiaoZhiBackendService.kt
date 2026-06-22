@@ -45,6 +45,7 @@ class XiaoZhiBackendService(
     private val audioService: AudioService
 ) : BotConnection {
 
+    @Volatile
     private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
 
     companion object {
@@ -61,8 +62,10 @@ class XiaoZhiBackendService(
     }
 
     /** 服务器下发的视觉AI API URL（从MCP initialize消息中解析） */
+    @Volatile
     var visionUrl: String? = null
     /** 服务器下发的视觉AI token */
+    @Volatile
     var visionToken: String? = null
 
     private val supervisorJob = SupervisorJob()

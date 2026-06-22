@@ -31,18 +31,6 @@ import kotlinx.coroutines.launch
 
 /**
  * 群聊列表界面
- *
- * 功能：
- * - 显示所有群聊（列表 / 空状态）
- * - 点击进入聊天
- * - 更多菜单：编辑名称、切换输入模式、添加/删除成员、
- *   清空记录、导出记录、解散群聊
- * - FAB 按钮创建新群聊
- *
- * 交互：
- * - 「编辑名称」弹出输入对话框
- * - 「添加/删除成员」弹出联系人选择列表
- * - 「清空记录」「解散群聊」弹出确认对话框
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,7 +45,6 @@ fun GroupChatListScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // ── 各对话框的状态（null = 未展示） ──
     var editingGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
     var deletingGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
     var addingMemberGroup by remember { mutableStateOf<com.xiaozhi.aiservice.domain.model.GroupChat?>(null) }
@@ -79,7 +66,6 @@ fun GroupChatListScreen(
                 windowInsets = WindowInsets.statusBars
             )
         },
-        // FAB 创建群聊
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onCreateGroupClick,
@@ -91,7 +77,6 @@ fun GroupChatListScreen(
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         if (groups.isEmpty()) {
-            // ── 空状态 ──
             com.xiaozhi.aiservice.presentation.ui.components.EmptyStateView(
                 icon = Icons.Default.Forum,
                 title = "暂无群聊",
@@ -99,12 +84,11 @@ fun GroupChatListScreen(
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
         } else {
-            // ── 群聊列表 ──
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(vertical = 2.dp)
             ) {
-                items(groups) { group ->
+                items(groups, key = { it.id }) { group ->
                     ListItem(
                         modifier = Modifier.clickable { onGroupClick(group.id) },
                         headlineContent = {
@@ -135,13 +119,12 @@ fun GroupChatListScreen(
                             }
                         },
                         leadingContent = {
-                            com.xiaozhi.aiservice.presentation.ui.components.AvatarView(
+                            AvatarView(
                                 name = group.name,
                                 size = 48.dp
                             )
                         },
                         trailingContent = {
-                            // ── 三点菜单 ──
                             Box(modifier = Modifier.padding(start = 8.dp)) {
                                 var showMenu by remember { mutableStateOf(false) }
                                 IconButton(onClick = { showMenu = true }) {
@@ -159,7 +142,6 @@ fun GroupChatListScreen(
                                             AppShapes.menu
                                         )
                                 ) {
-                                    // ── 基本设置 ──
                                     SectionHeader("基本设置")
                                     DropdownMenuItem(
                                         text = { Text("编辑名称") },
@@ -187,7 +169,6 @@ fun GroupChatListScreen(
                                     )
                                     MenuDivider()
 
-                                    // ── 成员管理 ──
                                     SectionHeader("成员管理")
                                     DropdownMenuItem(
                                         text = { Text("添加成员") },
@@ -201,7 +182,6 @@ fun GroupChatListScreen(
                                     )
                                     MenuDivider()
 
-                                    // ── 数据管理 ──
                                     SectionHeader("数据管理")
                                     DropdownMenuItem(
                                         text = { Text("清空群聊记录") },
@@ -218,7 +198,6 @@ fun GroupChatListScreen(
                                     )
                                     MenuDivider()
 
-                                    // ── 危险操作 ──
                                     DropdownMenuItem(
                                         text = { Text("解散该群", color = MaterialTheme.colorScheme.error) },
                                         onClick = { showMenu = false; deletingGroup = group },
@@ -237,11 +216,7 @@ fun GroupChatListScreen(
         }
     }
 
-    // ═══════════════════════════════════════════
     // 对话框
-    // ═══════════════════════════════════════════
-
-    // ── 编辑群聊名称 ──
     editingGroup?.let { group ->
         var newName by remember(group.id) { mutableStateOf(group.name) }
         AlertDialog(
@@ -277,7 +252,6 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 删除群聊确认 ──
     deletingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { deletingGroup = null },
@@ -302,8 +276,6 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 添加成员 ──
-    // 列出所有不在群内的联系人，点击即加入
     addingMemberGroup?.let { group ->
         val available = contacts.filter { c -> !group.botIds.contains(c.id) }
         AlertDialog(
@@ -407,8 +379,6 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 删除成员 ──
-    // 列出群内所有 bot，点击即移出
     removingMemberGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { removingMemberGroup = null },
@@ -515,12 +485,11 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 清空聊天记录确认 ──
     clearingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { clearingGroup = null },
             shape = AppShapes.dialog,
-            title = { Text("清空聊天记录") },
+            title = { Text("清空群聊记录") },
             text = { Text("确定要清空 \"${group.name}\" 的所有聊天记录吗？") },
             confirmButton = {
                 TextButton(onClick = {
@@ -529,11 +498,13 @@ fun GroupChatListScreen(
                         clearingGroup = null
                     }
                 }) {
-                    Text("确定", color = MaterialTheme.colorScheme.error)
+                    Text("清空")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { clearingGroup = null }) { Text("取消") }
+                TextButton(onClick = { clearingGroup = null }) {
+                    Text("取消")
+                }
             }
         )
     }
