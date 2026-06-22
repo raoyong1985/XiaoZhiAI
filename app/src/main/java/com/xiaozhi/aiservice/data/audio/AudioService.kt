@@ -89,7 +89,7 @@ class AudioService {
      * 参考 ESP32 AudioService::EnableDeviceAec()
      */
     fun setAecEnabled(enabled: Boolean) {
-        audioEnhancer.aecEnabled = enabled
+        audioEnhancer.setAec(enabled)
         audioEnhancer.reset()
         Logger.i(TAG, "AEC ${if (enabled) "启用" else "禁用"}")
     }
@@ -105,7 +105,7 @@ class AudioService {
      * 设置 AGC（自动增益控制）启用状态
      */
     fun setAgcEnabled(enabled: Boolean) {
-        audioEnhancer.agcEnabled = enabled
+        audioEnhancer.setAgc(enabled)
         audioEnhancer.reset()
         Logger.i(TAG, "AGC ${if (enabled) "启用" else "禁用"}")
     }
@@ -117,7 +117,7 @@ class AudioService {
      * 设置 NS（降噪）启用状态
      */
     fun setNsEnabled(enabled: Boolean) {
-        audioEnhancer.nsEnabled = enabled
+        audioEnhancer.setNs(enabled)
         audioEnhancer.reset()
         Logger.i(TAG, "降噪 ${if (enabled) "启用" else "禁用"}")
     }

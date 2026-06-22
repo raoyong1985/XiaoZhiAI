@@ -41,14 +41,11 @@ import java.util.Locale
 
 /**
  * 共享消息气泡组件 — 群聊/私聊共用
- *
- * @param index 消息在列表中的位置（用于序列入场动画，越靠后延迟越大）
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatMessageItem(
     message: ChatMessage,
-    index: Int = 0,
     botColor: BotColorScheme.BotColor? = null,
     contactName: String = "",
     showTimestamp: Boolean = true,

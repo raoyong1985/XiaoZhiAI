@@ -104,7 +104,7 @@ fun GroupChatScreen(
             listState = listState,
             coroutineScope = coroutineScope,
             modifier = Modifier.fillMaxSize().padding(padding)
-        ) { message, index ->
+        ) { message, _ ->
             val isDark = isSystemInDarkTheme()
             val botColor = remember(message.botName, isDark) {
                 if (message.botName.isNotEmpty())

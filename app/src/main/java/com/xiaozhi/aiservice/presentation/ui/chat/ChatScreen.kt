@@ -216,10 +216,9 @@ fun ChatScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-        ) { message, index ->
+        ) { message, _ ->
             ChatMessageItem(
                 message = message,
-                index = index,
                 botColor = botColor,
                 contactName = contact.name,
                 showTimestamp = true,

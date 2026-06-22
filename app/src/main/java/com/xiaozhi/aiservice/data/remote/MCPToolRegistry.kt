@@ -7,6 +7,8 @@ import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.remote.mcp.registerBasicTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerCameraTool
 import com.xiaozhi.aiservice.data.remote.mcp.registerExtraTools
+import com.xiaozhi.aiservice.data.remote.mcp.registerAlarmTools
+import com.xiaozhi.aiservice.data.remote.mcp.registerNoteTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerIntentTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerLocationTools
 import com.xiaozhi.aiservice.data.remote.mcp.registerNetworkTools
@@ -50,6 +52,8 @@ class MCPToolRegistry @Inject constructor(
         registerXiaozhiTools(this)
         registerCameraTool(this)
         registerExtraTools(this)
+        registerAlarmTools(this)
+        registerNoteTools(this)
         registerThemeTools(this)
     }
 
