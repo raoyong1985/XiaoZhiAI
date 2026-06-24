@@ -17,7 +17,7 @@ class RelayStateTest {
         val next = state.nextSession()
         assertEquals(2L, next.sessionId)
         assertEquals(0, next.forwardRound)
-        assertEquals(emptySet(), next.spokenInThisRound)
+        assertEquals(emptySet<Int>(), next.spokenInThisRound)
     }
 
     @Test
