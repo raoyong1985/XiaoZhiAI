@@ -10,7 +10,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import com.xiaozhi.aiservice.utils.Logger
-import com.xiaozhi.aiservice.data.settings.DeviceSettings
+import com.xiaozhi.aiservice.data.settings.AudioSettings
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -220,7 +220,7 @@ class AudioService {
         // 从设置加载麦克风增益
         val ctx = appContext
         if (ctx != null) {
-            micGain = DeviceSettings.getMicGain(ctx)
+            micGain = AudioSettings.getMicGain(ctx)
         }
 
         // 使用设置的采样率（与 ESP32 AFE 音频处理器一致，语音识别最优化）
