@@ -8,6 +8,11 @@ import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStoreFile
+import kotlinx.coroutines.flow.first
 
 fun registerBasicTools(registry: MCPToolRegistry) {
     // 已合并到 get_system_info（get_device_info 删除）
@@ -33,9 +38,7 @@ fun registerBasicTools(registry: MCPToolRegistry) {
     ) { _ ->
         val bm = registry.context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
-        // 电池 Intent（含充电状态、温度、健康）
         val tempIntent = registry.context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-        // 充电状态
         val plugged = tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val chargeStatus = when (plugged) {
             android.os.BatteryManager.BATTERY_PLUGGED_AC -> "充电中(AC)"
@@ -43,7 +46,6 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS -> "充电中(无线)"
             else -> "未充电"
         }
-        // 电池温度（单位 0.1°C）
         val temperature = (tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
         val health = when (tempIntent?.getIntExtra(android.os.BatteryManager.EXTRA_HEALTH, 0) ?: 0) {
             android.os.BatteryManager.BATTERY_HEALTH_GOOD -> "良好"
@@ -159,5 +161,49 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             addProperty("current_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
             addProperty("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
         }
+    }
+
+    // ── 联系人备份 ──
+
+    registry.registerTool(
+        name = "export_contacts",
+        description = "导出所有联系人数据到备份文件，用于下次重装后恢复",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val backupDir = java.io.File(registry.context.filesDir, "backup")
+        backupDir.mkdirs()
+        val file = java.io.File(backupDir, "contacts_backup.json")
+
+        val dataStore = createContactsDataStore(registry.context)
+        val json = dataStore.data.first()[CONTACTS_KEY] ?: "[]"
+        file.writeText(json)
+
+        val count = try { com.google.gson.JsonParser.parseString(json).asJsonArray.size() } catch (_: Exception) { 0 }
+        JsonObject().apply { addProperty("message", "已导出 $count 个联系人: ${file.absolutePath}") }
+    }
+
+    registry.registerTool(
+        name = "import_contacts",
+        description = "从备份文件恢复联系人数据（覆盖当前联系人）",
+        inputSchema = jsonSchema()
+    ) { _ ->
+        val file = java.io.File(registry.context.filesDir, "backup/contacts_backup.json")
+        if (!file.exists()) {
+            return@registerTool JsonObject().apply { addProperty("error", "备份文件不存在，请先执行 export_contacts") }
+        }
+        val json = file.readText()
+        val dataStore = createContactsDataStore(registry.context)
+        dataStore.edit { it[CONTACTS_KEY] = json }
+
+        val count = try { com.google.gson.JsonParser.parseString(json).asJsonArray.size() } catch (_: Exception) { 0 }
+        JsonObject().apply { addProperty("message", "已恢复 $count 个联系人") }
+    }
+}
+
+private val CONTACTS_KEY = stringPreferencesKey("bot_contacts")
+
+private fun createContactsDataStore(context: Context): androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+    return PreferenceDataStoreFactory.create {
+        context.preferencesDataStoreFile("contacts")
     }
 }

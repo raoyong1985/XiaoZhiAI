@@ -10,6 +10,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import com.xiaozhi.aiservice.utils.Logger
+import com.xiaozhi.aiservice.data.settings.DeviceSettings
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -20,7 +21,7 @@ class AudioService {
         const val DEFAULT_SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val SILENCE_RMS_THRESHOLD = 800
+        private const val SILENCE_RMS_THRESHOLD = 500
         private const val SILENCE_TIMEOUT_MS = 3000L
         private const val SILENCE_CONSECUTIVE_BUFFERS = 2
         private const val SPEECH_CONSECUTIVE_BUFFERS = 2
@@ -53,6 +54,8 @@ class AudioService {
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
+    /** 麦克风增益 0-100，应用于原始 PCM 提升 ASR 准确率 */
+    @Volatile var micGain = 80
 
     /**
      * 当前录音会话的 owner 标识
@@ -214,6 +217,12 @@ class AudioService {
 
         recorderOwner = owner
 
+        // 从设置加载麦克风增益
+        val ctx = appContext
+        if (ctx != null) {
+            micGain = DeviceSettings.getMicGain(ctx)
+        }
+
         // 使用设置的采样率（与 ESP32 AFE 音频处理器一致，语音识别最优化）
         val recordSampleRate = sampleRate
         val minBuffer = AudioRecord.getMinBufferSize(
@@ -285,6 +294,8 @@ class AudioService {
 
                     val pcmData = acquireBuffer(readSize)
                     System.arraycopy(buffer, 0, pcmData, 0, readSize)
+                    // 应用麦克风增益（放大 PCM 信号提高 ASR 准确率）
+                    applyMicGain(pcmData)
                     try {
                         onAudioData(pcmData)
                     } finally {
@@ -346,6 +357,28 @@ class AudioService {
         } catch (e: Exception) {
             Logger.e(TAG, "录音启动失败: ${e.message}")
             return false
+        }
+    }
+
+    /**
+     * 应用麦克风增益到 PCM 数据（16-bit 小端序）
+     * micGain=80 → 1.6x, micGain=100 → 2.0x, micGain=50 → 1.0x
+     * 带削波保护防止溢出
+     */
+    private fun applyMicGain(pcmData: ByteArray) {
+        if (pcmData.size < 2) return
+        // 增益系数：80/50=1.6x, 100/50=2.0x, 50以下不放大
+        val gain = (micGain / 50f).coerceIn(0.5f, 3.0f)
+        if (gain == 1.0f) return  // 无需处理
+
+        var i = 0
+        while (i < pcmData.size - 1) {
+            val sample = (pcmData[i].toInt() and 0xFF) or
+                        ((pcmData[i + 1].toInt() and 0xFF) shl 8)
+            val amplified = (sample * gain).toInt().coerceIn(-32768, 32767)
+            pcmData[i] = (amplified and 0xFF).toByte()
+            pcmData[i + 1] = ((amplified shr 8) and 0xFF).toByte()
+            i += 2
         }
     }
 
