@@ -52,16 +52,11 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    // 屏幕保持：只在录音或AI说话时亮屏，其余时间允许熄屏省电
+    // 屏幕保持：聊天界面常亮不熄屏
     val view = LocalView.current
-    DisposableEffect(uiState.aiState, uiState.isRecording) {
-        val shouldKeepOn = uiState.aiState == AiState.LISTENING ||
-                           uiState.aiState == AiState.SPEAKING ||
-                           uiState.isRecording
-        view.keepScreenOn = shouldKeepOn
-        onDispose {
-            view.keepScreenOn = false
-        }
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
     }
 
     LaunchedEffect(Unit) {

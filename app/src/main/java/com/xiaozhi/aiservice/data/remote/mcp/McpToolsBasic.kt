@@ -2,6 +2,7 @@ package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.content.Context
 import android.os.BatteryManager
+import android.os.SystemClock
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 import java.text.SimpleDateFormat
@@ -12,8 +13,8 @@ fun registerBasicTools(registry: MCPToolRegistry) {
     // 已合并到 get_system_info（get_device_info 删除）
 
     registry.registerTool(
-        name = "get_current_time",
-        description = "获取当前系统时间，支持指定时间格式",
+        name = "get_phone_time",
+        description = "获取手机当前系统时间，支持指定时间格式",
         inputSchema = jsonSchema(
             "format" to jsonStringProp("时间格式，如 yyyy-MM-dd HH:mm:ss，默认 yyyy-MM-dd HH:mm:ss")
         )
@@ -156,6 +157,7 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
             addProperty("app_version_code", com.xiaozhi.aiservice.BuildConfig.VERSION_CODE)
             addProperty("current_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+            addProperty("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
         }
     }
 }

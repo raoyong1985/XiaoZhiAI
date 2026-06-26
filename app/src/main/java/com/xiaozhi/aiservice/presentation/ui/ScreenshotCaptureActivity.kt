@@ -41,6 +41,16 @@ class ScreenshotCaptureActivity : ComponentActivity() {
         @JvmStatic
         var pendingResult: CompletableDeferred<String>? = null
 
+        /** 缓存的 MediaProjection 授权 token，第二次起不再弹系统授权框 */
+        private var savedMediaProjectionData: Intent? = null
+
+        /**
+         * 检查是否有可复用的 MediaProjection 授权
+         * MCP 工具调用前可以判断是否需要引导用户授权
+         */
+        @JvmStatic
+        fun hasPermanentPermission(): Boolean = savedMediaProjectionData != null
+
         fun launch(context: Context) {
             val intent = Intent(context, ScreenshotCaptureActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -53,13 +63,36 @@ class ScreenshotCaptureActivity : ComponentActivity() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
 
-    private val screenCaptureLauncher = registerForActivityResult(
+    private var screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+        Logger.i(TAG, "授权返回: resultCode=${result.resultCode}")
+
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            if (data != null) {
+                // 保存授权 token，后续不再弹窗
+                savedMediaProjectionData = data
+                Logger.i(TAG, "MediaProjection 授权已保存，后续截图不再弹窗")
+            }
             val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mgr.getMediaProjection(Activity.RESULT_OK, result.data!!)
-            mediaProjection?.let { startCapture(it) }
+            val intent = data ?: savedMediaProjectionData
+            if (intent != null) {
+                try {
+                    mediaProjection = mgr.getMediaProjection(Activity.RESULT_OK, intent)
+                    mediaProjection?.let { startCapture(it) }
+                } catch (e: Exception) {
+                    Logger.e(TAG, "获取 MediaProjection 失败: ${e.message}")
+                    savedMediaProjectionData = null // 授权过期，清除缓存
+                    pendingResult?.completeExceptionally(Exception("截图授权已过期，请重试: ${e.message}"))
+                    pendingResult = null
+                    finish()
+                }
+            } else {
+                pendingResult?.completeExceptionally(Exception("缺少 MediaProjection 数据"))
+                pendingResult = null
+                finish()
+            }
         } else {
             Logger.e(TAG, "用户拒绝截图授权")
             pendingResult?.completeExceptionally(Exception("截图需要您授权屏幕录制权限"))
@@ -83,9 +116,28 @@ class ScreenshotCaptureActivity : ComponentActivity() {
             alpha = 0.0f
         }
 
-        // 请求截图权限
-        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        screenCaptureLauncher.launch(mgr.createScreenCaptureIntent())
+        // 如果有已保存的授权 token，直接截图不再弹窗
+        if (savedMediaProjectionData != null) {
+            Logger.i(TAG, "使用已保存的 MediaProjection 授权，跳过弹窗")
+            val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            try {
+                val projection = mgr.getMediaProjection(Activity.RESULT_OK, savedMediaProjectionData!!)
+                startCapture(projection)
+            } catch (e: Exception) {
+                Logger.e(TAG, "已保存的 MediaProjection 已过期，重新请求: ${e.message}")
+                savedMediaProjectionData = null
+                screenCaptureLauncher.launch(
+                    (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
+                        .createScreenCaptureIntent()
+                )
+            }
+        } else {
+            Logger.i(TAG, "首次截图，请求 MediaProjection 权限")
+            screenCaptureLauncher.launch(
+                (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
+                    .createScreenCaptureIntent()
+            )
+        }
     }
 
     private fun startCapture(projection: MediaProjection) {

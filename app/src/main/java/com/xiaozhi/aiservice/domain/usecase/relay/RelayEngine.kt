@@ -41,6 +41,7 @@ class RelayEngine(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
     private val relayMutex = Mutex()
+    @Volatile
     private var isRelaying = false
 
     // 委派方法: checkAndClearOnDeadloop (保持与原行为一致)
@@ -185,7 +186,7 @@ class RelayEngine(
                         if (previousReply.isNotBlank()) {
                             relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
                         }
-                        if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
+                        if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
                         logger.i(tag, "音频转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
                         return
                     }
@@ -213,7 +214,7 @@ class RelayEngine(
                     relayState.update { it.clearWaiting() }
                     continue
                 }
-                if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
+                if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
                 val logText = if (isLocal) "JSON(${textToSend.length}字)" else "短文本(${textToSend.length}字)"
                 logger.i(tag, "文本转发 $logText → $speakerId: '${textToSend.take(60)}'")
                 try {
@@ -245,10 +246,10 @@ class RelayEngine(
             }
         }
 
-        if (prevBotId != null) audioForwardBuffer.replace(prevBotId, mutableListOf())
+        if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
 
         // 所有候选不可用 → 重连重试
-        if (candidates.isNotEmpty() && relayState.value.forwardRound >= 0) {
+        if (candidates.isNotEmpty()) {
             logger.w(tag, "无可用bot转发，尝试重连所有候选")
             botConnectionPool.clearDead()
             for ((origIdx, speakerId) in candidates) {
