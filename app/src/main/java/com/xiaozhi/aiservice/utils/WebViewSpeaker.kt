@@ -21,9 +21,6 @@ object WebViewSpeaker {
             setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
             loadDataWithBaseURL(null, HTML, "text/html", "UTF-8", null)
         }
-        scope.launch {
-            delay(1000) // 等 WebView 加载完成
-        }
     }
 
     fun speak(text: String) {

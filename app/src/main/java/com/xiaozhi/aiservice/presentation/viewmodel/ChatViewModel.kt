@@ -3,7 +3,6 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig

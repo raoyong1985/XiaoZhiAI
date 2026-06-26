@@ -25,7 +25,6 @@ interface AudioPlaybackManager {
 
     suspend fun waitForQueueEmpty(sourceId: String, timeoutMs: Long = 2000): Boolean
     suspend fun waitForHardwareDrain(sourceId: String, timeoutMs: Long = 5000): Boolean
-    fun releaseAllExcept(protectKey: String)
     fun setVolume(level: Int)
     val size: Int
 }

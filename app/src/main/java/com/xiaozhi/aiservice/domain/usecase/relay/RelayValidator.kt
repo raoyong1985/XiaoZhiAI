@@ -31,12 +31,6 @@ class RelayValidator {
     /** 判断是否只有一个 bot（不需要接龙） */
     fun isSingleBot(botIds: List<String>): Boolean = botIds.size <= 1
 
-    /** 判断是否有候选 bot 可以发言 */
-    fun hasCandidates(candidates: List<*>): Boolean = candidates.isNotEmpty()
-
-    /** 判断回复文本是否为空 */
-    fun isReplyBlank(reply: String): Boolean = reply.isBlank()
-
     /** 判断是否为长音频（超过阈值就跳过纯音频转发，用文字兜底） */
     fun isLongAudio(audioBuf: List<*>?): Boolean = audioBuf != null && audioBuf.size > RelayConfig.LONG_AUDIO_THRESHOLD
 

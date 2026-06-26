@@ -88,14 +88,6 @@ class MCPToolRegistry @Inject constructor(
         return arr
     }
 
-    fun getAllToolList(): JsonArray {
-        val arr = JsonArray()
-        tools.forEach { tool ->
-            arr.add(toToolJson(tool))
-        }
-        return arr
-    }
-
     private fun toToolJson(tool: MCPTool): JsonObject = JsonObject().apply {
         addProperty("name", tool.name)
         addProperty("description", tool.description)

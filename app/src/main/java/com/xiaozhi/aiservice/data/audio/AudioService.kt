@@ -9,7 +9,6 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
-import com.xiaozhi.aiservice.BuildConfig
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicBoolean

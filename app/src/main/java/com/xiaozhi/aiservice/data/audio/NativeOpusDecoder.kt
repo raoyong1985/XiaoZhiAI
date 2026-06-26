@@ -7,7 +7,6 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioTrack
 import com.xiaozhi.aiservice.utils.Logger
-import com.xiaozhi.aiservice.BuildConfig
 import kotlinx.coroutines.delay
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,7 +20,9 @@ import kotlin.math.max
 import kotlin.math.abs
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class NativeOpusDecoder(
     private val serverSampleRate: Int = 24000,
     private val clientSampleRate: Int = 24000,
@@ -245,8 +246,6 @@ class NativeOpusDecoder(
         Logger.i(TAG, "音量设置为 $volumeScale% (硬件音量)")
     }
 
-    fun getVolume(): Int = volumeScale
-
     /** 获取解码器使用的服务器采样率 */
     fun getServerSampleRate(): Int = serverSampleRate
 
@@ -455,7 +454,7 @@ class NativeOpusDecoder(
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
-                            var written = track.write(data, 0, data.size) ?: -1
+                            var written = track.write(data, 0, data.size)
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                             }
@@ -463,7 +462,7 @@ class NativeOpusDecoder(
                                 val next = audioQueue.poll()
                                 if (next == null) break
                                 audioTrackRef.get()?.play()
-                                written = track.write(next, 0, next.size) ?: -1
+                                written = track.write(next, 0, next.size)
                                 if (written > 0) {
                                     totalBytesWritten.updateAndGet { it + written }
                                 }
@@ -678,29 +677,6 @@ class NativeOpusDecoder(
             return 0L
         }
     }
-    /**
-     * 等待音频缓冲排空（队列写入 + AudioTrack播放）
-     */
-    fun drainAudio(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        try {
-            // 等待队列排空
-            while (System.currentTimeMillis() < deadline) {
-                if (audioQueue.isEmpty()) break
-                Thread.sleep(30)
-            }
-            // 等待 AudioTrack 播放完剩余数据
-            while (System.currentTimeMillis() < deadline) {
-                val remaining = getRemainingBytes()
-                if (remaining <= 0) break
-                Thread.sleep(30)
-            }
-            return getRemainingBytes() <= 0
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
     /**
      * 等待解码队列自然排空（不强制 flush AudioTrack）
      * 用于 SPEAKING→IDLE 自然切换：让已解码的 PCM 数据继续播放完毕

@@ -34,17 +34,6 @@ class AudioEnhancer {
     var nsEnabled = true
         private set
 
-    /** 批量设置 AEC/AGC/NS 启停 */
-    fun setEnhancement(enabled: Map<String, Boolean>) {
-        enabled.forEach { (key, value) ->
-            when (key.lowercase()) {
-                "aec" -> aecEnabled = value
-                "agc" -> agcEnabled = value
-                "ns" -> nsEnabled = value
-            }
-        }
-    }
-
     /** 开关单个增强 */
     fun setAec(enabled: Boolean) { aecEnabled = enabled }
     fun setAgc(enabled: Boolean) { agcEnabled = enabled }
@@ -60,11 +49,6 @@ class AudioEnhancer {
     fun isAgcSupported(): Boolean = AutomaticGainControl.isAvailable()
     fun isNsSupported(): Boolean = NoiseSuppressor.isAvailable()
 
-    /** 至少有一项可用 */
-    fun isAnySupported(): Boolean =
-        AcousticEchoCanceler.isAvailable() ||
-        AutomaticGainControl.isAvailable() ||
-        NoiseSuppressor.isAvailable()
 
     // ── 初始化（绑定到 AudioRecord 会话） ──
 

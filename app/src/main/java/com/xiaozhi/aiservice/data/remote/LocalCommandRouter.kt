@@ -2,7 +2,6 @@ package com.xiaozhi.aiservice.data.remote
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import com.google.gson.JsonObject
 import com.xiaozhi.aiservice.utils.Logger
 import java.util.Locale

@@ -42,8 +42,3 @@ fun Modifier.bounceClick(
             )
         }
 }
-
-/** 轻量弹性，默认中等刚度，配合 [Modifier.clickable] 使用。 */
-fun Modifier.lightBounce(
-    pressedScale: Float = 0.96f
-): Modifier = bounceClick(pressedScale = pressedScale, stiffness = Spring.StiffnessMedium)

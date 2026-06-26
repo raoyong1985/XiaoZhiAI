@@ -2,7 +2,6 @@ package com.xiaozhi.aiservice.data.audio
 
 import com.xiaozhi.aiservice.utils.Logger
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.StateFlow
 
 private const val TAG = "AudioRecorder"
 
@@ -80,8 +79,7 @@ class AudioRecorder(
         owner: String,
         scope: CoroutineScope,
         onWakeDetected: (String) -> Unit,
-        onOpusPacket: (ByteArray) -> Unit,
-        onSilenceDetected: (() -> Unit)? = null
+        onOpusPacket: (ByteArray) -> Unit
     ): Boolean {
         if (isRecording) return false
         this.scope = scope

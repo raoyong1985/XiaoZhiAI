@@ -68,8 +68,7 @@ object BotColorScheme {
         BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF), Color(0xFF0879BD)),
     )
 
-    fun selfAvatarColor(isDark: Boolean): Color =
-        if (isDark) Color(0xFF42A5F5) else Color(0xFF42A5F5)
+    fun selfAvatarColor(): Color = Color(0xFF42A5F5)
 
     fun get(index: Int, isDark: Boolean = false): BotColor {
         val palette = if (isDark) darkColors else lightColors
@@ -101,7 +100,7 @@ fun AvatarView(
     val bgColor = remember(name, isDark, isSelf, avatarColor) {
         when {
             avatarColor != null -> avatarColor
-            isSelf -> BotColorScheme.selfAvatarColor(isDark)
+            isSelf -> BotColorScheme.selfAvatarColor()
             else -> BotColorScheme.forName(name, isDark).avatarColor
         }
     }

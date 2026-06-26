@@ -114,12 +114,6 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
         return decoder.waitForHardwareDrain(timeoutMs)
     }
 
-    /** 释放除 protectKey 外所有解码器 */
-    override fun releaseAllExcept(protectKey: String) {
-        val toRelease = decoders.keys.filter { it != protectKey }
-        toRelease.forEach { release(it) }
-    }
-
     /** 当前解码器数量 */
     override val size: Int get() = decoders.size
 

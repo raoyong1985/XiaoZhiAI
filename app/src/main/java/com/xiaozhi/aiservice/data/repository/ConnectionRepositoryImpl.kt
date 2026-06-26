@@ -527,8 +527,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                         _deviceState.value = DeviceState.LISTENING
                     }
                 },
-                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
-                onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
+                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } }
             )
             return ok
         }
