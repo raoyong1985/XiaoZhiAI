@@ -69,6 +69,10 @@ class AudioService {
     private var appContext: android.content.Context? = null
     private var audioSettingsBackup = mutableMapOf<String, Boolean>()  // 存旧增强配置
 
+    /** 上次录音启动/运行失败的详细原因，供上层日志 */ 
+    @Volatile var lastRecordError: String? = null
+        private set
+
     // FSMN VAD（神经网络语音活动检测，替代 SileroVAD，专为中文优化）
     // 单例：AudioRecorder 共享此实例，不再重复加载 ONNX 模型
     val fsmnVad = FsmnVAD()
@@ -241,6 +245,7 @@ class AudioService {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Logger.e(TAG, "AudioRecord初始化失败，尝试降级到MIC")
+                lastRecordError = "VOICE_RECOGNITION 音源初始化失败"
                 // 降级到 MIC（部分设备不支持 VOICE_COMMUNICATION）
                 audioRecord = AudioRecord.Builder()
                     .setAudioSource(MediaRecorder.AudioSource.MIC)
@@ -249,6 +254,7 @@ class AudioService {
                     .build()
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                     Logger.e(TAG, "AudioRecord降级初始化也失败")
+                    lastRecordError = "VOICE_RECOGNITION/MIC 均初始化失败"
                     return false
                 }
             }
@@ -279,20 +285,38 @@ class AudioService {
             var firstSpeechTime = 0L
 
             recordingThread = Thread {
+                // 重置上次错误
+                lastRecordError = null
                 while (isRecording.get()) {
-                    val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
-                    if (readSize <= 0) continue
-
-                    val pcmData = acquireBuffer(readSize)
-                    System.arraycopy(buffer, 0, pcmData, 0, readSize)
+                    var pcmData: ByteArray? = null
                     try {
-                        onAudioData(pcmData)
-                    } finally {
-                        recycleBuffer(pcmData)
+                        val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
+                        if (readSize <= 0) {
+                            if (readSize < 0) {
+                                Logger.w(TAG, "AudioRecord.read() 返回 $readSize，可能已停止")
+                            }
+                            continue
+                        }
+
+                        pcmData = acquireBuffer(readSize)
+                        System.arraycopy(buffer, 0, pcmData!!, 0, readSize)
+                        try {
+                            onAudioData(pcmData!!)
+                        } finally {
+                            recycleBuffer(pcmData!!)
+                        }
+                    } catch (e: Exception) {
+                        val errMsg = "录音线程异常: ${e::class.simpleName}: ${e.message}"
+                        Logger.e(TAG, errMsg)
+                        lastRecordError = errMsg
+                        if (isRecording.get()) {
+                            break
+                        }
+                        continue
                     }
 
                     // VAD 检测（优先使用 FSMN VAD，否则降级到 RMS 能量阈值）
-                    if (enableVAD) {
+                    if (enableVAD && pcmData != null) {
                         val now = System.currentTimeMillis()
                         val hasVoice = if (fsmnVad.initialized) {
                             fsmnVad.isVoice(pcmData)
@@ -341,10 +365,14 @@ class AudioService {
             Logger.i(TAG, "录音开始, 采样率: $recordSampleRate, VAD: $enableVAD, 增强: ${audioEnhancer.getStatusSummary()}, 音频源: VOICE_RECOGNITION")
             return true
         } catch (e: SecurityException) {
-            Logger.e(TAG, "录音权限被拒绝: ${e.message}")
+            val msg = "录音权限被拒绝: ${e.message}"
+            Logger.e(TAG, msg)
+            lastRecordError = msg
             return false
         } catch (e: Exception) {
-            Logger.e(TAG, "录音启动失败: ${e.message}")
+            val msg = "录音启动失败: ${e.message}"
+            Logger.e(TAG, msg)
+            lastRecordError = msg
             return false
         }
     }
@@ -389,6 +417,8 @@ class AudioService {
     private fun stopRecordingInternal() {
         // 1. 设标记让录音循环自然退出（不等 interrupt，AudioRecord.read() 不响应 interrupt）
         isRecording.set(false)
+        // 重置错误记录
+        lastRecordError = null
         // 2. stop 让阻塞的 read() 抛异常退出（部分设备需要）
         try {
             audioRecord?.stop()

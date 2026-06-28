@@ -157,7 +157,10 @@ class AudioRecorder(
 
         wakeModeActive = false  // 确保唤醒模式关闭
 
-        if (!initEncoder(onOpusPacket)) return false
+        if (!initEncoder(onOpusPacket)) {
+            Logger.e(TAG, "实时录音启动失败: Opus编码器初始化失败")
+            return false
+        }
 
         if (onSilenceDetected != null) {
             audioService.setOnSilenceDetected(owner) {
@@ -179,7 +182,8 @@ class AudioRecorder(
             if (nativeOpusEncoder != null) nativeOpusEncoder?.encode(pcmData)
             else opusEncoder?.encode(pcmData)
         }, enableVAD)) {
-            Logger.e(TAG, "实时录音启动失败")
+            val audioErr = audioService.lastRecordError
+            Logger.e(TAG, "实时录音启动失败: $audioErr")
             isRecording = false
             nativeOpusEncoder?.stop()
             nativeOpusEncoder = null
@@ -337,7 +341,7 @@ class AudioRecorder(
         }
 
         wakeModeActive = false
-        onWakeDetected?.invoke("voice")
+        onWakeDetected?.invoke("")
     }
 
     /**

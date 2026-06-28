@@ -2,9 +2,11 @@ package com.xiaozhi.aiservice.data.repository
 
 import android.content.Context
 import android.os.PowerManager
-import com.xiaozhi.aiservice.data.settings.AudioSettings
+import com.xiaozhi.aiservice.data.memory.RAGMemoryManager
+import com.xiaozhi.aiservice.domain.memory.LocalRAGMemory
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
+import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
@@ -91,8 +93,15 @@ class ConnectionRepositoryImpl @Inject constructor(
     override val emotion: StateFlow<String> = backendService.emotion
 
     override val alert: SharedFlow<String> = backendService.alert
-
+    // 流式消息结束信号（用于关闭流式动画）
     override val streamingEnd: SharedFlow<String> = backendService.streamingEnd
+
+    // 本地 RAG 记忆系统（方言解释：记忆硬盘）
+    private val ragMemory: LocalRAGMemory by lazy { RAGMemoryManager.getInstance(context) }
+    
+    // 记录最后一条用户消息，用于 sentence_end 时配对存储
+    @Volatile
+    private var lastUserMessageForMemory: String = ""
     
     // 记录最后发送的消息内容，用于STT回显去重
     private var lastSentText: String? = null
@@ -501,22 +510,10 @@ class ConnectionRepositoryImpl @Inject constructor(
                 onWakeDetected = callback@{ wakeText ->
                     Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
 
-                    // 唤醒词验证：用 onWakeDetected 传回的 wakeText（用户说的内容）直接匹配 currentWakeWord
-                    // 之前用 pendingWakeVerification 推到下一轮 STT 验证，效率低且会被环境噪音干扰
-                    val wakeOk = if (currentWakeWord.isEmpty()) {
-                        true
-                    } else {
-                        val matched = wakeText.isNotBlank() &&
-                                wakeText.contains(currentWakeWord, ignoreCase = true)
-                        if (!matched) {
-                            Logger.i(TAG, "唤醒词不匹配（text='$wakeText', expected='$currentWakeWord'），忽略")
-                            false
-                        } else {
-                            Logger.i(TAG, "唤醒词匹配: 「${currentWakeWord}」")
-                            true
-                        }
+                    // 如果有唤醒词，等待后续 ASR 验证
+                    if (currentWakeWord.isNotEmpty()) {
+                        pendingWakeVerification = true
                     }
-                    if (!wakeOk) return@callback
 
                     // 发送唤醒事件到服务器（ESP32 协议风格）
                     backendService.sendListenStart("realtime")
@@ -563,7 +560,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                     onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
                     onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
                 )) {
-                Logger.e(TAG, "录音启动失败")
+                val audioErr = audioService.lastRecordError
+                Logger.e(TAG, "录音启动失败: $audioErr")
                 weStartedRecording = false
                 isAutoMode = false
                 _aiState.value = AiState.IDLE

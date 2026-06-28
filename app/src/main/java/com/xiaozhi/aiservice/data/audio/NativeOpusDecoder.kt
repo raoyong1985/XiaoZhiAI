@@ -205,6 +205,14 @@ class NativeOpusDecoder(
             }
             try { track.write(ByteArray(3200), 0, 3200) } catch (_: Exception) {}
             track.play()
+            // ── 初始化音频效果（均衡器 + 低音增强）──
+            track.audioSessionId.let { sessionId ->
+                audioEffects?.release()
+                AudioEffectsManager(sessionId).also { effects ->
+                    effects.init()
+                    audioEffects = effects
+                }
+            }
             // 原子替换：旧的 AudioTrack 被替换后，后续 write() 写入新 track
             val old = audioTrackRef.getAndSet(track)
             try { old?.stop(); old?.release() } catch (_: Exception) {}
@@ -287,6 +295,8 @@ class NativeOpusDecoder(
 
             // ── 初始化音频效果（均衡器 + 低音增强）──
             audioTrackRef.get()?.audioSessionId?.let { sessionId ->
+                // 释放旧的音频效果，防止 BassBoost/LoudnessEnhancer 泄漏
+                audioEffects?.release()
                 AudioEffectsManager(sessionId).also { effects ->
                     effects.init()
                     audioEffects = effects
@@ -423,6 +433,8 @@ class NativeOpusDecoder(
 
             // ── 初始化音频效果（均衡器 + 低音增强）──
             track.audioSessionId.let { sessionId ->
+                // 释放旧的音频效果，防止 BassBoost/LoudnessEnhancer 泄漏
+                audioEffects?.release()
                 AudioEffectsManager(sessionId).also { effects ->
                     effects.init()
                     audioEffects = effects

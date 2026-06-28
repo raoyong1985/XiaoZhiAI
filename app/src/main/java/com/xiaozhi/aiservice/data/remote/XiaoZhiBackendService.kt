@@ -111,14 +111,14 @@ class XiaoZhiBackendService(
 
     @Volatile private var isConnected = false
     @Volatile private var serverUrl = ""
-    private var otaUrl = ""
-    private var deviceId = ""
-    private var clientId = ""
+    @Volatile private var otaUrl = ""
+    @Volatile private var deviceId = ""
+    @Volatile private var clientId = ""
     @Volatile private var sessionId = ""
-    private var serverSampleRate = 16000
-    private var serverChannels = 1
-    private var accessToken = ""
-    private var wsToken = ""
+    @Volatile private var serverSampleRate = 16000
+    @Volatile private var serverChannels = 1
+    @Volatile private var accessToken = ""
+    @Volatile private var wsToken = ""
     @Volatile private var reconnectAttempt = 0
     private val baseReconnectDelay = 1000L
     @Volatile private var isDisconnecting = false  // 用户主动断开，不再自动重连
@@ -498,18 +498,24 @@ class XiaoZhiBackendService(
     override fun isLocalServer(): Boolean {
         val url = serverUrl
         if (url.isEmpty()) return false
-        if (url.contains("localhost") || url.contains("127.")) return true
-        // IPv6（scheme 后通常是 wss://[::1] 或 wss://[fe80::...]）
-        if (url.contains("::1") || url.contains("fe80:") || url.contains("[fc") || url.contains("[fd")) return true
-        // 10.0.0.0/8
-        if (url.contains("10.")) return true
-        // 192.168.0.0/16
-        if (url.contains("192.168.")) return true
-        // 172.16.0.0/12 → 172.16~172.31
-        // 简单字符串匹配：172.16./172.17./.../172.31.
-        // 公网 172.x.x.x 段几乎不存在，这个范围可以安全判定为私网
-        if (Regex("""172\.(1[6-9]|2[0-9]|3[01])\.""").containsMatchIn(url)) return true
-        return false
+        // 用 URI 解析提取 host，避免字符串匹配误判
+        return try {
+            val host = java.net.URI(url).host ?: return false
+            if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+            // IPv6 链路本地 / ULA
+            if (host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) return true
+            // IPv4 私网
+            val ip = java.net.InetAddress.getByName(host)
+            ip.isSiteLocalAddress || ip.isLoopbackAddress
+        } catch (_: Exception) {
+            // URI 解析或 DNS 失败时降级为字符串匹配
+            if (url.contains("localhost") || url.contains("127.")) return true
+            if (url.contains("::1") || url.contains("fe80:") || url.contains("[fc") || url.contains("[fd")) return true
+            if (url.contains("10.")) return true
+            if (url.contains("192.168.")) return true
+            if (Regex("""172\.(1[6-9]|2[0-9]|3[01])\.""").containsMatchIn(url)) return true
+            false
+        }
     }
 
     fun sendMute(muted: Boolean) {
