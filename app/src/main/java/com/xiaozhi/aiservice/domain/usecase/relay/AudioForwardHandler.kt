@@ -43,9 +43,19 @@ class AudioForwardHandler(
             logger.w(tag, "音频转发失败：WebSocket未连接")
             return false
         }
-        if (prevBotId == null) return false
-        val cachedList = audioForwardBuffer[prevBotId] ?: return false
-        if (cachedList.isEmpty()) return false
+        if (prevBotId == null) {
+            logger.w(tag, "音频转发失败：prevBotId为null")
+            return false
+        }
+        val cachedList = audioForwardBuffer[prevBotId]
+        if (cachedList == null) {
+            logger.w(tag, "音频转发失败：audioForwardBuffer[${prevBotId.take(8)}] 不存在")
+            return false
+        }
+        if (cachedList.isEmpty()) {
+            logger.w(tag, "音频转发失败：audioForwardBuffer[${prevBotId.take(8)}] 为空")
+            return false
+        }
         val cachedOpus = cachedList.toList()
         logger.i(tag, "音频转发 ${cachedOpus.size}包/${cachedOpus.sumOf { it.size }}B prev=$prevBotId")
         try {

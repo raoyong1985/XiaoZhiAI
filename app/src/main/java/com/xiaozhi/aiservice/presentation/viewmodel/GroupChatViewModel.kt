@@ -444,9 +444,10 @@ class GroupChatViewModel @Inject constructor(
         val service = botConnectionPool.get(firstBotId) ?: return
 
         // 新会话：递增 sessionId，重置轮次
+        // waitingSpeakerIndex=-1：初始不限制，允许任何 bot 的音频通过
         _relayState.update { it.nextSession().copy(
             forwardRound = 0, currentSpeakerIndex = 0,
-            waitingSpeakerIndex = 0, lastForwardedText = ""
+            waitingSpeakerIndex = -1, lastForwardedText = ""
         ) }
         lastWaitingChangeMs = System.currentTimeMillis()
         deduplicationUtil.clear()
