@@ -151,6 +151,57 @@ class RelayEngine(
             relayState.update { it.copy(waitingSpeakerIndex = targetIndex) }
             botLastAudioTime[speakerId] = System.currentTimeMillis()
 
+            val isOfficial = service.isOfficialServer()
+
+            if (!isOfficial) {
+                // ── 非官方服务器：纯文本转发（全量） ──
+                val textToSend = audioForwardHandler.buildForwardMessage(previousReply, prevBotId)
+                if (textToSend.isBlank()) {
+                    logger.i(tag, "文本为空，跳过 $speakerId")
+                    continue
+                }
+                if (checkAndClearOnDeadloop(textToSend, speakerId)) {
+                    logger.i(tag, "死循环终止，跳过本轮转发")
+                    relayState.update { it.clearWaiting() }
+                    return
+                }
+                if (service.connectionState.value !is BotConnectionState.Connected) {
+                    logger.w(tag, "文本转发失败: $speakerId WebSocket未连接")
+                    relayState.update { it.clearWaiting() }
+                    continue
+                }
+                if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
+                logger.i(tag, "文本转发(全量 JSON ${textToSend.length}字) → $speakerId: '${textToSend.take(60)}'")
+                try {
+                    service.sendTextContent(textToSend)
+                    if (previousReply.isNotBlank()) {
+                        relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
+                    }
+                    val startConfirmed = withTimeoutOrNull(30_000) {
+                        service.aiState.first { it == AiStateStr.SPEAKING }
+                    }
+                    if (startConfirmed != null) {
+                        relayState.update {
+                            it.copy(
+                                currentSpeakerIndex = targetIndex,
+                                forwardRound = it.forwardRound + 1
+                            )
+                                .markSpoken(targetIndex)
+                                .recordTransition(prevBotId ?: "", speakerId)
+                        }
+                        logger.i(tag, "文本转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
+                        return
+                    }
+                    logger.w(tag, "文本转发超时($speakerId 30s未响应)，尝试下一候选")
+                    relayState.update { it.clearWaiting() }
+                } catch (e: Exception) {
+                    logger.w(tag, "文本转发异常: ${e.message}")
+                    relayState.update { it.clearWaiting() }
+                }
+                continue
+            }
+
+            // ── 官方服务器：音频转发优先，文本兜底 ──
             val audioBuf = audioForwardBuffer[prevBotId]
             val isLongAudio = relayValidator.isLongAudio(audioBuf)
             val audioOk = if (isLongAudio) {
@@ -160,49 +211,44 @@ class RelayEngine(
                 audioForwardHandler.forwardAudioToBot(prevBotId, service)
             }
 
-                if (audioOk) {
-                    val estimatedAudioMs = relayValidator.estimateAudioMs(audioForwardBuffer[prevBotId])
-                    val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
-                    logger.i(tag, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
+            if (audioOk) {
+                val estimatedAudioMs = relayValidator.estimateAudioMs(audioForwardBuffer[prevBotId])
+                val timeoutMs = (estimatedAudioMs + 15_000).coerceIn(10_000, 120_000)
+                logger.i(tag, "等待 $speakerId 开始说话 (${timeoutMs}ms超时, 音频≈${estimatedAudioMs}ms)")
 
-                    val startConfirmed = withTimeoutOrNull(timeoutMs) {
-                        service.aiState.first { it == AiStateStr.SPEAKING }
-                    }
-                    if (startConfirmed != null) {
-                        val hint = if (previousReply.isNotBlank()) relayState.value.lastForwardedText.take(8) else ""
-                        if (checkAndClearOnDeadloop(hint, speakerId)) {
-                            logger.i(tag, "死循环终止，跳过转发")
-                            relayState.update { it.clearWaiting() }
-                            return
-                        }
-                        relayState.update {
-                            it.copy(
-                                currentSpeakerIndex = targetIndex,
-                                forwardRound = it.forwardRound + 1
-                            )
-                                .markSpoken(targetIndex)
-                                .recordTransition(prevBotId ?: "", speakerId)
-                        }
-                        if (previousReply.isNotBlank()) {
-                            relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
-                        }
-                        if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
-                        logger.i(tag, "音频转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
+                val startConfirmed = withTimeoutOrNull(timeoutMs) {
+                    service.aiState.first { it == AiStateStr.SPEAKING }
+                }
+                if (startConfirmed != null) {
+                    val hint = if (previousReply.isNotBlank()) relayState.value.lastForwardedText.take(8) else ""
+                    if (checkAndClearOnDeadloop(hint, speakerId)) {
+                        logger.i(tag, "死循环终止，跳过转发")
+                        relayState.update { it.clearWaiting() }
                         return
                     }
-                    logger.w(tag, "音频转发超时($speakerId ${timeoutMs}ms未响应)，尝试下一候选")
-                    relayState.update { it.clearWaiting() }
-                } else {
-                    logger.i(tag, "音频转发返回false(audioOk=false), $speakerId, 尝试文本转发")
+                    relayState.update {
+                        it.copy(
+                            currentSpeakerIndex = targetIndex,
+                            forwardRound = it.forwardRound + 1
+                        )
+                            .markSpoken(targetIndex)
+                            .recordTransition(prevBotId ?: "", speakerId)
+                    }
+                    if (previousReply.isNotBlank()) {
+                        relayState.update { it.copy(lastForwardedText = previousReply.take(20)) }
+                    }
+                    if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
+                    logger.i(tag, "音频转发成功 → $speakerId fwd=${relayState.value.forwardRound}")
+                    return
                 }
-
-            // 文本转发（备用路径）
-            val isLocal = service.isLocalServer()
-            val textToSend = if (isLocal) {
-                audioForwardHandler.buildForwardMessage(previousReply, prevBotId)
+                logger.w(tag, "音频转发超时($speakerId ${timeoutMs}ms未响应)，尝试下一候选")
+                relayState.update { it.clearWaiting() }
             } else {
-                if (previousReply.isNotBlank()) audioForwardHandler.truncateReply(previousReply, 8) else ""
+                logger.i(tag, "音频转发返回false(audioOk=false), $speakerId, 尝试文本转发")
             }
+
+            // 文本转发（备用路径）— 官方服务器截短至8字
+            val textToSend = if (previousReply.isNotBlank()) audioForwardHandler.truncateReply(previousReply, 8) else ""
             if (checkAndClearOnDeadloop(textToSend, speakerId)) {
                 logger.i(tag, "死循环终止，跳过本轮转发")
                 relayState.update { it.clearWaiting() }
@@ -215,7 +261,7 @@ class RelayEngine(
                     continue
                 }
                 if (prevBotId != null) audioForwardBuffer.compute(prevBotId) { _, _ -> mutableListOf() }
-                val logText = if (isLocal) "JSON(${textToSend.length}字)" else "短文本(${textToSend.length}字)"
+                val logText = "短文本(${textToSend.length}字)"
                 logger.i(tag, "文本转发 $logText → $speakerId: '${textToSend.take(60)}'")
                 try {
                     service.sendTextContent(textToSend)

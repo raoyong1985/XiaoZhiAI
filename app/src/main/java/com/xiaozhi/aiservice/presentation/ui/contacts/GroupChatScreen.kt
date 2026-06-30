@@ -45,6 +45,14 @@ fun GroupChatScreen(
 
     val isPingPong = remember(group?.botIds?.size) { group?.botIds?.size == 2 }
     val isAiResponding by viewModel.isAiResponding.collectAsState()
+    val contacts by viewModel.contacts.collectAsState()
+
+    // ── 群成员名称列表（用于 @提及） ──
+    val groupMemberNames = remember(group, contacts) {
+        group?.botIds?.mapNotNull { botId ->
+            contacts.find { it.id == botId }?.name
+        } ?: emptyList()
+    }
 
     // ── lifecycle：进入时连接，离开时断开 ──
     LaunchedEffect(groupId) {
@@ -88,6 +96,8 @@ fun GroupChatScreen(
                 isRecording = isRecording,
                 inputMode = inputMode,
                 isAiResponding = isPingPong && isAiResponding,
+                groupMembers = groupMemberNames,
+                isGroup = true,
                 onSendText = { text ->
                     coroutineScope.launch {
                         viewModel.sendMessage(groupId, text)

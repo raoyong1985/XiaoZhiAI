@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -41,11 +42,32 @@ fun InputBar(
     onStopRecording: () -> Unit,
     onTryReconnect: (() -> Unit)? = null,
     isOffline: Boolean = false,
-    isAiResponding: Boolean = false
+    isAiResponding: Boolean = false,
+    groupMembers: List<String> = emptyList(),
+    isGroup: Boolean = false
 ) {
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    var showMemberMenu by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+
+    // ── @提及检测 ──
+    val lastAtIndex = text.lastIndexOf('@')
+    val isMentionActive = isGroup && lastAtIndex >= 0 &&
+        !text.substring(lastAtIndex + 1).contains(' ')
+    val mentionQuery = if (isMentionActive) text.substring(lastAtIndex + 1) else ""
+
+    val filteredMembers by remember(groupMembers, mentionQuery) {
+        derivedStateOf {
+            if (mentionQuery.isEmpty()) groupMembers
+            else groupMembers.filter { it.contains(mentionQuery, ignoreCase = true) }
+        }
+    }
+
+    // 当 isMentionActive 状态变化时同步 showMemberMenu
+    LaunchedEffect(isMentionActive, filteredMembers) {
+        showMemberMenu = isMentionActive && filteredMembers.isNotEmpty()
+    }
 
     LaunchedEffect(inputMode) {
         if (inputMode == 1) {
@@ -152,10 +174,47 @@ fun InputBar(
                             }
                         }
                         1 -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            Box {
+                                // ── @成员选择浮层 ──
+                                DropdownMenu(
+                                    expanded = showMemberMenu,
+                                    onDismissRequest = { showMemberMenu = false },
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.85f)
+                                        .heightIn(max = 220.dp)
+                                ) {
+                                    val isDark = isSystemInDarkTheme()
+                                    filteredMembers.forEach { name ->
+                                        val botColor = BotColorScheme.forName(name, isDark)
+                                        DropdownMenuItem(
+                                            text = {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(8.dp)
+                                                            .clip(CircleShape)
+                                                            .background(botColor.avatarColor)
+                                                    )
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(
+                                                        text = name,
+                                                        fontSize = 14.sp,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                }
+                                            },
+                                            onClick = {
+                                                text = text.substring(0, lastAtIndex) + "@$name "
+                                                showMemberMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                 OutlinedTextField(
                                     value = text,
                                     onValueChange = { if (!isAiResponding) text = it },
@@ -209,12 +268,13 @@ fun InputBar(
                                         contentDescription = "发送",
                                         modifier = Modifier.size(20.dp)
                                     )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+                                }  // ← FilledIconButton
+                            }  // ← Row
+                        }  // ← Box(@mention)
+                    }  // ← 1 -> mode
+                }  // ← when(mode)
+            }  // ← AnimatedContent
+        }  // ← Column
+    }  // ← Box(Surface)
+  }  // ← Surface
+}  // ← fun InputBar

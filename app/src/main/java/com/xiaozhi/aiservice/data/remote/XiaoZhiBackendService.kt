@@ -518,6 +518,19 @@ class XiaoZhiBackendService(
         }
     }
 
+    override fun isOfficialServer(): Boolean {
+        val url = serverUrl
+        if (url.isEmpty()) return false
+        return try {
+            val host = java.net.URI(url).host ?: return false
+            // 官方小智服务器
+            host == "api.tenclass.net"
+        } catch (_: Exception) {
+            // URI 解析失败时降级为字符串匹配
+            url.contains("api.tenclass.net")
+        }
+    }
+
     fun sendMute(muted: Boolean) {
         val message = JsonObject().apply {
             addProperty("session_id", sessionId)
