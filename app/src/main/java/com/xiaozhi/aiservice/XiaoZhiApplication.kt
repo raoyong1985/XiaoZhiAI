@@ -1,9 +1,12 @@
 package com.xiaozhi.aiservice
 
 import android.app.Application
+import android.content.Intent
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
+import com.xiaozhi.aiservice.data.remote.ConnectivityReceiver
 import com.xiaozhi.aiservice.data.remote.LocalCommandRouter
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
+import com.xiaozhi.aiservice.data.remote.XiaoZhiForegroundService
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.di.GlobalServices
 import com.xiaozhi.aiservice.di.ServicesEntryPoint
@@ -31,5 +34,16 @@ class XiaoZhiApplication : Application() {
         entryPoint.audioService().init(this)
         // 初始化 WebView 语音播报（备用 TTS，不依赖系统引擎）
         WebViewSpeaker.init(this)
+
+        // 启动前台保活 Service
+        startForegroundService()
+
+        // 注册网络变化监听
+        ConnectivityReceiver.register(this)
+    }
+
+    private fun startForegroundService() {
+        val intent = Intent(this, XiaoZhiForegroundService::class.java)
+        startForegroundService(intent)
     }
 }

@@ -138,10 +138,10 @@ fun ChatScreen(
                 inputMode = if (isVoiceMode) 0 else 1,
                 isAiResponding = uiState.isAiResponding,
                 onSendText = { text ->
-                    viewModel.sendTextMessage(text)
+                    viewModel.sendTextWithReconnect(text)
                     keyboardController?.hide()
                 },
-                onStartRecording = { viewModel.startListening() },
+                onStartRecording = { viewModel.startListeningWithReconnect() },
                 onStopRecording = { viewModel.stopListening() },
                 onTryReconnect = { viewModel.tryReconnect() },
                 isOffline = uiState.connectionState is BotConnectionState.Disconnected ||

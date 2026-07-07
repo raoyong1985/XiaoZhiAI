@@ -14,6 +14,7 @@ import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 private const val TAG = "ChatViewModel"
@@ -143,6 +144,32 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 断线时先强制重连，连接成功后再开始录音
+     */
+    fun startListeningWithReconnect() {
+        viewModelScope.launch {
+            val state = connectionRepository.connectionState.value
+            if (state !is BotConnectionState.Connected) {
+                val config = pendingConfig ?: return@launch
+                Logger.i(TAG, "startListeningWithReconnect: 断线中，先重连...")
+                connectionRepository.connect(config, currentContactId)
+                // 等待连接成功（超时 10 秒）
+                withTimeoutOrNull(10000L) {
+                    connectionRepository.connectionState
+                        .first { it is BotConnectionState.Connected || it is BotConnectionState.Error }
+                }
+                if (connectionRepository.connectionState.value !is BotConnectionState.Connected) {
+                    Logger.e(TAG, "startListeningWithReconnect: 重连失败")
+                    _uiState.update { it.copy(error = "重连失败，请检查网络") }
+                    return@launch
+                }
+                Logger.i(TAG, "startListeningWithReconnect: 重连成功，开始录音")
+            }
+            startListening()
+        }
+    }
+
     fun dismissAlert() {
         _uiState.update { it.copy(alert = null) }
     }
@@ -169,6 +196,32 @@ class ChatViewModel @Inject constructor(
                 Logger.e(TAG, "发送失败: ${e.message}")
                 _uiState.update { it.copy(error = "发送失败: ${e.message}") }
             }
+        }
+    }
+
+    /**
+     * 断线时先强制重连，连接成功后再发送文本
+     */
+    fun sendTextWithReconnect(text: String) {
+        viewModelScope.launch {
+            val state = connectionRepository.connectionState.value
+            if (state !is BotConnectionState.Connected) {
+                val config = pendingConfig ?: return@launch
+                Logger.i(TAG, "sendTextWithReconnect: 断线中，先重连...")
+                connectionRepository.connect(config, currentContactId)
+                // 等待连接成功（超时 10 秒）
+                withTimeoutOrNull(10000L) {
+                    connectionRepository.connectionState
+                        .first { it is BotConnectionState.Connected || it is BotConnectionState.Error }
+                }
+                if (connectionRepository.connectionState.value !is BotConnectionState.Connected) {
+                    Logger.e(TAG, "sendTextWithReconnect: 重连失败")
+                    _uiState.update { it.copy(error = "重连失败，消息未发送") }
+                    return@launch
+                }
+                Logger.i(TAG, "sendTextWithReconnect: 重连成功，发送消息")
+            }
+            sendTextMessage(text)
         }
     }
 

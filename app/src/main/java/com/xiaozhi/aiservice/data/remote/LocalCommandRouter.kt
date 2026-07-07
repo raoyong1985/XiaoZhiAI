@@ -113,13 +113,6 @@ object LocalCommandRouter {
             args = emptyMap(),
             ttsTemplate = "正在查询网络状态"
         ),
-        CmdRule(
-            keywords = listOf("IP地址", "公网IP", "我的IP"),
-            toolName = "get_public_ip",
-            args = emptyMap(),
-            ttsTemplate = "正在查询公网IP"
-        ),
-
         // ===== 音量大小（数字模式） =====
         CmdRule(
             keywords = listOf("音量调到", "音量设为"),

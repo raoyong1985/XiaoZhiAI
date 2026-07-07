@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
 
     <!-- Location for WiFi MAC address (Android 8.0+) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -161,11 +163,6 @@
             android:name=".data.remote.mcp.AlarmReceiver"
             android:exported="false" />
 
-        <!-- Reminder receiver for set_reminder -->
-        <receiver
-            android:name=".data.remote.mcp.ReminderReceiver"
-            android:exported="false" />
-
         <!-- 设备开机/应用升级后重新注册闹钟和提醒 -->
         <receiver
             android:name=".data.remote.mcp.BootReceiver"
@@ -174,6 +171,21 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 前台保活 Service：防止 Android 杀 WebSocket 连接 -->
+        <service
+            android:name=".data.remote.XiaoZhiForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- 网络变化广播接收（Android 6- 兼容） -->
+        <receiver
+            android:name=".data.remote.ConnectivityReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
             </intent-filter>
         </receiver>
     </application>

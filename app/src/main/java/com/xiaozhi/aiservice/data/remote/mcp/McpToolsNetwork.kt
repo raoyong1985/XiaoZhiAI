@@ -50,33 +50,6 @@ fun registerNetworkTools(registry: MCPToolRegistry) {
     }
 
     registry.registerTool(
-        name = "get_public_ip",
-        description = "获取设备的公网 IP 地址和所在地",
-        inputSchema = jsonSchema()
-    ) { _ ->
-        try {
-            val text = httpGet("https://api.ipify.org?format=json", timeoutMs = 5000)
-            if (text.isEmpty()) throw Exception("请求失败")
-            val json = try { JsonParser.parseString(text).asJsonObject } catch (_: Exception) { null }
-            val ip = json?.get("ip")?.asString ?: text.trim()
-            val locText = httpGet("https://ipapi.co/$ip/json/", timeoutMs = 5000)
-            var city = ""; var country = ""; var isp = ""
-            try {
-                val loc = JsonParser.parseString(locText).asJsonObject
-                city = loc.get("city")?.asString ?: ""
-                country = loc.get("country_name")?.asString ?: ""
-                isp = loc.get("org")?.asString ?: ""
-            } catch (_: Exception) {}
-            JsonObject().apply {
-                addProperty("ip", ip)
-                if (city.isNotEmpty()) addProperty("city", city)
-                if (country.isNotEmpty()) addProperty("country", country)
-                if (isp.isNotEmpty()) addProperty("isp", isp)
-            }
-        } catch (e: Exception) { throw Exception("获取公网 IP 失败: ${e.message}") }
-    }
-
-    registry.registerTool(
         name = "web_search",
         description = "搜索网页获取实时信息，返回搜索结果列表",
         inputSchema = jsonSchema(

@@ -41,38 +41,6 @@ fun registerXiaozhiTools(registry: MCPToolRegistry) {
         }
     }
 
-    registry.registerTool(
-        name = "set_listening_mode",
-        description = "设置小智 AI 的监听模式：auto（自动停止后重启）/ manual（手动重启）/ realtime（实时持续）。参考 ESP32 ListeningMode",
-        inputSchema = jsonSchema(
-            "mode" to jsonStringProp("监听模式: auto/manual/realtime，默认 realtime"),
-            required = listOf("mode")
-        )
-    ) { args ->
-        val mode = (args["mode"] as? String)?.lowercase()
-            ?: throw Exception("mode 必须为 auto/manual/realtime")
-        val validModes = setOf("auto", "manual", "realtime")
-        if (mode !in validModes) throw Exception("mode 必须为 auto/manual/realtime，当前值: $mode")
-        AudioSettings.setListeningMode(registry.context,
-            com.xiaozhi.aiservice.domain.model.VoiceMode.fromServerValue(mode))
-        JsonObject().apply {
-            addProperty("success", true)
-            addProperty("mode", mode)
-            addProperty("message", "监听模式已设置为 $mode")
-        }
-    }
-
-    registry.registerTool(
-        name = "get_listening_mode",
-        description = "获取当前小智 AI 的监听模式",
-        inputSchema = jsonSchema()
-    ) { _ ->
-        val mode = AudioSettings.getListeningMode(registry.context)
-        JsonObject().apply {
-            addProperty("mode", mode.serverValue)
-            addProperty("display_name", mode.displayName)
-        }
-    }
 
     registry.registerTool(
         name = "set_aec_mode",

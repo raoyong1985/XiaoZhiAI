@@ -12,12 +12,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
+import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageList
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageItem
 import com.xiaozhi.aiservice.presentation.ui.components.InputBar
@@ -46,6 +55,17 @@ fun GroupChatScreen(
     val isPingPong = remember(group?.botIds?.size) { group?.botIds?.size == 2 }
     val isAiResponding by viewModel.isAiResponding.collectAsState()
     val contacts by viewModel.contacts.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+
+    val connectionColor by animateColorAsState(
+        targetValue = when (connectionState) {
+            is BotConnectionState.Connected -> Color(0xFF4CAF50)
+            is BotConnectionState.Connecting -> Color(0xFFFFC107)
+            is BotConnectionState.Error -> Color(0xFFE53935)
+            else -> Color(0xFF9E9E9E)
+        },
+        label = "connection_color"
+    )
 
     // ── 群成员名称列表（用于 @提及） ──
     val groupMemberNames = remember(group, contacts) {
@@ -83,6 +103,20 @@ fun GroupChatScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    val context = LocalContext.current
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://xiaozhi.me/console/agents"))
+                        ContextCompat.startActivity(context, intent, null)
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = "控制台",
+                            modifier = Modifier.size(24.dp),
+                            tint = connectionColor
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(

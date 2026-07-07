@@ -145,6 +145,10 @@ class GroupChatViewModel @Inject constructor(
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
+    /** 群聊整体连接状态（聚合所有 bot 的连接状态） */
+    private val _connectionState = MutableStateFlow<BotConnectionState>(BotConnectionState.Disconnected)
+    val connectionState: StateFlow<BotConnectionState> = _connectionState.asStateFlow()
+
     /** 乒乓模式：AI 正在回复中，等待回复完成（仅双人群聊生效） */
     private val _isAiResponding = MutableStateFlow(false)
     val isAiResponding: StateFlow<Boolean> = _isAiResponding.asStateFlow()
@@ -304,6 +308,24 @@ class GroupChatViewModel @Inject constructor(
         }
 
         // ── 接龙看门狗（15 秒周期） ──
+
+        // ── 聚合所有 bot 的连接状态 ──
+        viewModelScope.launch {
+            val flows = botConnectionPool.all.values.map { it.connectionState }
+            // 初始状态
+            _connectionState.value = BotConnectionState.Connecting
+            // 任意一个 bot 状态变化时重新聚合
+            combine(flows) { states ->
+                when {
+                    states.any { it is BotConnectionState.Connected } -> BotConnectionState.Connected
+                    states.any { it is BotConnectionState.Connecting } -> BotConnectionState.Connecting
+                    states.any { it is BotConnectionState.Error } -> BotConnectionState.Error()
+                    else -> BotConnectionState.Disconnected
+                }
+            }.collect { combined ->
+                _connectionState.value = combined
+            }
+        }
         // 职责：
         // 1. 检测接龙是否卡死（等待某个 bot 但 >30 秒无响应）
         // 2. 定期清理死 bot 标记（每 2 分钟一次）

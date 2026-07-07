@@ -335,80 +335,6 @@ fun registerIntentTools(registry: MCPToolRegistry) {
     }
 
     registry.registerTool(
-        name = "vibrate",
-        description = "让手机震动，可指定时长和模式",
-        inputSchema = jsonSchema(
-            "duration_ms" to jsonNumberProp("震动时长（毫秒），默认 500"),
-            "pattern" to jsonStringProp("震动模式：once/short/long/rapid，默认 once")
-        )
-    ) { args ->
-        val duration = (args["duration_ms"] as? Number)?.toLong() ?: 500L
-        val pattern = (args["pattern"] as? String)?.lowercase() ?: "once"
-        val ctx = registry.context
-
-        // 检查震动权限
-        val vibratePerm = checkPermissionWithGuide(
-            Manifest.permission.VIBRATE, permissionName = "震动"
-        )
-        if (vibratePerm != null) return@registerTool vibratePerm
-
-        val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-            ?: throw Exception("此设备不支持震动")
-        val patternArr = when (pattern) {
-            "short" -> longArrayOf(0, 100)
-            "long" -> longArrayOf(0, 1000)
-            "rapid" -> longArrayOf(0, 200, 100, 200, 100, 200)
-            else -> longArrayOf(0, duration)
-        }
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            vibrator.vibrate(android.os.VibrationEffect.createWaveform(patternArr, -1))
-        } else {
-            @Suppress("DEPRECATION") vibrator.vibrate(patternArr, -1)
-        }
-        JsonObject().apply { addProperty("success", true); addProperty("pattern", pattern); addProperty("duration_ms", patternArr.sum()) }
-    }
-
-    registry.registerTool(
-        name = "send_notification",
-        description = "在手机通知栏发送一条通知提醒",
-        inputSchema = jsonSchema(
-            "title" to jsonStringProp("通知标题"),
-            "content" to jsonStringProp("通知内容"),
-            "channel_id" to jsonStringProp("通知渠道ID，用于分类通知（默认 xiaozhi）"),
-            required = listOf("title", "content")
-        )
-    ) { args ->
-        val title = (args["title"] as? String).takeIf { !it.isNullOrEmpty() }
-            ?: throw Exception("title 不能为空")
-        val content = (args["content"] as? String).takeIf { !it.isNullOrEmpty() }
-            ?: throw Exception("content 不能为空")
-        val channelId = args["channel_id"] as? String ?: "xiaozhi"
-
-        ensureNotificationChannel(channelId)
-
-        val notification = NotificationCompat.Builder(registry.context, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(content)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .build()
-
-        val notifPerm = checkPermissionWithGuide(
-            Manifest.permission.POST_NOTIFICATIONS, permissionName = "通知"
-        )
-        if (notifPerm != null) return@registerTool notifPerm
-        NotificationManagerCompat.from(registry.context).notify(
-            System.currentTimeMillis().toInt(), notification
-        )
-        JsonObject().apply {
-            addProperty("success", true)
-            addProperty("title", title)
-            addProperty("content", content)
-        }
-    }
-
-    registry.registerTool(
         name = "screen_brightness",
         description = "获取当前屏幕亮度，或设置亮度百分比",
         inputSchema = jsonSchema(
@@ -908,58 +834,6 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         JsonObject().apply { add("apps", arr); addProperty("count", arr.size()) }
     }
 
-    registry.registerTool(
-        name = "dict_lookup",
-        description = "中英文词典查询，返回单词释义、音标、例句等",
-        inputSchema = jsonSchema(
-            "word" to jsonStringProp("要查询的单词或词语（中文或英文）"),
-            required = listOf("word")
-        )
-    ) { args ->
-        val word = (args["word"] as? String)?.takeIf { it.isNotBlank() } ?: throw Exception("word 不能为空")
-        try {
-            val text = httpGet("https://api.dictionaryapi.dev/api/v2/entries/en/${java.net.URLEncoder.encode(word, "UTF-8")}", timeoutMs = 6000)
-            if (text.isEmpty() || text.startsWith("<")) {
-                val cnText = httpGet("https://dict.youdao.com/suggest?q=${java.net.URLEncoder.encode(word, "UTF-8")}&le=zh", timeoutMs = 5000)
-                val cnJson = try { JsonParser.parseString(cnText).asJsonObject } catch (_: Exception) { null }
-                val entries = cnJson?.getAsJsonArray("data")?.get(0)?.asJsonObject?.getAsJsonArray("entries")
-                if (entries != null && entries.size() > 0) {
-                    val e = entries[0].asJsonObject
-                    val explains = e.getAsJsonArray("explains")
-                    val arr = JsonArray()
-                    for (i in 0 until explains.size()) arr.add(explains[i].asString)
-                    return@registerTool JsonObject().apply { add("explanations", arr); addProperty("word", e.get("key")?.asString ?: word) }
-                }
-                throw Exception("未找到释义")
-            }
-            val json = JsonParser.parseString(text).asJsonArray
-            val first = json[0].asJsonObject
-            val meanings = first.getAsJsonArray("meanings")
-            val arr = JsonArray()
-            meanings.forEach { m ->
-                val obj = m.asJsonObject
-                val defs = obj.getAsJsonArray("definitions")
-                for (i in 0 until minOf(defs.size(), 3)) {
-                    arr.add("[${obj.get("partOfSpeech")?.asString}] ${defs[i].asJsonObject.get("definition")?.asString}")
-                }
-            }
-            val phonetics = first.getAsJsonArray("phonetics")
-            var phonetic = ""
-            for (i in 0 until (phonetics?.size() ?: 0)) {
-                val p = phonetics!![i].asJsonObject
-                val textStr = p.get("text")?.asString
-                if (textStr != null) { phonetic = textStr; break }
-            }
-            JsonObject().apply {
-                addProperty("word", first.get("word")?.asString ?: word)
-                if (phonetic.isNotEmpty()) addProperty("phonetic", phonetic)
-                add("definitions", arr)
-            }
-        } catch (e: Exception) {
-            if (e.message?.contains("释义") == true) throw e
-            throw Exception("查词失败: ${e.message}")
-        }
-    }
 
     registry.registerTool(
         name = "get_calendar",

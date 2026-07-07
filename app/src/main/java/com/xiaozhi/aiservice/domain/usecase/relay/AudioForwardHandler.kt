@@ -92,7 +92,13 @@ class AudioForwardHandler(
         val name = prevBotId?.let { id ->
             getContacts().find { id == it.id }?.name
         } ?: return previousReply
-        return """{"speaker":"${name}","content":"${previousReply.replace("\"", "\\\"")}"}"""
+        // 过滤 MVU 标签和调试输出，防止污染下游 LLM
+        val clean = previousReply
+            .replace(Regex("<update>[^<]*</update>\\s*"), "")  // 去掉 <update> 标签
+            .replace(Regex("<FirstMes>[^<]*</FirstMes>\\s*"), "")  // 去掉 FirstMes 标签
+            .replace(Regex("FirstMes:.*"), "")  // 去掉调试输出的配置信息
+            .trim()
+        return """{"speaker":"${name}","content":"${clean.replace("\"", "\\\"")}"}"""
     }
 
     /**
