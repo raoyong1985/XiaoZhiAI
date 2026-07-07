@@ -2,10 +2,13 @@ package com.xiaozhi.aiservice.presentation.ui.chat
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,6 +16,7 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -34,6 +38,7 @@ import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageList
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageItem
 import com.xiaozhi.aiservice.presentation.ui.components.InputBar
@@ -111,6 +116,7 @@ fun ChatScreen(
     val botColor = remember(contact.name, isDark) {
         com.xiaozhi.aiservice.presentation.ui.components.BotColorScheme.forName(contact.name, isDark)
     }
+    var showClearConfirm by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.alert) {
         uiState.alert?.let { alertText ->
             snackbarHostState.showSnackbar(
@@ -181,6 +187,7 @@ fun ChatScreen(
                 },
                 actions = {
                     val context = LocalContext.current
+                    var showMenu by remember { mutableStateOf(false) }
                     IconButton(onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://xiaozhi.me/console/agents"))
                         ContextCompat.startActivity(context, intent, null)
@@ -190,6 +197,38 @@ fun ChatScreen(
                             contentDescription = "控制台",
                             modifier = Modifier.size(24.dp),
                             tint = connectionColor
+                        )
+                    }
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                        modifier = Modifier
+                            .clip(AppShapes.menu)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(
+                                0.5.dp,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                AppShapes.menu
+                            )
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("清空聊天记录") },
+                            onClick = {
+                                showMenu = false
+                                showClearConfirm = true
+                            },
+                            leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF9800)) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导出聊天记录") },
+                            onClick = {
+                                showMenu = false
+                                viewModel.exportMessages(context)
+                            },
+                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                         )
                     }
                 },
@@ -222,5 +261,27 @@ fun ChatScreen(
                 }
             )
         }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            shape = AppShapes.dialog,
+            title = { Text("清空聊天记录") },
+            text = { Text("确定要清空与「${contact.name}」的所有聊天记录吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirm = false
+                    viewModel.clearMessages()
+                }) {
+                    Text("清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }

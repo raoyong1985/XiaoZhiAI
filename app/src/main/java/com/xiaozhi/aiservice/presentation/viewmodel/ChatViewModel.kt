@@ -8,6 +8,7 @@ import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
 import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
+import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
+import android.content.Context
+import android.content.Intent
 
 private const val TAG = "ChatViewModel"
 
@@ -223,6 +226,23 @@ class ChatViewModel @Inject constructor(
     fun clearMessages() {
         viewModelScope.launch {
             messageRepository.clearMessages(currentContactId)
+        }
+    }
+
+    fun exportMessages(context: Context) {
+        viewModelScope.launch {
+            val messages = messageRepository.getMessages(currentContactId).value
+            if (messages.isEmpty()) return@launch
+            val text = messages.joinToString("\n") { msg ->
+                val sender = if (msg.direction == MessageDirection.SENT) "我" else "AI"
+                "[${sender}]: ${msg.content}"
+            }
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_SUBJECT, "聊天记录")
+            }
+            context.startActivity(Intent.createChooser(intent, "导出聊天记录"))
         }
     }
 
