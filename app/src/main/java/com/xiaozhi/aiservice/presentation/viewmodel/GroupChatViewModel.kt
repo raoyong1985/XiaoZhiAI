@@ -978,9 +978,19 @@ class GroupChatViewModel @Inject constructor(
         groupChatUseCase.addBotToGroup(groupId, botId)
     }
 
+    /** 批量向群聊添加智能体成员 */
+    suspend fun addBotsToGroup(groupId: String, botIds: List<String>) {
+        botIds.forEach { groupChatUseCase.addBotToGroup(groupId, it) }
+    }
+
     /** 从群聊移除智能体成员 */
     suspend fun removeBotFromGroup(groupId: String, botId: String) {
         groupChatUseCase.removeBotFromGroup(groupId, botId)
+    }
+
+    /** 批量从群聊移除智能体成员 */
+    suspend fun removeBotsFromGroup(groupId: String, botIds: List<String>) {
+        botIds.forEach { groupChatUseCase.removeBotFromGroup(groupId, it) }
     }
 
     /** 清空群聊消息记录 */

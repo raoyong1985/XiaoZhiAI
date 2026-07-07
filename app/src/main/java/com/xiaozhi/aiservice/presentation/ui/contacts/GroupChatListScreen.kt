@@ -278,209 +278,165 @@ fun GroupChatListScreen(
 
     addingMemberGroup?.let { group ->
         val available = contacts.filter { c -> !group.botIds.contains(c.id) }
+        val selectedToAdd = remember { mutableStateListOf<String>() }
         AlertDialog(
-            onDismissRequest = { addingMemberGroup = null },
+            onDismissRequest = { addingMemberGroup = null; selectedToAdd.clear() },
             shape = AppShapes.dialog,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.PersonAdd,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Icon(Icons.Default.PersonAdd, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("添加成员", fontWeight = FontWeight.SemiBold)
+                    Text("添加成员 (${selectedToAdd.size})", fontWeight = FontWeight.SemiBold)
                 }
             },
             text = {
                 if (available.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "没有可添加的智能体",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                        Text("没有可添加的智能体", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     Column {
-                        Text(
-                            "选择要添加的智能体：",
-                            fontSize = 13.sp,
+                        Text("选择要添加的智能体：", fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        )
-                        Column(
-                            modifier = Modifier.verticalScroll(rememberScrollState())
-                        ) {
+                            modifier = Modifier.padding(bottom = 4.dp))
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             available.forEachIndexed { index, contact ->
+                                val isChecked = selectedToAdd.contains(contact.id)
                                 val botColor = BotColorScheme.forName(contact.name)
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(AppShapes.menu)
+                                    modifier = Modifier.fillMaxWidth().clip(AppShapes.menu)
                                         .clickable {
-                                            coroutineScope.launch {
-                                                viewModel.addBotToGroup(group.id, contact.id)
-                                                addingMemberGroup = null
-                                            }
+                                            if (isChecked) selectedToAdd.remove(contact.id)
+                                            else selectedToAdd.add(contact.id)
                                         }
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
-                                        .then(
-                                            Modifier.padding(vertical = 6.dp)
-                                        ),
+                                        .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    AvatarView(
-                                        name = contact.name,
-                                        size = 40.dp,
-                                        avatarColor = botColor.avatarColor
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { checked ->
+                                            if (checked) selectedToAdd.add(contact.id)
+                                            else selectedToAdd.remove(contact.id)
+                                        }
                                     )
+                                    AvatarView(name = contact.name, size = 40.dp, avatarColor = botColor.avatarColor)
                                     Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            contact.name,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            "ID: ${contact.deviceId.takeLast(8)}",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                        )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(contact.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        Text("ID: ${contact.deviceId.takeLast(8)}", fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                                     }
-                                    Icon(
-                                        Icons.Default.AddCircle,
-                                        contentDescription = "添加",
-                                        tint = Color(0xFF4CAF50),
-                                        modifier = Modifier.size(24.dp)
-                                    )
                                 }
                                 if (index < available.size - 1) {
-                                    Divider(
-                                        modifier = Modifier.padding(start = 52.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                        thickness = 0.5.dp
-                                    )
+                                    Divider(Modifier.padding(start = 52.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
                                 }
                             }
                         }
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (selectedToAdd.isNotEmpty()) {
+                            coroutineScope.launch {
+                                viewModel.addBotsToGroup(group.id, selectedToAdd.toList())
+                                addingMemberGroup = null
+                            }
+                        }
+                    },
+                    enabled = selectedToAdd.isNotEmpty()
+                ) { Text("添加 ${selectedToAdd.size} 个") }
+            },
             dismissButton = {
-                TextButton(onClick = { addingMemberGroup = null }) { Text("取消") }
+                TextButton(onClick = { addingMemberGroup = null; selectedToAdd.clear() }) { Text("取消") }
             }
         )
     }
 
     removingMemberGroup?.let { group ->
+        val selectedToRemove = remember { mutableStateListOf<String>() }
         AlertDialog(
-            onDismissRequest = { removingMemberGroup = null },
+            onDismissRequest = { removingMemberGroup = null; selectedToRemove.clear() },
             shape = AppShapes.dialog,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.PersonRemove,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Icon(Icons.Default.PersonRemove, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("删除成员", fontWeight = FontWeight.SemiBold)
+                    Text("删除成员 (${selectedToRemove.size})", fontWeight = FontWeight.SemiBold)
                 }
             },
             text = {
                 if (group.botIds.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "群聊中没有成员",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                        Text("群聊中没有成员", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     Column {
-                        Text(
-                            "选择要删除的智能体：",
-                            fontSize = 13.sp,
+                        Text("选择要删除的智能体：", fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        )
-                        Column(
-                            modifier = Modifier.verticalScroll(rememberScrollState())
-                        ) {
+                            modifier = Modifier.padding(bottom = 4.dp))
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             group.botIds.forEachIndexed { index, botId ->
                                 val contact = contacts.find { it.id == botId }
                                 val displayName = contact?.name ?: botId
+                                val isChecked = selectedToRemove.contains(botId)
                                 val botColor = BotColorScheme.forName(displayName)
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(AppShapes.menu)
+                                    modifier = Modifier.fillMaxWidth().clip(AppShapes.menu)
                                         .clickable {
-                                            coroutineScope.launch {
-                                                viewModel.removeBotFromGroup(group.id, botId)
-                                                removingMemberGroup = null
-                                            }
+                                            if (isChecked) selectedToRemove.remove(botId)
+                                            else selectedToRemove.add(botId)
                                         }
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
-                                        .then(
-                                            Modifier.padding(vertical = 6.dp)
-                                        ),
+                                        .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    AvatarView(
-                                        name = displayName,
-                                        size = 40.dp,
-                                        avatarColor = botColor.avatarColor
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { checked ->
+                                            if (checked) selectedToRemove.add(botId)
+                                            else selectedToRemove.remove(botId)
+                                        }
                                     )
+                                    AvatarView(name = displayName, size = 40.dp, avatarColor = botColor.avatarColor)
                                     Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            displayName,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                         contact?.let {
-                                            Text(
-                                                "ID: ${it.deviceId.takeLast(8)}",
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                            )
+                                            Text("ID: ${it.deviceId.takeLast(8)}", fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                                         }
                                     }
-                                    Icon(
-                                        Icons.Default.RemoveCircle,
-                                        contentDescription = "移除",
-                                        tint = Color(0xFFFF5252),
-                                        modifier = Modifier.size(24.dp)
-                                    )
                                 }
                                 if (index < group.botIds.size - 1) {
-                                    Divider(
-                                        modifier = Modifier.padding(start = 52.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                        thickness = 0.5.dp
-                                    )
+                                    Divider(Modifier.padding(start = 52.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
                                 }
                             }
                         }
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (selectedToRemove.isNotEmpty()) {
+                            coroutineScope.launch {
+                                viewModel.removeBotsFromGroup(group.id, selectedToRemove.toList())
+                                removingMemberGroup = null
+                            }
+                        }
+                    },
+                    enabled = selectedToRemove.isNotEmpty()
+                ) { Text("删除 ${selectedToRemove.size} 个", color = MaterialTheme.colorScheme.error) }
+            },
             dismissButton = {
-                TextButton(onClick = { removingMemberGroup = null }) { Text("取消") }
+                TextButton(onClick = { removingMemberGroup = null; selectedToRemove.clear() }) { Text("取消") }
             }
         )
     }
