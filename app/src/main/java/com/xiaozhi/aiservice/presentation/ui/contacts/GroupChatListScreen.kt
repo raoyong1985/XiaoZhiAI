@@ -56,9 +56,13 @@ fun GroupChatListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
-                navigationIcon = {
+                actions = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "联系人",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
