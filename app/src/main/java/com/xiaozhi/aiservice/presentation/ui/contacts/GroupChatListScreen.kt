@@ -55,14 +55,15 @@ fun GroupChatListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("群聊", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
+                title = { Text("群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 windowInsets = WindowInsets.statusBars
             )
