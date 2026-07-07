@@ -56,6 +56,11 @@ fun GroupChatListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
+                windowInsets = WindowInsets.statusBars,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
                 actions = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
@@ -64,12 +69,7 @@ fun GroupChatListScreen(
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                windowInsets = WindowInsets.statusBars
+                }
             )
         },
         floatingActionButton = {
@@ -92,13 +92,14 @@ fun GroupChatListScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(vertical = 2.dp)
+                contentPadding = PaddingValues(vertical = 4.dp)
             ) {
                 items(groups, key = { it.id }) { group ->
                     ListItem(
                         modifier = Modifier
                             .bounceClick()
-                            .clickable { onGroupClick(group.id) },
+                            .clickable { onGroupClick(group.id) }
+                            .padding(horizontal = 4.dp),
                         headlineContent = {
                             Text(
                                 text = group.name,
@@ -129,7 +130,8 @@ fun GroupChatListScreen(
                         leadingContent = {
                             AvatarView(
                                 name = group.name,
-                                size = 48.dp
+                                size = 48.dp,
+                                avatarColor = BotColorScheme.forName(group.name).avatarColor
                             )
                         },
                         trailingContent = {
@@ -213,7 +215,10 @@ fun GroupChatListScreen(
                                     )
                                 }
                             }
-                        }
+                        },
+                        colors = ListItemDefaults.colors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
                     )
                     Divider(
                         modifier = Modifier.padding(start = 72.dp),
