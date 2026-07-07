@@ -59,7 +59,7 @@ fun ChatMessageItem(
     }
 
     val bubbleColor = when {
-        isFromMe -> if (isDark) Color(0xFF1E3A6F) else Color(0xFFB8D4FF)
+        isFromMe -> MaterialTheme.colorScheme.primaryContainer
         else -> effectiveBotColor.bubbleColor
     }
 
@@ -219,7 +219,7 @@ fun ChatMessageItem(
             AvatarView(
                 name = "我",
                 size = 36.dp,
-                avatarColor = if (isDark) Color(0xFF3A6FDF) else Color(0xFF5B8DEF)
+                avatarColor = MaterialTheme.colorScheme.primary
             )
         }
     }  // Row
