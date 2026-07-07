@@ -46,6 +46,7 @@ fun ContactsScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var editingContact by remember { mutableStateOf<BotContact?>(null) }
     var contactToDelete by remember { mutableStateOf<BotContact?>(null) }
+    var contactToClear by remember { mutableStateOf<BotContact?>(null) }
 
     Scaffold(
         topBar = {
@@ -99,7 +100,7 @@ fun ContactsScreen(
                         onClick = { onContactClick(contact) },
                         onEdit = { editingContact = contact },
                         onDelete = { contactToDelete = contact },
-                        onClearMessages = { viewModel.clearMessages(contact.id) },
+                        onClearMessages = { contactToClear = contact },
                         onExportMessages = { viewModel.exportMessages(contact.id, context) },
                         onToggleInputMode = { viewModel.toggleInputMode(contact) }
                     )
@@ -151,6 +152,29 @@ fun ContactsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { contactToDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 清空聊天记录确认弹窗
+    contactToClear?.let { contact ->
+        AlertDialog(
+            onDismissRequest = { contactToClear = null },
+            shape = AppShapes.dialog,
+            title = { Text("清空聊天记录") },
+            text = { Text("确定要清空 \"${contact.name}\" 的所有聊天记录吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearMessages(contact.id)
+                    contactToClear = null
+                }) {
+                    Text("清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { contactToClear = null }) {
                     Text("取消")
                 }
             }
