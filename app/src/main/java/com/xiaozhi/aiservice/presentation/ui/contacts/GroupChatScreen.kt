@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -89,10 +90,10 @@ fun GroupChatScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(group?.name ?: "群聊", fontSize = 18.sp)
+                    Column(horizontalAlignment = Alignment.Start) {
+                        Text(group?.name ?: "群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                         Text(
                             "${group?.botIds?.size ?: 0} 个成员",
                             fontSize = 12.sp,
@@ -119,7 +120,7 @@ fun GroupChatScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 windowInsets = WindowInsets.statusBars

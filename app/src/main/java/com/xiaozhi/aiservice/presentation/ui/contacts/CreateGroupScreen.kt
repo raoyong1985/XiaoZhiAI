@@ -32,7 +32,7 @@ fun CreateGroupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("创建群聊", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
+                title = { Text("创建群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")

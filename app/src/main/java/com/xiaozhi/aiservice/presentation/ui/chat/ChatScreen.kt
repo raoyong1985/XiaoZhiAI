@@ -149,11 +149,10 @@ fun ChatScreen(
             )
         },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         stateIcon?.let { icon ->
                             Icon(
@@ -195,7 +194,7 @@ fun ChatScreen(
                     }
                 },
                 windowInsets = WindowInsets.statusBars,
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 )

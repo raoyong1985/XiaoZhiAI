@@ -26,6 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import com.xiaozhi.aiservice.presentation.ui.components.AvatarView
 import com.xiaozhi.aiservice.presentation.ui.components.BotColorScheme
+import com.xiaozhi.aiservice.presentation.ui.components.bounceClick
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -90,7 +91,9 @@ fun GroupChatListScreen(
             ) {
                 items(groups, key = { it.id }) { group ->
                     ListItem(
-                        modifier = Modifier.clickable { onGroupClick(group.id) },
+                        modifier = Modifier
+                            .clickable { onGroupClick(group.id) }
+                            .bounceClick(),
                         headlineContent = {
                             Text(
                                 text = group.name,
@@ -208,8 +211,9 @@ fun GroupChatListScreen(
                         }
                     )
                     Divider(
-                        modifier = Modifier.padding(start = 80.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        modifier = Modifier.padding(start = 72.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        thickness = 0.5.dp
                     )
                 }
             }

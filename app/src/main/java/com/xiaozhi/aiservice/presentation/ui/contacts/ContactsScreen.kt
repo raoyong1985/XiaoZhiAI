@@ -29,6 +29,7 @@ import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
+import com.xiaozhi.aiservice.presentation.ui.components.bounceClick
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -50,7 +51,7 @@ fun ContactsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("联系人", fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                    Text("联系人", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -183,6 +184,7 @@ private fun ContactItem(
     ListItem(
         modifier = Modifier
             .clickable(onClick = onClick)
+            .bounceClick()
             .padding(horizontal = 4.dp),
         headlineContent = {
             Text(
@@ -320,8 +322,8 @@ private fun ContactItem(
         )
     )
     Divider(
-        modifier = Modifier.padding(start = 76.dp, end = 4.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        modifier = Modifier.padding(start = 72.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
         thickness = 0.5.dp
     )
 }
