@@ -90,9 +90,9 @@ fun GroupChatScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.Start) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(group?.name ?: "群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                         Text(
                             "${group?.botIds?.size ?: 0} 个成员",
@@ -120,7 +120,7 @@ fun GroupChatScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
