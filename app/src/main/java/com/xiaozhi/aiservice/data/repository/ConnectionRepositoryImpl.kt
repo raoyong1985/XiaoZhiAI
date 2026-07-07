@@ -2,8 +2,6 @@ package com.xiaozhi.aiservice.data.repository
 
 import android.content.Context
 import android.os.PowerManager
-import com.xiaozhi.aiservice.data.memory.RAGMemoryManager
-import com.xiaozhi.aiservice.domain.memory.LocalRAGMemory
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.settings.AudioSettings
@@ -96,9 +94,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     // 流式消息结束信号（用于关闭流式动画）
     override val streamingEnd: SharedFlow<String> = backendService.streamingEnd
 
-    // 本地 RAG 记忆系统（方言解释：记忆硬盘）
-    private val ragMemory: LocalRAGMemory by lazy { RAGMemoryManager.getInstance(context) }
-    
+
     // 记录最后一条用户消息，用于 sentence_end 时配对存储
     @Volatile
     private var lastUserMessageForMemory: String = ""

@@ -88,10 +88,13 @@ class MCPToolRegistry @Inject constructor(
         addProperty("name", tool.name)
         addProperty("description", tool.description)
         add("inputSchema", tool.inputSchema)
-        add("annotations", JsonObject().apply {
-            addProperty("readOnly", tool.readOnly)
-            addProperty("userOnly", tool.userOnly)
-        })
+        // 只在非默认时带 annotations，省 ~2KB/tools_list
+        if (tool.readOnly != true || tool.userOnly != false) {
+            add("annotations", JsonObject().apply {
+                addProperty("readOnly", tool.readOnly)
+                addProperty("userOnly", tool.userOnly)
+            })
+        }
     }
 
     suspend fun callTool(name: String, arguments: Map<String, Any>): Pair<Boolean, Any> {

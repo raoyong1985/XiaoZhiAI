@@ -19,12 +19,11 @@ import androidx.core.app.ActivityCompat
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.xiaozhi.aiservice.data.note.NoteStorage
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
-import com.xiaozhi.aiservice.domain.model.Note
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import com.xiaozhi.aiservice.domain.model.MessageType
+import com.xiaozhi.aiservice.domain.model.MessageDirection
+import com.xiaozhi.aiservice.domain.model.MessageStatus
+import com.xiaozhi.aiservice.domain.model.ChatMessage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -45,21 +44,16 @@ import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.DecodeHintType
 import com.google.zxing.NotFoundException
-import com.xiaozhi.aiservice.domain.model.MessageType
-import com.xiaozhi.aiservice.domain.model.MessageDirection
-import com.xiaozhi.aiservice.domain.model.MessageStatus
-import com.xiaozhi.aiservice.domain.model.ChatMessage
 
 fun registerExtraTools(registry: MCPToolRegistry) {
 
-    // ── 笔记工具已移至 McpToolsNotes.kt（registerNoteTools）──
-    // ── 提醒/闹钟工具已移至 McpToolsAlarm.kt（registerAlarmTools）──
+    // ── 笔记/闹钟工具已移至 McpToolsNotes.kt / McpToolsAlarm.kt ──
 
 
     // ──────────────── generate_qr ────────────────
     registry.registerTool(
         name = "generate_qr",
-        description = "生成二维码图片，将文本或链接生成二维码并保存到手机。当用户说「生成二维码」「做个二维码」「这个链接转成二维码」时调用此工具",
+        description = "生成二维码图片，将文本或链接转为二维码并保存到手机",
         inputSchema = jsonSchema(
             "content" to jsonStringProp("要生成二维码的内容（文本或链接URL）"),
             "size" to jsonNumberProp("二维码图片尺寸（像素），默认 300，建议 200-500"),
@@ -414,10 +408,10 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── query_stock ────────────────
     registry.registerTool(
         name = "query_stock",
-        description = "查询股票的实时行情，包括当前价、涨跌幅、最高/最低价、成交量等。当用户说「查股票」「股价」「XX股票多少钱」「XX行情」时调用此工具",
+        description = "查询股票实时行情，包括当前价、涨跌幅、最高/最低价、成交量等",
         inputSchema = jsonSchema(
-            "code" to jsonStringProp("股票代码，如 sh600519（贵州茅台）、sz000001（平安银行）、hk00700（腾讯港股）"),
-            "name" to jsonStringProp("股票名称（与 code 二选一），如「茅台」「腾讯」「平安银行」"),
+            "code" to jsonStringProp("股票代码，如 sh600519/sz000001/hk00700"),
+            "name" to jsonStringProp("股票名称（与 code 二选一）"),
             required = listOf()
         )
     ) { args ->
@@ -479,9 +473,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── read_sms ────────────────
     registry.registerTool(
         name = "read_sms",
-        description = "读取手机上的短信，支持查看未读短信、最近短信或按号码查找。当用户说「看看我的短信」「有没有新短信」「查一下验证码」「最近短信」时调用此工具",
+        description = "读取手机短信，支持查看未读、最近或按号码查找",
         inputSchema = jsonSchema(
-            "type" to jsonStringProp("类型: unread（未读）/ recent（最近）/ all（全部），默认 unread"),
+            "type" to jsonStringProp("类型: unread/recent/all"),
             "sender" to jsonStringProp("按发件人号码或关键词过滤，如「10086」「银行」"),
             "max_results" to jsonNumberProp("最多返回条数，默认 5，最大 20"),
             required = listOf()
@@ -544,7 +538,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── scan_qr ────────────────
     registry.registerTool(
         name = "scan_qr",
-        description = "使用相机拍照并识别二维码/条形码，返回扫码结果。当用户说「扫一扫」「扫码」「识别二维码」「扫这个码」「扫二维码」时调用此工具",
+        description = "使用相机扫码识别二维码/条形码，返回扫码结果",
         inputSchema = jsonSchema(),
         readOnly = true
     ) { _ ->
@@ -581,7 +575,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── contact_manage ────────────────
     registry.registerTool(
         name = "contact_manage",
-        description = "管理手机联系人。支持搜索联系人（按姓名/号码）或添加新联系人（弹出系统联系人界面）。当用户说「查找联系人」「存一个电话」「保存联系人」「张三的电话」时调用此工具",
+        description = "管理手机联系人，支持搜索或添加新联系人",
         inputSchema = jsonSchema(
             "action" to jsonStringProp("操作: search/add，默认 search"),
             "query" to jsonStringProp("搜索模式下：姓名或电话号码关键词"),
@@ -681,9 +675,9 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── media_control ────────────────
     registry.registerTool(
         name = "media_control",
-        description = "控制手机上的媒体播放（音乐、视频），支持播放/暂停/上一首/下一首/快进/快退。当用户说「播放音乐」「暂停」「下一首」「上一曲」时调用此工具",
+        description = "控制媒体播放（音乐/视频）：播放/暂停/上一首/下一首/快进/快退",
         inputSchema = jsonSchema(
-            "action" to jsonStringProp("操作: play/pause/next/previous/stop，默认 play"),
+            "action" to jsonStringProp("操作: play/pause/next/previous/stop"),
             required = listOf("action")
         )
     ) { args ->
@@ -738,7 +732,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── read_notifications ────────────────
     registry.registerTool(
         name = "read_notifications",
-        description = "读取当前 App 的活跃通知列表。当用户说「看看我的通知」「有什么通知」「通知栏有什么」时调用此工具",
+        description = "读取当前 App 的活跃通知列表",
         inputSchema = jsonSchema(
             "max_results" to jsonNumberProp("最多返回条数，默认 10"),
         )
@@ -781,7 +775,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── toggle_data ────────────────
     registry.registerTool(
         name = "toggle_data",
-        description = "开启或关闭移动数据网络。注意：Android 5.0+ 系统限制，部分厂商可能不支持。当用户说「打开数据」「关闭数据」「开启移动网络」「关掉流量」时调用此工具",
+        description = "开启或关闭移动数据网络。部分厂商可能不支持",
         inputSchema = jsonSchema(
             "enabled" to jsonBoolProp("true=开启移动数据，false=关闭"),
             required = listOf("enabled")
@@ -820,7 +814,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── toggle_hotspot ────────────────
     registry.registerTool(
         name = "toggle_hotspot",
-        description = "开启或关闭 WiFi 热点。Android 8+ 通过反射调用（系统限制），部分设备可能不支持。当用户说「打开热点」「关闭热点」「开启WiFi热点」时调用此工具",
+        description = "开启或关闭 WiFi 热点。部分设备可能不支持",
         inputSchema = jsonSchema(
             "enabled" to jsonBoolProp("true=开启热点，false=关闭"),
             "ssid" to jsonStringProp("可选，热点名称，默认 \"XiaoZhi-Hotspot\""),
@@ -864,7 +858,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── calendar_event ────────────────
     registry.registerTool(
         name = "calendar_event",
-        description = "创建日历事件。支持指定标题、时间、地点和备注。当用户说「帮我记个日程」「创建日历提醒」「明天开会」「添加日历事件」时调用此工具",
+        description = "创建日历事件，支持指定标题、时间、地点和备注",
         inputSchema = jsonSchema(
             "action" to jsonStringProp("操作: add，默认 add（目前只支持添加）"),
             "title" to jsonStringProp("事件标题"),
@@ -925,7 +919,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "share_wifi_qr",
-        description = "生成当前连接 WiFi 的二维码（SSID），供其他手机扫码连接。当用户说「WiFi二维码」「分享WiFi」「生成WiFi二维码」时调用此工具",
+        description = "生成当前连接 WiFi 的二维码，供其他手机扫码连接",
         inputSchema = jsonSchema()
     ) { _ ->
         val ctx = registry.context
@@ -961,7 +955,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     // ──────────────── open_app_settings ────────────────
     registry.registerTool(
         name = "open_app_settings",
-        description = "打开系统设置中指定应用的详情页（权限、通知、电池优化）。当用户说「打开微信的权限设置」「看看XX的应用信息」「应用的权限」时调用此工具",
+        description = "打开系统设置中指定应用的详情页（权限/通知/电池优化）",
         inputSchema = jsonSchema(
             "package_name" to jsonStringProp("应用包名，如 com.tencent.mm（微信）"),
             required = listOf("package_name")

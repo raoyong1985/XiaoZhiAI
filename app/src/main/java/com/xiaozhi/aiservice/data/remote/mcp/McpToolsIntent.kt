@@ -27,10 +27,10 @@ import java.util.Locale
 fun registerIntentTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "open_app",
-        description = "在手机上打开指定应用（按应用名或包名）。如果应用未安装，会自动跳转到应用商店下载页。当用户说「打开微信」「启动QQ」「帮我打开抖音」「打开地图」「启动相机」「打开设置」「打开 app」等需要打开某个 app 时调用此工具",
+        description = "在手机上打开指定应用（按应用名或包名），未安装则跳转到应用商店",
         inputSchema = jsonSchema(
-            "app_name" to jsonStringProp("应用名称（中文或英文），如「微信」「淘宝」「抖音」「高德地图」"),
-            "package_name" to jsonStringProp("可选，应用包名（精确时优先用），如 com.tencent.mm"),
+            "app_name" to jsonStringProp("应用名称或包名，如「微信」或 com.tencent.mm"),
+            "package_name" to jsonStringProp("应用包名，如 com.tencent.mm"),
             "fallback_search" to jsonBoolProp("如果未找到，是否打开应用商店下载页（默认 true）"),
             required = listOf("app_name")
         )
@@ -157,7 +157,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         name = "set_volume",
         description = "调节手机音量，支持媒体、闹钟、通知、通话音量",
         inputSchema = jsonSchema(
-            "type" to jsonStringProp("音量类型：media/alarm/ring/notification，默认 media"),
+            "type" to jsonStringProp("音量类型: media/alarm/ring/notification"),
             "level" to jsonNumberProp("音量 0-100，百分比"),
             required = listOf("level")
         )
@@ -377,8 +377,8 @@ fun registerIntentTools(registry: MCPToolRegistry) {
             "destination" to jsonStringProp("目的地名称或地址"),
             "latitude" to jsonNumberProp("目的地纬度（可选，传经纬度可精确定位）"),
             "longitude" to jsonNumberProp("目的地经度（可选，传经纬度可精确定位）"),
-            "mode" to jsonStringProp("导航模式：driving/walking/transit/cycling，默认 driving"),
-            "app" to jsonStringProp("地图应用：auto/amap/baidu/tencent/google，默认 auto（依次尝试高德→百度→腾讯→系统地图）"),
+            "mode" to jsonStringProp("导航模式: driving/walking/transit/cycling"),
+            "app" to jsonStringProp("地图应用: auto/amap/baidu/tencent/google"),
             required = listOf("destination")
         )
     ) { args ->
@@ -730,7 +730,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "take_screenshot",
-        description = "对手机当前屏幕进行截图。当用户说「截屏」「截图」「截个图」「屏幕截图」时，调用此工具。截图后会在聊天框中显示图片",
+        description = "对手机当前屏幕进行截图，截图后会在聊天框中显示图片",
         inputSchema = jsonSchema()
     ) { _ ->
         val context = registry.context
@@ -840,7 +840,7 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         description = "获取日历中的事件列表，默认查询今天的事件，支持指定日期范围",
         inputSchema = jsonSchema(
             "start_date" to jsonStringProp("开始日期，格式 yyyy-MM-dd，默认今天"),
-            "end_date" to jsonStringProp("结束日期，格式 yyyy-MM-dd，默认 start_date + 1 天"),
+            "end_date" to jsonStringProp("结束日期 yyyy-MM-dd，默认 start_date+1天"),
             "max_results" to jsonNumberProp("最多返回事件数量，默认 20")
         )
     ) { args ->

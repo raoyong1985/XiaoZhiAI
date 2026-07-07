@@ -90,74 +90,6 @@ fun httpGet(urlString: String, timeoutMs: Long = 5000): String {
     }
 }
 
-// ========== Evaluate Expression ==========
-
-fun evaluateSimpleExpression(expr: String): Double {
-    val trimmed = expr.replace(" ", "")
-    if (trimmed.isEmpty()) throw IllegalArgumentException("空表达式")
-
-    val numStack = ArrayDeque<Double>()
-    val opStack = ArrayDeque<Char>()
-    var i = 0
-
-    fun applyOp() {
-        val b = numStack.removeLastOrNull()
-            ?: throw IllegalArgumentException("缺少操作数")
-        val a = numStack.removeLastOrNull()
-            ?: throw IllegalArgumentException("缺少操作数")
-        val op = opStack.removeLastOrNull()
-            ?: throw IllegalArgumentException("缺少运算符")
-        numStack.addLast(when (op) {
-            '+' -> a + b
-            '-' -> a - b
-            '*' -> a * b
-            '/' -> if (b == 0.0) throw ArithmeticException("除数不能为零") else a / b
-            else -> throw IllegalArgumentException("未知运算符: $op")
-        })
-    }
-
-    fun precedence(op: Char): Int = when (op) {
-        '+', '-' -> 1
-        '*', '/' -> 2
-        else -> 0
-    }
-
-    while (i < trimmed.length) {
-        val ch = trimmed[i]
-        when {
-            ch == '-' && (i == 0 || trimmed[i - 1] in "+-*/( ") -> {
-                i++
-                val start = i
-                while (i < trimmed.length && (trimmed[i].isDigit() || trimmed[i] == '.')) i++
-                if (i == start) throw IllegalArgumentException("无效的负数表达式")
-                numStack.addLast(("-" + trimmed.substring(start, i)).toDouble())
-            }
-            ch.isDigit() || ch == '.' -> {
-                val start = i
-                while (i < trimmed.length && (trimmed[i].isDigit() || trimmed[i] == '.')) i++
-                numStack.addLast(trimmed.substring(start, i).toDouble())
-            }
-            ch == '(' -> { opStack.addLast(ch); i++ }
-            ch == ')' -> {
-                while (opStack.isNotEmpty() && opStack.last() != '(') applyOp()
-                if (opStack.isEmpty()) throw IllegalArgumentException("括号不匹配")
-                opStack.removeLast(); i++
-            }
-            ch in "+-*/" -> {
-                while (opStack.isNotEmpty() && opStack.last() !in "()" &&
-                    precedence(opStack.last()) >= precedence(ch)
-                ) { applyOp() }
-                opStack.addLast(ch); i++
-            }
-            else -> throw IllegalArgumentException("不支持的字符: $ch")
-        }
-    }
-
-    while (opStack.isNotEmpty()) applyOp()
-    if (numStack.size != 1) throw IllegalArgumentException("表达式无效")
-    return numStack.last()
-}
-
 // ========== Notification Channel ==========
 
 val createdChannels = ConcurrentHashMap.newKeySet<String>()
@@ -176,41 +108,7 @@ fun ensureNotificationChannel(channelId: String) {
     createdChannels.add(channelId)
 }
 
-// ========== Weather Helpers ==========
-
-fun httpGetWeather(lat: Double, lon: Double): JsonObject {
-    val url = "https://api.open-meteo.com/v1/forecast" +
-        "?latitude=$lat&longitude=$lon" +
-        "&current=temperature_2m,relative_humidity_2m,apparent_temperature," +
-        "precipitation,weather_code,wind_speed_10m&timezone=auto"
-    val text = httpGet(url)
-    if (text.isEmpty()) throw Exception("天气 API 请求失败")
-    return JsonParser.parseString(text).asJsonObject
-}
-
-fun geoCodeCity(city: String): Pair<Double, Double> {
-    val geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=${
-        URLEncoder.encode(city, "UTF-8")
-    }&count=1"
-    val geoText = httpGet(geoUrl)
-    if (geoText.isEmpty()) throw Exception("地理编码请求失败")
-    val geoJson = JsonParser.parseString(geoText).asJsonObject
-    val results = geoJson.getAsJsonArray("results")
-        ?: throw Exception("未找到城市: $city")
-    val first = results[0].asJsonObject
-    return Pair(first.get("latitude").asDouble, first.get("longitude").asDouble)
-}
-
-fun reverseGeoCode(lat: Double, lon: Double): String {
-    val text = httpGet(
-        "https://geocoding-api.open-meteo.com/v1/search?latitude=$lat&longitude=$lon&count=1"
-    )
-    if (text.isEmpty()) return "当前位置"
-    return try {
-        val rg = JsonParser.parseString(text).asJsonObject
-        rg.getAsJsonArray("results")?.get(0)?.asJsonObject?.get("name")?.asString ?: "当前位置"
-    } catch (_: Exception) { "当前位置" }
-}
+// ========== Web Search ==========
 
 suspend fun getCurrentLocation(): Pair<Double, Double>? {
     val context = AppContext.context
@@ -237,35 +135,6 @@ suspend fun <T> com.google.android.gms.tasks.Task<T>.await(): T? {
         addOnFailureListener { continuation.cancel() }
     }
 }
-
-// ========== Weather Cache ==========
-
-data class CacheEntry(val data: JsonObject, val timestamp: Long)
-val weatherCache = ConcurrentHashMap<String, CacheEntry>()
-
-fun evictExpiredWeatherCache() {
-    val now = System.currentTimeMillis()
-    val maxAge = 300_000L  // 5分钟
-    weatherCache.entries.removeIf { (now - it.value.timestamp) > maxAge }
-}
-
-// ========== WMO Weather Codes ==========
-
-val WEATHER_CODES = mapOf(
-    0 to "晴",
-    1 to "多云", 2 to "多云", 3 to "多云",
-    45 to "雾", 48 to "雾",
-    51 to "小毛毛雨", 53 to "小毛毛雨", 55 to "小毛毛雨",
-    56 to "冻毛毛雨", 57 to "冻毛毛雨",
-    61 to "小雨", 63 to "中雨", 65 to "大雨",
-    66 to "冻雨", 67 to "冻雨",
-    71 to "小雪", 73 to "中雪", 75 to "大雪",
-    77 to "雪粒",
-    80 to "阵雨", 81 to "阵雨", 82 to "阵雨",
-    85 to "阵雪", 86 to "阵雪",
-    95 to "雷暴",
-    96 to "雷暴+冰雹", 99 to "雷暴+冰雹"
-)
 
 // ========== Web Search ==========
 

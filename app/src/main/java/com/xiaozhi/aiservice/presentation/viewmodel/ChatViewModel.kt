@@ -3,7 +3,6 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import com.xiaozhi.aiservice.utils.Logger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.xiaozhi.aiservice.data.memory.RAGMemoryManager
 import com.xiaozhi.aiservice.domain.model.AiState
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.ConnectionConfig
@@ -77,8 +76,6 @@ class ChatViewModel @Inject constructor(
             connectionRepository.streamingEnd.collect { messageId ->
                 if (currentContactId.isNotEmpty()) {
                     messageRepository.finalizeStreamingMessage(currentContactId, messageId)
-                    // 存储 AI 回复到本地 RAG 记忆
-                    storeAssistantToRAG(messageId)
                 }
             }
         }
@@ -189,8 +186,6 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             Logger.i(TAG, "sendTextMessage: 发送文本: $text")
             _uiState.update { it.copy(isAiResponding = true) }  // 乒乓模式：锁定输入
-            // 存储用户消息到本地 RAG 记忆
-            storeUserToRAG(text)
             val result = connectionRepository.sendTextMessage(currentContactId, text)
             result.onFailure { e ->
                 Logger.e(TAG, "发送失败: ${e.message}")
@@ -231,62 +226,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ── 本地 RAG 记忆 ────────────────────────────────────
-
-    /** 存储用户消息到 RAG */
-    private fun storeUserToRAG(text: String) {
-        try {
-            val rag = RAGMemoryManager.getExisting() ?: return
-            if (currentContactId.isBlank()) return
-            rag.addMemory(currentContactId, "user", text)
-        } catch (e: Exception) {
-            Logger.w(TAG, "存储用户记忆失败: ${e.message}")
-        }
-    }
-
-    /** AI 回复结束时，存储到 RAG */
-    private fun storeAssistantToRAG(messageId: String) {
-        try {
-            val rag = RAGMemoryManager.getExisting() ?: return
-            if (currentContactId.isBlank()) return
-            // 从消息列表中查找 AI 回复文本
-            val messages = _uiState.value.messages
-            val msg = messages.find { it.id == messageId && it.direction == com.xiaozhi.aiservice.domain.model.MessageDirection.RECEIVED }
-            if (msg != null && msg.content.isNotBlank()) {
-                rag.addMemory(currentContactId, "assistant", msg.content)
-                Logger.i(TAG, "RAG: 已存储 AI 回复 (${msg.content.take(50)}...)")
-            }
-        } catch (e: Exception) {
-            Logger.w(TAG, "存储 AI 记忆失败: ${e.message}")
-        }
-    }
-
-    /** 获取 RAG 上下文（用于在发送消息前附加到 prompt） */
-    fun getRAGContext(query: String): String {
-        try {
-            val rag = RAGMemoryManager.getExisting() ?: return ""
-            if (currentContactId.isBlank() || query.isBlank()) return ""
-            // 搜索 + 近期记忆
-            val searchResults = rag.search(currentContactId, query, 3)
-            val recentContext = rag.getRecentContext(currentContactId, 5)
-            val sb = StringBuilder()
-            if (searchResults.isNotEmpty()) {
-                sb.appendLine("相关记忆:")
-                for (r in searchResults) {
-                    val label = if (r.record.role == "user") "你" else "我"
-                    sb.appendLine("- [$label] ${r.record.text}")
-                }
-            }
-            if (recentContext.isNotBlank()) {
-                if (sb.isNotEmpty()) sb.appendLine()
-                sb.append(recentContext)
-            }
-            return sb.toString()
-        } catch (e: Exception) {
-            Logger.w(TAG, "获取 RAG 上下文失败: ${e.message}")
-            return ""
-        }
-    }
 }
 
 data class ChatUiState(

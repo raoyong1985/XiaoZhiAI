@@ -3,11 +3,12 @@ package com.xiaozhi.aiservice.data.remote
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.xiaozhi.aiservice.di.AppContext
+import com.xiaozhi.aiservice.presentation.ui.MainActivity
 import com.xiaozhi.aiservice.utils.Logger
 
 /**
@@ -70,6 +71,13 @@ class XiaoZhiForegroundService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("小智 AI")
             .setContentText("语音助手运行中")
@@ -77,6 +85,7 @@ class XiaoZhiForegroundService : Service() {
             .setOngoing(true)                // 不可滑动清除
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(pendingIntent)
             .build()
     }
 

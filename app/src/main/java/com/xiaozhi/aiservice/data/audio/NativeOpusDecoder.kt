@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import com.xiaozhi.aiservice.utils.Logger
 import kotlinx.coroutines.delay
 import java.nio.ByteBuffer
@@ -146,6 +147,11 @@ class NativeOpusDecoder(
             )
             .setBufferSizeInBytes(bufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                }
+            }
             .build()
     }
 

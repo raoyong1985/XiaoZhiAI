@@ -7,44 +7,36 @@ import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
 
 fun registerXiaozhiTools(registry: MCPToolRegistry) {
     registry.registerTool(
-        name = "set_xiaozhi_volume",
-        description = "设置小智 AI 的语音输出音量（0-100），会持久化保存，下次启动自动恢复",
+        name = "xiaozhi_volume",
+        description = "读取(不传level)或设置(传level 0-100)小智AI语音输出音量，持久化保存",
         inputSchema = jsonSchema(
-            "level" to jsonNumberProp("音量 0-100，默认 80"),
-            required = listOf("level")
+            "level" to jsonNumberProp("设置音量 0-100，不传则只读取当前音量"),
         )
     ) { args ->
-        val level = (args["level"] as? Number)?.toInt()?.coerceIn(0, 100)
-            ?: throw Exception("level 必须为 0-100 的整数")
-        AudioSettings.setOutputVolume(registry.context, level)
-        // 立即应用到所有活跃解码器（私聊 + 群聊各 bot）
-        registry.connectionRepository.get().let { repo ->
-            if (repo is com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl) {
-                repo.setVolume(level)
+        val level = args["level"] as? Number
+        if (level != null) {
+            val v = level.toInt().coerceIn(0, 100)
+            AudioSettings.setOutputVolume(registry.context, v)
+            registry.connectionRepository.get().let { repo ->
+                if (repo is com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl) {
+                    repo.setVolume(v)
+                }
+            }
+            JsonObject().apply {
+                addProperty("success", true)
+                addProperty("level", v)
+                addProperty("message", "音量已设置为 $v%")
+            }
+        } else {
+            JsonObject().apply {
+                addProperty("level", AudioSettings.getOutputVolume(registry.context))
             }
         }
-        JsonObject().apply {
-            addProperty("success", true)
-            addProperty("level", level)
-            addProperty("message", "音量已设置为 $level%，下次启动自动恢复")
-        }
     }
-
-    registry.registerTool(
-        name = "get_xiaozhi_volume",
-        description = "获取当前小智 AI 的语音输出音量（0-100）",
-        inputSchema = jsonSchema()
-    ) { _ ->
-        val level = AudioSettings.getOutputVolume(registry.context)
-        JsonObject().apply {
-            addProperty("level", level)
-        }
-    }
-
 
     registry.registerTool(
         name = "set_aec_mode",
-        description = "设置 AEC（声学回声消除）模式：off（关闭）/ device（设备端 AEC）。AEC 可减少 AI 说话时麦克风采集回声的问题",
+        description = "设置AEC回声消除模式：off（关闭）/ device（设备端AEC）",
         inputSchema = jsonSchema(
             "mode" to jsonStringProp("AEC模式: off/device，默认 off")
         )
@@ -54,7 +46,6 @@ fun registerXiaozhiTools(registry: MCPToolRegistry) {
         if (mode !in validModes) throw Exception("mode 必须为 off/device")
         val aecMode = DeviceSettings.AecMode.fromValue(mode)
         DeviceSettings.setAecMode(registry.context, aecMode)
-        // 立即应用 AEC 状态
         registry.audioService.setAecEnabled(aecMode != DeviceSettings.AecMode.OFF)
         val isSupported = registry.audioService.isAecSupported()
         JsonObject().apply {
@@ -71,7 +62,7 @@ fun registerXiaozhiTools(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "get_device_state",
-        description = "获取小智 AI 设备的当前状态（设备状态机）",
+        description = "获取小智 AI 设备的当前状态",
         inputSchema = jsonSchema()
     ) { _ ->
         val connRepo = registry.connectionRepository.get()

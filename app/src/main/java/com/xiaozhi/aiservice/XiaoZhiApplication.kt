@@ -40,10 +40,32 @@ class XiaoZhiApplication : Application() {
 
         // 注册网络变化监听
         ConnectivityReceiver.register(this)
+
+        // 临时：从 sdcard 恢复联系人 DataStore
+        restoreContactsFromBackup()
     }
 
     private fun startForegroundService() {
         val intent = Intent(this, XiaoZhiForegroundService::class.java)
         startForegroundService(intent)
+    }
+
+    /** 临时：从 app 外部 files 目录恢复联系人 DataStore */
+    private fun restoreContactsFromBackup() {
+        try {
+            val bakFile = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "contacts.datastore")
+            if (!bakFile.exists()) {
+                android.util.Log.i("XiaoZhiApp", "备份文件不存在: ${bakFile.absolutePath}")
+                return
+            }
+            val dsDir = java.io.File(filesDir, "datastore")
+            dsDir.mkdirs()
+            val dstFile = java.io.File(dsDir, "contacts.preferences_pb")
+            if (dstFile.exists()) return  // 已有数据不覆盖
+            bakFile.copyTo(dstFile, overwrite = false)
+            android.util.Log.i("XiaoZhiApp", "联系人 DataStore 已从备份恢复: ${dstFile.absolutePath}")
+        } catch (e: Exception) {
+            android.util.Log.w("XiaoZhiApp", "恢复联系人备份失败: ${e.message}")
+        }
     }
 }

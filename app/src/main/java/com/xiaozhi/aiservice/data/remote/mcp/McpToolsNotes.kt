@@ -10,7 +10,7 @@ fun registerNoteTools(registry: MCPToolRegistry) {
         name = "clipboard",
         description = "读取或写入系统剪贴板。读取时返回剪贴板文本内容，写入时设置新文本到剪贴板",
         inputSchema = jsonSchema(
-            "action" to jsonStringProp("操作: read（读取）/ write（写入），默认 read"),
+            "action" to jsonStringProp("操作: read/write"),
             "text" to jsonStringProp("写入模式下的文本内容"),
             required = listOf("action")
         )

@@ -17,7 +17,7 @@ fun registerCameraTool(registry: MCPToolRegistry) {
 
     registry.registerTool(
         name = "take_photo",
-        description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等。当用户说「帮我看看」「看看这是什么」「帮我认一下」「识别这个」「拍张照」「看看」「这是什么东西」「这是什么」「帮我拍」等请求识别、查看周围环境时，调用此工具。调用后手机将自动打开相机并拍照，用户无需按任何按钮",
+        description = "使用相机拍照并分析照片内容，支持识别物体、场景、文字等",
         inputSchema = jsonSchema(),
         readOnly = true
     ) { _ ->
