@@ -183,8 +183,8 @@ private fun ContactItem(
 
     ListItem(
         modifier = Modifier
-            .clickable(onClick = onClick)
             .bounceClick()
+            .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
         headlineContent = {
             Text(

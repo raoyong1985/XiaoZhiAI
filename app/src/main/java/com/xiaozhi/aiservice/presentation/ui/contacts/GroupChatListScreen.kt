@@ -92,8 +92,8 @@ fun GroupChatListScreen(
                 items(groups, key = { it.id }) { group ->
                     ListItem(
                         modifier = Modifier
-                            .clickable { onGroupClick(group.id) }
-                            .bounceClick(),
+                            .bounceClick()
+                            .clickable { onGroupClick(group.id) },
                         headlineContent = {
                             Text(
                                 text = group.name,
