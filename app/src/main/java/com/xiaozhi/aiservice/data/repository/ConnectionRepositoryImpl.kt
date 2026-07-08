@@ -115,7 +115,7 @@ class ConnectionRepositoryImpl @Inject constructor(
      * 由 GroupChatViewModel 在 connect/disconnect 时设置。
      */
     @Volatile
-    var suppressAutoListening = false
+    override var suppressAutoListening = false
 
     // 当前联系人 ID，用于消息路由
     @Volatile

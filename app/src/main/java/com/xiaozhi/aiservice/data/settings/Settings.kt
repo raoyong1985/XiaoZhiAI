@@ -3,7 +3,7 @@ package com.xiaozhi.aiservice.data.settings
 import android.content.Context
 import android.content.SharedPreferences
 
-class Settings(context: Context, private val ns: String, readWrite: Boolean = true) {
+class Settings(context: Context, private val ns: String) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(ns, Context.MODE_PRIVATE)
 

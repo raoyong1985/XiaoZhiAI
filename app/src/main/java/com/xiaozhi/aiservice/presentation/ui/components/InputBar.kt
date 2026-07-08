@@ -27,11 +27,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import android.content.Context
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun InputBar(
@@ -95,7 +90,6 @@ fun InputBar(
 
     val buttonColor = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     val haptic = LocalHapticFeedback.current
-    val context = LocalContext.current
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -137,17 +131,6 @@ fun InputBar(
 
                                 IconButton(
                                     onClick = {
-                                        // 0.1s 短震反馈
-                                        kotlin.runCatching {
-                                            val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                                            if (v != null && v.hasVibrator()) {
-                                                if (Build.VERSION.SDK_INT >= 26) {
-                                                    v.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-                                                } else {
-                                                    @Suppress("DEPRECATION") v.vibrate(100)
-                                                }
-                                            }
-                                        }
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         if (isRecording) {
                                             onStopRecording()

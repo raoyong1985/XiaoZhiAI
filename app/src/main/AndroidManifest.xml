@@ -31,8 +31,9 @@
     <!-- Notification for Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Calendar read -->
+    <!-- Calendar read/write -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 
     <!-- SMS read -->
     <uses-permission android:name="android.permission.READ_SMS" />

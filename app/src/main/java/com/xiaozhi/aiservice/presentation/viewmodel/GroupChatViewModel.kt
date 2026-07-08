@@ -4,10 +4,10 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import java.util.Collections
+import com.xiaozhi.aiservice.domain.PlatformLogger
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
-import com.xiaozhi.aiservice.data.logging.AndroidLogger
-import com.xiaozhi.aiservice.data.repository.ConnectionRepositoryImpl
+import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
 import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
@@ -84,7 +84,8 @@ class GroupChatViewModel @Inject constructor(
     private val botConnectionPool: BotConnectionPoolRepository,
     private val playbackManager: AudioPlaybackManager,
     private val audioService: AudioService,
-    private val connectionRepository: ConnectionRepositoryImpl,
+    private val connectionRepository: ConnectionRepository,
+    private val logger: PlatformLogger,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -169,7 +170,7 @@ class GroupChatViewModel @Inject constructor(
 
     // 防死循环（Thread-safe：DeadloopDetector 内部使用 synchronized）
     private val deadloopDetector = DeadloopDetector()
-    private val relayLogger = AndroidLogger()
+    private val relayLogger = logger
     private val audioForwardHandler = AudioForwardHandler(
         audioForwardBuffer,
         { _isRecording.value },

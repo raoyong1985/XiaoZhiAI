@@ -22,4 +22,5 @@ Thumbs.db
 
 # Secrets
 *.keystore
+keystore.properties
 __pycache__/

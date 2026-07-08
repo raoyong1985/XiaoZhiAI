@@ -357,10 +357,10 @@ class GroupChatRepositoryImpl @Inject constructor(
             // 安全处理：Gson 反序列化可能把 Kotlin 非空字段设为 null
             messages.map { msg ->
                 msg.copy(
-                    content = msg.content ?: "",
-                    botName = msg.botName ?: "",
-                    id = msg.id ?: "",
-                    botId = msg.botId ?: ""
+                    content = msg.content,
+                    botName = msg.botName,
+                    id = msg.id,
+                    botId = msg.botId
                 )
             }
         } catch (e: Exception) {
