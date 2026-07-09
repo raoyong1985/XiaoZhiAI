@@ -109,10 +109,22 @@ fun ContactsScreen(
         }
     }
 
+    val wakeTemplatesMap by viewModel.wakeTemplates.collectAsState()
+    val recordingContactId by viewModel.recordingTemplateId.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.toastEvent.collect { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // 添加联系人弹窗
     if (showAddDialog) {
         AddEditContactDialog(
             contact = null,
+            viewModel = viewModel,
+            wakeTemplatesMap = wakeTemplatesMap,
+            recordingContactId = recordingContactId,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -125,6 +137,9 @@ fun ContactsScreen(
     editingContact?.let { contact ->
         AddEditContactDialog(
             contact = contact,
+            viewModel = viewModel,
+            wakeTemplatesMap = wakeTemplatesMap,
+            recordingContactId = recordingContactId,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -356,6 +371,9 @@ private fun ContactItem(
 @Composable
 fun AddEditContactDialog(
     contact: BotContact?,
+    viewModel: ContactsViewModel,
+    wakeTemplatesMap: Map<String, String>,
+    recordingContactId: String?,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {
@@ -363,7 +381,6 @@ fun AddEditContactDialog(
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
-
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
@@ -435,6 +452,82 @@ fun AddEditContactDialog(
 
                     Divider()
 
+                    Text("语音唤醒", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    val contactId = contact?.id ?: newContactId
+                    val exampleWake = if (name.isNotBlank()) "${name}${name}" else "悠悠悠悠"
+
+                    val hasTemplate = wakeTemplatesMap.containsKey(contactId)
+                    val isRecordingThis = recordingContactId == contactId
+
+                    if (isRecordingThis) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "正在录制唤醒模板",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    "请说出「${exampleWake}」",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (hasTemplate) Icons.Default.CheckCircle else Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = if (hasTemplate) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (hasTemplate) "本地唤醒模板已录制" else "未录制唤醒模板",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (hasTemplate) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "录制后可在离线时使用本地声纹匹配",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilledTonalButton(                                    onClick = { viewModel.recordWakeTemplate(contactId) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        if (hasTemplate) "重录" else "录制",
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+
+                    Divider()
+
                     Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
                     Text("版本：${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("设备ID：$generatedDeviceId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -470,7 +563,8 @@ fun AddEditContactDialog(
                                     serverUrl = serverUrl.trim(),
                                     otaUrl = otaUrl.trim(),
                                     deviceId = generatedDeviceId,
-                                    clientId = generatedClientId
+                                    clientId = generatedClientId,
+                                    wakeWord = "${name.trim()}${name.trim()}"
                                 )
                                 onSave(newContact)
                             },

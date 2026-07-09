@@ -52,7 +52,7 @@ class AudioService {
     private val audioEnhancer = AudioEnhancer()
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
-    private var sampleRate = DEFAULT_SAMPLE_RATE
+    @Volatile private var sampleRate = DEFAULT_SAMPLE_RATE
 
     /**
      * 当前录音会话的 owner 标识
@@ -288,7 +288,7 @@ class AudioService {
                 // 重置上次错误
                 lastRecordError = null
                 while (isRecording.get()) {
-                    var pcmData: ByteArray? = null
+                    var vadPcmData: ByteArray? = null
                     try {
                         val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
                         if (readSize <= 0) {
@@ -298,12 +298,12 @@ class AudioService {
                             continue
                         }
 
-                        pcmData = acquireBuffer(readSize)
-                        System.arraycopy(buffer, 0, pcmData!!, 0, readSize)
+                        vadPcmData = acquireBuffer(readSize)
+                        System.arraycopy(buffer, 0, vadPcmData, 0, readSize)
                         try {
-                            onAudioData(pcmData!!)
+                            onAudioData(vadPcmData)
                         } finally {
-                            recycleBuffer(pcmData!!)
+                            recycleBuffer(vadPcmData)
                         }
                     } catch (e: Exception) {
                         val errMsg = "录音线程异常: ${e::class.simpleName}: ${e.message}"
@@ -316,12 +316,12 @@ class AudioService {
                     }
 
                     // VAD 检测（优先使用 FSMN VAD，否则降级到 RMS 能量阈值）
-                    if (enableVAD && pcmData != null) {
+                    if (enableVAD && vadPcmData != null) {
                         val now = System.currentTimeMillis()
                         val hasVoice = if (fsmnVad.initialized) {
-                            fsmnVad.isVoice(pcmData)
+                            fsmnVad.isVoice(vadPcmData)
                         } else {
-                            calculateRmsEnergy(pcmData) > SILENCE_RMS_THRESHOLD
+                            calculateRmsEnergy(vadPcmData) > SILENCE_RMS_THRESHOLD
                         }
 
                         if (hasVoice) {

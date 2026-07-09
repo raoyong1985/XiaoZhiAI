@@ -132,7 +132,8 @@ data class BotContact(
     val deviceId: String = "",                 // 设备ID (MAC格式)
     val clientId: String = "",                 // 客户端ID (UUID格式)
     val inputMode: InputMode = InputMode.VOICE,
-    val voiceMode: VoiceMode = VoiceMode.REALTIME  // 语音模式
+    val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 语音模式
+    val wakeWord: String = ""                  // 本地唤醒词（如"悠悠悠悠"），空=不启用语音唤醒
 )
 
 /**

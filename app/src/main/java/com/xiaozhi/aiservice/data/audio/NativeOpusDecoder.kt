@@ -21,9 +21,6 @@ import kotlin.math.max
 import kotlin.math.abs
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-
-@OptIn(ExperimentalCoroutinesApi::class)
 class NativeOpusDecoder(
     private val serverSampleRate: Int = 24000,
     private val clientSampleRate: Int = 24000,
@@ -628,7 +625,6 @@ class NativeOpusDecoder(
      * 驱动强度 drive=1.8 → 轻度饱和不糊
      * 温暖量 warmth=0.12 → 12% 谐波混入，有感觉不刻意
      */
-    @kotlinx.coroutines.ExperimentalCoroutinesApi
     private fun applyTubeWarmth(pcm: FloatArray): FloatArray {
         val drive = 1.8f
         val warmth = 0.12f

@@ -80,6 +80,8 @@ interface ConnectionRepository {
     // 唤醒词设置
     fun setWakeWord(wakeWord: String)
     fun startWakeWordMode(): Boolean
+    /** 重新从持久化存储加载唤醒模板到内存匹配器 */
+    fun reloadWakeTemplates()
     /** 检查当前是否有任何录音运行（唤醒模式或实时模式） */
     fun isRecording(): Boolean
 }
@@ -91,4 +93,16 @@ interface ContactsRepository {
     fun getContacts(): Flow<List<BotContact>>
     suspend fun saveContact(contact: BotContact)
     suspend fun deleteContact(contactId: String)
+
+    /** 获取所有联系人唤醒模板：contactId → base64 编码的 40维 MFCC 平均特征 */
+    fun getWakeTemplates(): Flow<Map<String, String>>
+
+    /** 保存联系人唤醒模板 */
+    suspend fun saveWakeTemplate(contactId: String, templateBase64: String)
+
+    /** 从 PCM 音频中提取 MFCC 唤醒模板并保存（隐藏 Data 层实现细节） */
+    suspend fun saveWakeTemplateFromPcm(contactId: String, pcmData: ByteArray)
+
+    /** 删除联系人唤醒模板 */
+    suspend fun deleteWakeTemplate(contactId: String)
 }

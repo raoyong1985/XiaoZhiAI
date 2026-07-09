@@ -7,6 +7,9 @@ import com.xiaozhi.aiservice.utils.Logger
 import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
+import com.xiaozhi.aiservice.data.audio.OpusEncoder
+import com.xiaozhi.aiservice.data.audio.WakeTemplateMatcher
+import com.xiaozhi.aiservice.data.logging.AndroidLogger
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
 
@@ -19,11 +22,13 @@ import com.xiaozhi.aiservice.domain.model.MessageStatus
 import com.xiaozhi.aiservice.domain.model.MessageType
 import com.xiaozhi.aiservice.domain.model.VoiceMode  // 复用 Models.kt，与 ESP32 ListeningMode 对应
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
+import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.DeviceState
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -44,6 +49,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     private val audioService: AudioService,
     private val messageRepository: MessageRepository,
     private val playbackManager: AudioPlaybackManager,
+    private val contactsRepository: ContactsRepository,
     @ApplicationContext private val context: Context
 ) : ConnectionRepository {
     
@@ -130,6 +136,9 @@ class ConnectionRepositoryImpl @Inject constructor(
     @Volatile
     private var pendingWakeVerification = false
 
+    // 本地唤醒模板匹配器
+    val wakeTemplateMatcher = WakeTemplateMatcher()
+
     // 跟踪我们自己启动的录音（用于 AI 说话时自动停止，避免回声）
     private var weStartedRecording = false
     // 跟踪是否处于 AUTO 模式（AI 说完话后自动切回倾听）
@@ -147,6 +156,9 @@ class ConnectionRepositoryImpl @Inject constructor(
     private val _deviceState = MutableStateFlow(DeviceState.UNKNOWN)
     override val deviceState: StateFlow<DeviceState> = _deviceState.asStateFlow()
 
+    // 唤醒词模式启动 Job，防止多次快速重连时重复启动
+    private var wakeWordStartupJob: Job? = null
+
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private val audioRecorder = AudioRecorder(audioService)
 
@@ -157,6 +169,20 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     init {
         observeBackendService()
+        loadWakeTemplatesFromStore()
+    }
+
+    private fun loadWakeTemplatesFromStore() {
+        scope.launch {
+            contactsRepository.getWakeTemplates().first().forEach { (contactId, base64) ->
+                wakeTemplateMatcher.addTemplate(contactId, base64, "")
+            }
+            Logger.i(TAG, "已加载 ${wakeTemplateMatcher.templateCount()} 个唤醒模板到本地匹配器")
+        }
+    }
+
+    override fun reloadWakeTemplates() {
+        loadWakeTemplatesFromStore()
     }
 
     private fun observeBackendService() {
@@ -181,10 +207,9 @@ class ConnectionRepositoryImpl @Inject constructor(
                             audioRecorder.stop("main")
                             _deviceState.value = DeviceState.IDLE
                             _aiState.value = AiState.IDLE
-                            // 等服务器处理完中止后再启动唤醒，避免竞态
-                            delay(500)
-                            startWakeWordMode()
                         }
+                        // 等服务器处理完中止后再启动唤醒，避免竞态
+                        scheduleWakeWordStartup(500)
                     } else if (wakeWord.isNotEmpty()) {
                         Logger.i(TAG, "✅ 唤醒词匹配成功: 「${clean}」")
                         pendingWakeVerification = false
@@ -310,19 +335,13 @@ class ConnectionRepositoryImpl @Inject constructor(
 
                     // 连接建立后，在 IDLE 状态启动唤醒词检测
                     // 延迟启动避免与初始化流程竞争
-                    scope.launch {
-                        kotlinx.coroutines.delay(3000)
-                        startWakeWordMode()
-                    }
+                    scheduleWakeWordStartup(3000)
                 } else if (state is BotConnectionState.Disconnected ||
                            state is BotConnectionState.Error) {
                     playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
                     // 断开后延迟再启动唤醒，让残留 TTS 播完
-                    scope.launch {
-                        kotlinx.coroutines.delay(3000)
-                        startWakeWordMode()
-                    }
+                    scheduleWakeWordStartup(3000)
                 }
             }
         }
@@ -500,6 +519,8 @@ class ConnectionRepositoryImpl @Inject constructor(
         synchronized(recordingLock) {
             // 二次检查：可能在获取锁期间录音已被对话启动
             if (audioRecorder.isRecording) return false
+            // 设置唤醒模板匹配器
+            audioRecorder.wakeTemplateMatcher = wakeTemplateMatcher
             val ok = audioRecorder.startWake(
                 owner = "main",
                 scope = scope,
@@ -523,6 +544,17 @@ class ConnectionRepositoryImpl @Inject constructor(
                 onOpusPacket = { packet -> scope.launch { sendAudio(packet) } }
             )
             return ok
+        }
+    }
+
+    /**
+     * 安全调度唤醒词模式启动，取消前一次未执行的调度防止重复
+     */
+    private fun scheduleWakeWordStartup(delayMs: Long) {
+        wakeWordStartupJob?.cancel()
+        wakeWordStartupJob = scope.launch {
+            delay(delayMs)
+            startWakeWordMode()
         }
     }
 

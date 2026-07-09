@@ -50,9 +50,11 @@ class AudioRecorder(
     private var gainBuffer: ByteArray? = null
     private var onWakeDetected: ((String) -> Unit)? = null
     private var wakeModeActive = false
-    /** VAD 降频计时：每 200ms 跑一次 ONNX 推理，中间帧跳过 */
+    /** 唤醒模板匹配器（可选，设置后 VAD 触发后需本地匹配成功才发 listen_start） */
+    var wakeTemplateMatcher: WakeTemplateMatcher? = null
+    /** VAD 降频计时：每 100ms 跑一次 ONNX 推理，中间帧跳过 */
     private var lastVadCheckMs = 0L
-    private val VAD_CHECK_INTERVAL_MS = 200L
+    private val VAD_CHECK_INTERVAL_MS = 100L
     /** 连续静音时长（词语间隙容错） */
     private var silenceStartTime = 0L
     private val SILENCE_GRACE_MS = 300L  // 词语间停顿不超过300ms不重置timer
@@ -60,8 +62,8 @@ class AudioRecorder(
     companion object {
         // "悠悠"约400-500ms，400ms可让用户说到一半时就触发（缩短响应延迟）
         private const val WAKE_HOLD_MS = 400L
-        // RMS 阈值（0-32767），越低越灵敏。350≈中等环境噪声下的轻声说话
-        private const val WAKE_RMS_THRESHOLD = 350
+        // RMS 阈值（0-32767），与 AudioService.SILENCE_RMS_THRESHOLD 保持一致
+        private const val WAKE_RMS_THRESHOLD = 800
         // 唤醒模式下 PCM 前置增益（×2.0），让 ASR 收到更清晰的音频
         private const val WAKE_GAIN = 2.0f
     }
@@ -211,8 +213,7 @@ class AudioRecorder(
     private fun handleWakePcm(pcmData: ByteArray, onOpusPacket: (ByteArray) -> Unit) {
         if (!wakeModeActive) {
             // 已过渡到实时模式，直接编码（唤醒模式增益已由缓冲端完成，实时模式不加增益避免失真）
-            if (nativeOpusEncoder != null) nativeOpusEncoder!!.encode(pcmData)
-            else opusEncoder?.encode(pcmData)
+            nativeOpusEncoder?.encode(pcmData) ?: opusEncoder?.encode(pcmData)
             return
         }
 
@@ -223,20 +224,19 @@ class AudioRecorder(
 
         // 写入环形缓冲（固定 circular array，零分配零扩容）
         synchronized(wakeRingLock) {
-            val data = amplified
-            val len = data.size
+            val len = amplified.size
             if (len >= wakeBufferMaxBytes) {
                 // 数据比缓冲还大，直接保留末尾
-                System.arraycopy(data, len - wakeBufferMaxBytes, wakeRingBuffer, 0, wakeBufferMaxBytes)
+                System.arraycopy(amplified, len - wakeBufferMaxBytes, wakeRingBuffer, 0, wakeBufferMaxBytes)
                 wakeRingWritePos = 0
                 wakeRingSize = wakeBufferMaxBytes
             } else {
                 val space = wakeBufferMaxBytes - wakeRingWritePos
                 if (len <= space) {
-                    System.arraycopy(data, 0, wakeRingBuffer, wakeRingWritePos, len)
+                    System.arraycopy(amplified, 0, wakeRingBuffer, wakeRingWritePos, len)
                 } else {
-                    System.arraycopy(data, 0, wakeRingBuffer, wakeRingWritePos, space)
-                    System.arraycopy(data, space, wakeRingBuffer, 0, len - space)
+                    System.arraycopy(amplified, 0, wakeRingBuffer, wakeRingWritePos, space)
+                    System.arraycopy(amplified, space, wakeRingBuffer, 0, len - space)
                 }
                 wakeRingWritePos = (wakeRingWritePos + len) % wakeBufferMaxBytes
                 if (wakeRingSize < wakeBufferMaxBytes) {
@@ -315,6 +315,27 @@ class AudioRecorder(
         wakeTriggered = true
         Logger.i(TAG, "🎤 检测到连续语音，过渡到实时编码")
 
+        // ——— 本地唤醒模板匹配 ———
+        // 如果有模板，先匹配再决定是否触发
+        val matcher = wakeTemplateMatcher
+        if (matcher != null && matcher.hasTemplates()) {
+            val ringData = getWakeRingData()
+            val matchedContactId = matcher.match(ringData)
+            if (matchedContactId == null) {
+                // 不匹配 → 静默重置，继续监听
+                Logger.d(TAG, "🔇 本地匹配未通过，静默重置唤醒")
+                wakeTriggered = false
+                wakeVoiceStartTime = 0L
+                silenceStartTime = 0L
+                synchronized(wakeRingLock) {
+                    wakeRingWritePos = 0
+                    wakeRingSize = 0
+                }
+                return  // 不触发，不发送任何数据到服务器
+            }
+            Logger.i(TAG, "🎯 本地唤醒匹配: contact=$matchedContactId，发送 listen_start")
+        }
+
         val sampleRate = audioService.getSampleRate()
         val nativeEncoder = NativeOpusEncoder(sampleRate = sampleRate)
         if (nativeEncoder.init { packet -> onOpusPacket(packet) }) {
@@ -331,8 +352,7 @@ class AudioRecorder(
         val buffered = getWakeRingData()
         if (buffered.isNotEmpty()) {
             Logger.i(TAG, "发送唤醒缓冲 ${buffered.size}B")
-            if (nativeOpusEncoder != null) nativeOpusEncoder!!.encode(buffered)
-            else opusEncoder?.encode(buffered)
+            nativeOpusEncoder?.encode(buffered) ?: opusEncoder?.encode(buffered)
         }
         // 重置环形缓冲
         synchronized(wakeRingLock) {
@@ -364,32 +384,34 @@ class AudioRecorder(
         }
     }
 
-    /** 初始化唤醒用的 FSMN VAD（复用 AudioService 的单例，不重复加载 ONNX 模型） */
+    /** 初始化唤醒用的 FSMN VAD（创建独立实例，不与 AudioService 共享避免状态竞争） */
     private fun initWakeVad() {
         if (wakeFsmnVad != null) return
+        try {
+            val vad = FsmnVAD()
+            val ctx = audioService.getAppContext()
+            if (ctx != null) {
+                vad.init(ctx)
+                wakeUseFsmn = vad.initialized
+                if (wakeUseFsmn) {
+                    wakeFsmnVad = vad
+                    Logger.i(TAG, "唤醒 FSMN VAD 就绪（独立实例）")
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Logger.w(TAG, "唤醒 FSMN VAD 初始化失败: ${e.message}")
+        }
+        // 降级到全局共享实例
         val sharedVad = audioService.fsmnVad
         if (sharedVad.initialized) {
             sharedVad.reset()
             wakeFsmnVad = sharedVad
             wakeUseFsmn = true
-            Logger.i(TAG, "唤醒 FSMN VAD 就绪（复用全局实例）")
+            Logger.i(TAG, "唤醒 FSMN VAD 就绪（降级到全局共享实例）")
         } else {
-            Logger.w(TAG, "全局 FSMN VAD 未初始化，尝试独立加载")
-            try {
-                val vad = FsmnVAD()
-                val ctx = audioService.getAppContext()
-                if (ctx != null) {
-                    vad.init(ctx)
-                    wakeUseFsmn = vad.initialized
-                    if (wakeUseFsmn) {
-                        wakeFsmnVad = vad
-                        Logger.i(TAG, "唤醒 FSMN VAD 就绪（独立实例）")
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.w(TAG, "唤醒 FSMN VAD 初始化失败: ${e.message}，降级 RMS")
-                wakeUseFsmn = false
-            }
+            Logger.w(TAG, "全局 FSMN VAD 也未就绪，降级到 RMS 能量检测")
+            wakeUseFsmn = false
         }
     }
 

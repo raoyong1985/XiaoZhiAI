@@ -10,6 +10,7 @@ import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
+import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -24,7 +25,8 @@ private const val TAG = "ChatViewModel"
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val connectionRepository: ConnectionRepository,
-    private val messageRepository: MessageRepository
+    private val messageRepository: MessageRepository,
+    private val contactsRepository: ContactsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -116,6 +118,8 @@ class ChatViewModel @Inject constructor(
         val wakeWord = contactName
         Logger.i(TAG, "设置唤醒词: «${wakeWord}»")
         connectionRepository.setWakeWord(wakeWord)
+        // 重新加载唤醒模板确保内存匹配器与持久化一致
+        connectionRepository.reloadWakeTemplates()
         // 启动唤醒检测（单 AudioRecord，自动过渡）
         val started = connectionRepository.startWakeWordMode()
         Logger.i(TAG, "唤醒模式启动${if (started) "成功" else "失败"}，录音中=${connectionRepository.isRecording()}")
@@ -246,6 +250,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** 检查当前联系人是否需要录制唤醒词模板 */
+    fun checkWakeTemplate(wakeWord: String) {
+        if (currentContactId.isBlank() || wakeWord.isBlank()) return
+        viewModelScope.launch {
+            val templates = contactsRepository.getWakeTemplates().first()
+            val hasTemplate = templates.containsKey(currentContactId)
+            _uiState.update { it.copy(needsWakeRecording = !hasTemplate && wakeWord.isNotBlank()) }
+        }
+    }
+
+    /** 关闭唤醒词提示 */
+    fun dismissWakeRecording() {
+        _uiState.update { it.copy(needsWakeRecording = false) }
+    }
+
 }
 
 data class ChatUiState(
@@ -253,9 +272,10 @@ data class ChatUiState(
     val isRecording: Boolean = false,
     val aiState: AiState = AiState.IDLE,
     val connectionState: BotConnectionState = BotConnectionState.Disconnected,
-    val emotion: String = "",   // AI情感：happy/sad/angry/worried/thoughtful/gentle/doubtful
-    val voiceMode: VoiceMode = VoiceMode.REALTIME,  // 当前语音模式：auto / manual / realtime
-    val alert: String? = null,  // 服务器Alert弹窗内容（非null时显示）
+    val emotion: String = "",
+    val voiceMode: VoiceMode = VoiceMode.REALTIME,
+    val alert: String? = null,
     val error: String? = null,
-    val isAiResponding: Boolean = false  // 乒乓模式：AI正在回复中，等待回复完成
+    val isAiResponding: Boolean = false,
+    val needsWakeRecording: Boolean = false
 )

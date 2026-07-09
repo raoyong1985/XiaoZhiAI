@@ -21,6 +21,7 @@ class ConnectivityReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "ConnectivityRcvr"
+        private var registeredCallback: ConnectivityManager.NetworkCallback? = null
 
         /**
          * 注册网络变化监听
@@ -30,6 +31,8 @@ class ConnectivityReceiver : BroadcastReceiver() {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                if (registeredCallback != null) return
+
                 val callback = object : ConnectivityManager.NetworkCallback() {
                     private var wasDisconnected = false
 
@@ -66,12 +69,28 @@ class ConnectivityReceiver : BroadcastReceiver() {
                     .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     .build()
                 cm.registerNetworkCallback(request, callback)
+                registeredCallback = callback
 
                 Logger.i(TAG, "NetworkCallback 已注册 (API ${Build.VERSION.SDK_INT})")
             } else {
                 // Android 6-：用 BroadcastReceiver 方式
                 // 注册逻辑在 XiaoZhiApplication 中处理
                 Logger.i(TAG, "低版本 API，使用 BroadcastReceiver 模式")
+            }
+        }
+
+        /**
+         * 注销网络变化监听，防止组件重建时重复注册
+         */
+        fun unregister(context: Context) {
+            val callback = registeredCallback ?: return
+            try {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                cm.unregisterNetworkCallback(callback)
+                registeredCallback = null
+                Logger.i(TAG, "NetworkCallback 已注销")
+            } catch (e: Exception) {
+                Logger.w(TAG, "NetworkCallback 注销失败: ${e.message}")
             }
         }
     }

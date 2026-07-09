@@ -5,7 +5,7 @@ import kotlin.math.*
 /**
  * MFCC 特征提取器（40 维）
  *
- * 将 16kHz PCM 音频转为 MFCC 特征向量，用于 OpenWakeWord ONNX 模型推理。
+ * 将 16kHz PCM 音频转为 MFCC 特征向量，用于本地唤醒词模板匹配。
  *
  * 算法步骤：
  *   1. 预加重 (pre-emphasis)
@@ -14,13 +14,6 @@ import kotlin.math.*
  *   4. Mel 滤波器组
  *   5. Log
  *   6. DCT → 40 维 MFCC
- *
- * OpenWakeWord 输入约定：
- *   - sample_rate = 16000
- *   - frame_shift = 96 样本 (6ms)
- *   - frame_length = 480 样本 (30ms)
- *   - n_mfcc = 40
- *   - 每次推理需要 63 帧上下文 → 需缓存输入
  */
 class MfccExtractor {
 
@@ -32,7 +25,7 @@ class MfccExtractor {
         private const val N_FFT = 512
         private const val N_MELS = 40
         private const val PRE_EMPHASIS = 0.97f
-        private const val CONTEXT_FRAMES = 63   // OpenWakeWord 上下文帧数
+        private const val CONTEXT_FRAMES = 63
         private const val INPUT_SIZE = N_MFCC * CONTEXT_FRAMES  // 40 * 63 = 2520
     }
 
@@ -114,17 +107,13 @@ class MfccExtractor {
         // 分帧处理
         var offset = 0
         while (offset + FRAME_LENGTH <= emphasized.size) {
-            // 截取一帧并加窗
             val frame = FloatArray(FRAME_LENGTH)
             System.arraycopy(emphasized, offset, frame, 0, FRAME_LENGTH)
             for (i in 0 until FRAME_LENGTH) {
                 frame[i] *= hanningWindow[i]
             }
 
-            // FFT
             val fftOutput = fft(frame)
-
-            // 功率谱
             val power = FloatArray(N_FFT / 2 + 1) { i ->
                 val idx = i * 2
                 val real = fftOutput[idx]
@@ -132,7 +121,6 @@ class MfccExtractor {
                 real * real + imag * imag
             }
 
-            // Mel 滤波
             val melEnergy = FloatArray(N_MELS) { m ->
                 var energy = 0f
                 for (k in 0 until power.size) {
@@ -141,12 +129,10 @@ class MfccExtractor {
                 energy
             }
 
-            // Log，加 epsilon 防 log(0)
             val logMel = FloatArray(N_MELS) { m ->
                 ln(maxOf(melEnergy[m], 1e-10f))
             }
 
-            // DCT → MFCC
             val mfcc = FloatArray(N_MFCC) { c ->
                 var sum = 0f
                 for (m in 0 until N_MELS) {
@@ -155,7 +141,6 @@ class MfccExtractor {
                 sum
             }
 
-            // 存入循环缓冲
             System.arraycopy(mfcc, 0, mfccRingBuffer[ringIndex], 0, N_MFCC)
             ringIndex = (ringIndex + 1) % CONTEXT_FRAMES
             totalFrames++
@@ -168,6 +153,59 @@ class MfccExtractor {
      * 喂入原始 PCM 字节（16-bit little-endian）
      */
     fun feed(pcmBytes: ByteArray) {
+        feed(pcmBytesToFloats(pcmBytes))
+    }
+
+    /**
+     * 从 PCM 字节数据中提取平均 MFCC 特征向量（40维）
+     * 适用于唤醒词模板提取和匹配检测
+     */
+    fun extractTemplate(pcmBytes: ByteArray): FloatArray {
+        reset()
+        val floats = pcmBytesToFloats(pcmBytes)
+        feed(floats)
+
+        val frameCount = minOf(totalFrames, CONTEXT_FRAMES)
+        if (frameCount == 0) return FloatArray(N_MFCC)
+
+        val avg = FloatArray(N_MFCC)
+        val oldest = if (totalFrames >= CONTEXT_FRAMES) {
+            (ringIndex + 1) % CONTEXT_FRAMES
+        } else {
+            0
+        }
+        for (i in 0 until frameCount) {
+            val bufIdx = (oldest + i) % CONTEXT_FRAMES
+            for (j in 0 until N_MFCC) {
+                avg[j] += mfccRingBuffer[bufIdx][j]
+            }
+        }
+        for (j in 0 until N_MFCC) {
+            avg[j] = avg[j] / frameCount
+        }
+        return avg
+    }
+
+    /**
+     * 计算两个 MFCC 向量的余弦相似度
+     * 范围：[-1, 1]，值越大越相似，一般 ≥0.85 可认为匹配
+     */
+    fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
+        var dot = 0f
+        var na = 0f
+        var nb = 0f
+        for (i in a.indices) {
+            dot += a[i] * b[i]
+            na += a[i] * a[i]
+            nb += b[i] * b[i]
+        }
+        val norm = sqrt(na * nb)
+        return if (norm > 1e-10f) dot / norm else 0f
+    }
+
+    // === 内部工具 ===
+
+    private fun pcmBytesToFloats(pcmBytes: ByteArray): FloatArray {
         val shortCount = pcmBytes.size / 2
         val floats = FloatArray(shortCount)
         for (i in 0 until shortCount) {
@@ -176,17 +214,16 @@ class MfccExtractor {
             val sample = (hi shl 8 or lo).toShort()
             floats[i] = sample.toFloat() / 32768f
         }
-        feed(floats)
+        return floats
     }
 
-    // === FFT (Cooley-Tukey 基 2, 512 点) ===
+    // === FFT ===
     private fun fft(input: FloatArray): FloatArray {
         val n = nextPow2(input.size)
         val real = FloatArray(n)
         val imag = FloatArray(n)
         System.arraycopy(input, 0, real, 0, input.size)
 
-        // 位翻转
         for (i in 1 until n) {
             var j = 0
             var m = i
@@ -202,7 +239,6 @@ class MfccExtractor {
             }
         }
 
-        // Cooley-Tukey 蝶形运算
         var len = 2
         while (len <= n) {
             val half = len shr 1
@@ -223,7 +259,6 @@ class MfccExtractor {
             len = len shl 1
         }
 
-        // 输出 interleaved [r0, i0, r1, i1, ...]
         val out = FloatArray(n * 2)
         for (i in 0 until n) {
             out[i * 2] = real[i]
@@ -248,7 +283,6 @@ class MfccExtractor {
             minMel + (maxMel - minMel) * i / (N_MELS + 1)
         }
         val hzPoints = FloatArray(N_MELS + 2) { melToHertz(melPoints[it]) }
-        val binPoints = IntArray(N_MELS + 2) { (hzPoints[it] * (N_FFT + 1) / SAMPLE_RATE).toInt() }
         val nFftBins = N_FFT / 2 + 1
 
         return Array(N_MELS) { m ->
