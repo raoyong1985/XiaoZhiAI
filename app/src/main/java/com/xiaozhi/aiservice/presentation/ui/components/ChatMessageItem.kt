@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -97,6 +98,7 @@ fun ChatMessageItem(
             Box(
                 modifier = Modifier
                     .widthIn(min = 60.dp, max = 320.dp)
+                    .shadow(1.dp, AppShapes.bubble)
                     .clip(RoundedCornerShape(
                             topStart = 12.dp,
                             topEnd = 12.dp,
@@ -273,7 +275,7 @@ fun DateSeparator(timestamp: Long) {
     ) {
         Text(
             text = dateFormat.format(Date(timestamp)),
-            style = MaterialTheme.typography.bodySmall,
+            fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
