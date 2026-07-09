@@ -24,6 +24,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
@@ -116,7 +117,8 @@ fun ChatMessageItem(
                 if (!isFromMe && displayName.isNotEmpty()) {
                     Text(
                         text = displayName,
-                        style = MaterialTheme.typography.labelMedium,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
                         color = effectiveBotColor.nameColor
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -147,14 +149,14 @@ fun ChatMessageItem(
                         Text(
                             text = displayText,
                             color = MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.bodyLarge
+                            fontSize = 15.sp
                         )
                     }
                     else -> {
                         Text(
                             text = message.content,
                             color = MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.bodyLarge
+                            fontSize = 15.sp
                         )
                     }
                 }
@@ -163,7 +165,7 @@ fun ChatMessageItem(
                     Text(
                         text = timeText,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
                         modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
                     )
                 }
