@@ -6,6 +6,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -68,8 +69,6 @@ object BotColorScheme {
         BotColor(Color(0xFF0277BD), Color(0xFF4FC3F7), Color(0xFFFFFFFF), Color(0xFF0879BD)),
     )
 
-    fun selfAvatarColor(): Color = Color(0xFF42A5F5)
-
     fun get(index: Int, isDark: Boolean = false): BotColor {
         val palette = if (isDark) darkColors else lightColors
         val idx = (if (index < 0) -index else index) % palette.size
@@ -97,10 +96,11 @@ fun AvatarView(
     modifier: Modifier = Modifier
 ) {
     val isDark = isSystemInDarkTheme()
-    val bgColor = remember(name, isDark, isSelf, avatarColor) {
+    val selfColor = MaterialTheme.colorScheme.primary
+    val bgColor = remember(name, isDark, isSelf, avatarColor, selfColor) {
         when {
             avatarColor != null -> avatarColor
-            isSelf -> BotColorScheme.selfAvatarColor()
+            isSelf -> selfColor
             else -> BotColorScheme.forName(name, isDark).avatarColor
         }
     }

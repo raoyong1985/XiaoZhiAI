@@ -13,7 +13,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
  * 统一空状态组件
@@ -34,7 +33,7 @@ fun EmptyStateView(
     ) {
         Surface(
             shape = AppShapes.iconBg,
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.size(96.dp)
         ) {
             Box(
@@ -47,15 +46,15 @@ fun EmptyStateView(
                     modifier = Modifier
                         .size(44.dp)
                         .scale(1f),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
         Spacer(modifier = Modifier.height(20.dp))
         Text(
             text = title,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
@@ -63,8 +62,8 @@ fun EmptyStateView(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = subtitle,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
         }

@@ -19,7 +19,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -181,7 +180,7 @@ fun InputBar(
                                                     Spacer(Modifier.width(8.dp))
                                                     Text(
                                                         text = name,
-                                                        fontSize = 14.sp,
+                                                        style = MaterialTheme.typography.bodyMedium,
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
                                                 }
@@ -205,8 +204,8 @@ fun InputBar(
                                     placeholder = {
                                         Text(
                                             if (isAiResponding) "等待回复中..." else "输入消息...",
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     },
                                     singleLine = true,

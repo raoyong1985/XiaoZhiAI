@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
@@ -33,7 +32,7 @@ fun CreateGroupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("创建群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
+                title = { Text("创建群聊", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -77,15 +76,14 @@ fun CreateGroupScreen(
             )
             
             Divider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                color = MaterialTheme.colorScheme.outlineVariant,
                 thickness = 0.5.dp
             )
 
             Text(
                 "选择智能体",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary
             )
             
@@ -131,12 +129,12 @@ fun CreateGroupScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = contact.name,
-                                        fontSize = 15.sp,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.Medium
                                     )
                                     Text(
                                         text = contact.serverUrl,
-                                        fontSize = 12.sp,
+                                        style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -155,7 +153,7 @@ fun CreateGroupScreen(
                                     Icon(
                                         imageVector = Icons.Default.RadioButtonUnchecked,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }

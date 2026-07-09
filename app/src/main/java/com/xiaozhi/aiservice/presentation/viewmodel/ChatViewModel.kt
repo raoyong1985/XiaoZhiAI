@@ -113,11 +113,9 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 设置当前联系人的唤醒词 = 联系人名（直接喊名字唤醒） */
+    /** 重新加载唤醒模板并启动唤醒检测 */
     fun setCurrentWakeWord(contactName: String) {
-        val wakeWord = contactName
-        Logger.i(TAG, "设置唤醒词: «${wakeWord}»")
-        connectionRepository.setWakeWord(wakeWord)
+        Logger.i(TAG, "设置唤醒: «${contactName}»")
         // 重新加载唤醒模板确保内存匹配器与持久化一致
         connectionRepository.reloadWakeTemplates()
         // 启动唤醒检测（单 AudioRecord，自动过渡）

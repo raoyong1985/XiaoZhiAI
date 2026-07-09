@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
@@ -55,7 +54,7 @@ fun GroupChatListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium) },
+                title = { Text("群聊", style = MaterialTheme.typography.titleLarge) },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -104,7 +103,7 @@ fun GroupChatListScreen(
                             Text(
                                 text = group.name,
                                 fontWeight = FontWeight.Medium,
-                                fontSize = 16.sp
+                                style = MaterialTheme.typography.titleMedium
                             )
                         },
                         supportingContent = {
@@ -116,11 +115,11 @@ fun GroupChatListScreen(
                                     imageVector = if (group.inputMode == 0) Icons.Default.Mic else Icons.Default.Keyboard,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "${group.botIds.size} 个成员",
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -217,31 +216,23 @@ fun GroupChatListScreen(
         }
     }
 
-    // ── 编辑群聊名称 ──
     editingGroup?.let { group ->
         var newName by remember(group.id) { mutableStateOf(group.name) }
         AlertDialog(
             onDismissRequest = { editingGroup = null },
             shape = AppShapes.dialog,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("编辑群聊名称")
-                }
-            },
+            title = { Text("编辑群聊名称") },
             text = {
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
                     label = { Text("群聊名称") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = AppShapes.menu
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         if (newName.isNotBlank()) {
                             coroutineScope.launch {
@@ -259,32 +250,21 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 删除群聊 ──
     deletingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { deletingGroup = null },
             shape = AppShapes.dialog,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.width(8.dp))
-                    Text("解散群聊")
-                }
-            },
-            text = { Text("确定要解散「${group.name}」吗？此操作不可撤销。") },
+            title = { Text("删除群聊") },
+            text = { Text("确定要删除 \"${group.name}\" 吗？") },
             confirmButton = {
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            viewModel.deleteGroup(group.id)
-                            deletingGroup = null
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    )
-                ) { Text("解散") }
+                TextButton(onClick = {
+                    coroutineScope.launch {
+                        viewModel.deleteGroup(group.id)
+                        deletingGroup = null
+                    }
+                }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = {
                 TextButton(onClick = { deletingGroup = null }) { Text("取消") }
@@ -292,34 +272,26 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 添加成员 ──
     addingMemberGroup?.let { group ->
         val available = contacts.filter { c -> !group.botIds.contains(c.id) }
         val selectedToAdd = remember { mutableStateListOf<String>() }
         AlertDialog(
             onDismissRequest = { addingMemberGroup = null; selectedToAdd.clear() },
             shape = AppShapes.dialog,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.PersonAdd, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("添加成员")
-                }
-            },
+            title = { Text("添加成员") },
             text = {
                 if (available.isEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
                         Text("没有可添加的智能体", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("选择要添加的智能体：", fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column {
+                        Text("选择要添加的智能体：", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp))
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             available.forEach { contact ->
                                 val isChecked = selectedToAdd.contains(contact.id)
-                                val botColor = BotColorScheme.forName(contact.name)
                                 Card(
                                     modifier = Modifier.fillMaxWidth().clickable {
                                         if (isChecked) selectedToAdd.remove(contact.id)
@@ -328,28 +300,25 @@ fun GroupChatListScreen(
                                     shape = AppShapes.menu,
                                     colors = CardDefaults.cardColors(
                                         containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer
-                                        else MaterialTheme.colorScheme.surface
+                                        else MaterialTheme.colorScheme.surfaceVariant
                                     ),
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        AvatarView(name = contact.name, size = 40.dp, avatarColor = botColor.avatarColor)
+                                        AvatarView(name = contact.name, size = 40.dp)
                                         Spacer(Modifier.width(12.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text(contact.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                            Text("ID: ${contact.deviceId.takeLast(8)}", fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                                            Text(contact.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                            Text(contact.serverUrl, style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
-                                        Spacer(Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = if (isChecked) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                            contentDescription = if (isChecked) "已选择" else null,
-                                            tint = if (isChecked) MaterialTheme.colorScheme.primary
-                                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(22.dp)
-                                        )
+                                        if (isChecked) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                                        }
                                     }
                                 }
                             }
@@ -358,7 +327,7 @@ fun GroupChatListScreen(
                 }
             },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         if (selectedToAdd.isNotEmpty()) {
                             coroutineScope.launch {
@@ -368,7 +337,7 @@ fun GroupChatListScreen(
                         }
                     },
                     enabled = selectedToAdd.isNotEmpty()
-                ) { Text("添加（${selectedToAdd.size}）") }
+                ) { Text("添加 (${selectedToAdd.size})") }
             },
             dismissButton = {
                 TextButton(onClick = { addingMemberGroup = null; selectedToAdd.clear() }) { Text("取消") }
@@ -376,35 +345,27 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 删除成员 ──
     removingMemberGroup?.let { group ->
         val selectedToRemove = remember { mutableStateListOf<String>() }
         AlertDialog(
             onDismissRequest = { removingMemberGroup = null; selectedToRemove.clear() },
             shape = AppShapes.dialog,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.PersonRemove, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("删除成员")
-                }
-            },
+            title = { Text("删除成员") },
             text = {
                 if (group.botIds.isEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
                         Text("群聊中没有成员", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("选择要删除的智能体：", fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column {
+                        Text("选择要删除的成员：", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp))
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             group.botIds.forEach { botId ->
                                 val contact = contacts.find { it.id == botId }
                                 val displayName = contact?.name ?: botId
                                 val isChecked = selectedToRemove.contains(botId)
-                                val botColor = BotColorScheme.forName(displayName)
                                 Card(
                                     modifier = Modifier.fillMaxWidth().clickable {
                                         if (isChecked) selectedToRemove.remove(botId)
@@ -413,30 +374,27 @@ fun GroupChatListScreen(
                                     shape = AppShapes.menu,
                                     colors = CardDefaults.cardColors(
                                         containerColor = if (isChecked) MaterialTheme.colorScheme.errorContainer
-                                        else MaterialTheme.colorScheme.surface
+                                        else MaterialTheme.colorScheme.surfaceVariant
                                     ),
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        AvatarView(name = displayName, size = 40.dp, avatarColor = botColor.avatarColor)
+                                        AvatarView(name = displayName, size = 40.dp)
                                         Spacer(Modifier.width(12.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text(displayName, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            Text(displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                                             contact?.let {
-                                                Text("ID: ${it.deviceId.takeLast(8)}", fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                                                Text(it.serverUrl, style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
-                                        Spacer(Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = if (isChecked) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                            contentDescription = if (isChecked) "已选择" else null,
-                                            tint = if (isChecked) MaterialTheme.colorScheme.error
-                                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(22.dp)
-                                        )
+                                        if (isChecked) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(22.dp))
+                                        }
                                     }
                                 }
                             }
@@ -445,7 +403,7 @@ fun GroupChatListScreen(
                 }
             },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         if (selectedToRemove.isNotEmpty()) {
                             coroutineScope.launch {
@@ -454,12 +412,8 @@ fun GroupChatListScreen(
                             }
                         }
                     },
-                    enabled = selectedToRemove.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    )
-                ) { Text("删除（${selectedToRemove.size}）") }
+                    enabled = selectedToRemove.isNotEmpty()
+                ) { Text("删除（${selectedToRemove.size}）", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { removingMemberGroup = null; selectedToRemove.clear() }) { Text("取消") }
@@ -467,31 +421,20 @@ fun GroupChatListScreen(
         )
     }
 
-    // ── 清空群聊记录 ──
     clearingGroup?.let { group ->
         AlertDialog(
             onDismissRequest = { clearingGroup = null },
             shape = AppShapes.dialog,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("清空群聊记录")
-                }
-            },
-            text = { Text("确定要清空「${group.name}」的所有聊天记录吗？此操作不可撤销。") },
+            title = { Text("清空群聊记录") },
+            text = { Text("确定要清空 \"${group.name}\" 的所有聊天记录吗？") },
             confirmButton = {
-                Button(
+                TextButton(
                     onClick = {
                         coroutineScope.launch {
                             viewModel.clearGroupMessages(group.id)
                             clearingGroup = null
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
+                    }
                 ) { Text("清空") }
             },
             dismissButton = {

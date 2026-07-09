@@ -16,11 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +50,7 @@ fun ContactsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("联系人", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text("联系人", style = MaterialTheme.typography.titleLarge)
                 },
                 windowInsets = WindowInsets.statusBars,
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -251,7 +249,7 @@ private fun ContactItem(
             Text(
                 text = contact.name,
                 fontWeight = FontWeight.Medium,
-                fontSize = 16.sp
+                style = MaterialTheme.typography.titleMedium
             )
         },
         supportingContent = {
@@ -260,8 +258,8 @@ private fun ContactItem(
                     val prefix = if (lastMessage.direction == MessageDirection.SENT) "我: " else ""
                     Text(
                         text = "$prefix${lastMessage.content}",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -276,12 +274,12 @@ private fun ContactItem(
                             Icons.Default.Mic else Icons.Default.Keyboard,
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = "ID: ${contact.deviceId}",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
@@ -391,8 +389,7 @@ fun AddEditContactDialog(
                     title = {
                         Text(
                             text = if (isEditing) "编辑智能体" else "添加智能体",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold
+                            style = MaterialTheme.typography.titleLarge
                         )
                     },
                     navigationIcon = {
@@ -413,7 +410,7 @@ fun AddEditContactDialog(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Text("基本配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    Text("基本配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -425,7 +422,7 @@ fun AddEditContactDialog(
 
                     Divider()
 
-                    Text("服务器配置", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    Text("服务器配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                     OutlinedTextField(
                         value = serverUrl,
                         onValueChange = { serverUrl = it },
@@ -445,7 +442,7 @@ fun AddEditContactDialog(
 
                     Divider()
 
-                    Text("语音唤醒", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                    Text("语音唤醒", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                     val contactId = contact?.id ?: newContactId
                     val exampleWake = if (name.isNotBlank()) "${name}${name}" else "悠悠悠悠"
 
@@ -465,13 +462,13 @@ fun AddEditContactDialog(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     "正在录制唤醒模板",
-                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
                                     "请说出「${exampleWake}」",
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -484,21 +481,21 @@ fun AddEditContactDialog(
                             Icon(
                                 imageVector = if (hasTemplate) Icons.Default.CheckCircle else Icons.Default.Mic,
                                 contentDescription = null,
-                                tint = if (hasTemplate) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = if (hasTemplate) "本地唤醒模板已录制" else "未录制唤醒模板",
-                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (hasTemplate) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "录制后可在离线时使用本地声纹匹配",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
@@ -514,7 +511,7 @@ fun AddEditContactDialog(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     if (hasTemplate) "重录" else "录制",
-                                    fontSize = 12.sp
+                                    style = MaterialTheme.typography.labelMedium
                                 )
                             }
                             }
@@ -522,18 +519,17 @@ fun AddEditContactDialog(
 
                     Divider()
 
-                    Text("设备标识", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
-                    Text("版本：${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("设备ID：$generatedDeviceId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("客户端ID：$generatedClientId", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("设备标识", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Text("版本：${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("设备ID：$generatedDeviceId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("客户端ID：$generatedClientId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
                     Spacer(modifier = Modifier.height(80.dp))
                 }
 
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    tonalElevation = 3.dp,
-                    shadowElevation = 8.dp
+                    tonalElevation = 1.dp
                 ) {
                     Row(
                         modifier = Modifier
@@ -546,7 +542,7 @@ fun AddEditContactDialog(
                             onClick = onDismiss,
                             modifier = Modifier.height(48.dp).weight(1f)
                         ) {
-                            Text("取消", fontSize = 16.sp)
+                            Text("取消")
                         }
                         Button(
                             onClick = {
@@ -565,7 +561,7 @@ fun AddEditContactDialog(
                             enabled = name.isNotBlank(),
                             modifier = Modifier.height(48.dp).weight(1f)
                         ) {
-                            Text("保存", fontSize = 16.sp)
+                            Text("保存")
                         }
                     }
                 }
@@ -582,9 +578,9 @@ fun AddEditContactDialog(
 fun SectionHeader(title: String) {
     Text(
         title,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+        color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
     )
 }
@@ -593,7 +589,6 @@ fun SectionHeader(title: String) {
 fun MenuDivider() {
     Divider(
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-        thickness = 0.5.dp
+        color = MaterialTheme.colorScheme.outlineVariant,
     )
 }

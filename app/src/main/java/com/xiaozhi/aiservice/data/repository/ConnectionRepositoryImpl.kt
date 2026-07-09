@@ -128,14 +128,6 @@ class ConnectionRepositoryImpl @Inject constructor(
     private var _currentContactId: String = ""
     override val currentContactId: String get() = _currentContactId
 
-    // 当前联系人唤醒词（空=说话即唤醒，非空=需要验证）
-    @Volatile
-    var currentWakeWord: String = ""
-
-    // 唤醒词验证中：第一次 STT 结果需要匹配唤醒词
-    @Volatile
-    private var pendingWakeVerification = false
-
     // 本地唤醒模板匹配器
     val wakeTemplateMatcher = WakeTemplateMatcher()
 
@@ -174,47 +166,24 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     private fun loadWakeTemplatesFromStore() {
         scope.launch {
-            contactsRepository.getWakeTemplates().first().forEach { (contactId, base64) ->
-                wakeTemplateMatcher.addTemplate(contactId, base64, "")
+            contactsRepository.getWakeTemplates().collect { templates ->
+                wakeTemplateMatcher.clear()
+                templates.forEach { (contactId, base64) ->
+                    wakeTemplateMatcher.addTemplate(contactId, base64, contactId)
+                }
+                Logger.i(TAG, "已加载 ${wakeTemplateMatcher.templateCount()} 个唤醒模板到本地匹配器")
             }
-            Logger.i(TAG, "已加载 ${wakeTemplateMatcher.templateCount()} 个唤醒模板到本地匹配器")
         }
     }
 
     override fun reloadWakeTemplates() {
-        loadWakeTemplatesFromStore()
+        // collect 会自动同步 DataStore 变更，无需手动加载
     }
 
     private fun observeBackendService() {
         scope.launch {
             backendService.connectionState.collect { state ->
                 _connectionState.value = state
-            }
-        }
-
-        // 唤醒词验证：监听 STT 结果，检查是否匹配唤醒词
-        scope.launch {
-            backendService.textMessage.collect { text ->
-                if (pendingWakeVerification && text.isNotEmpty()) {
-                    // 去除标点符号再匹配，ASR 可能加逗号/句号/空格
-                    val clean = text.trim().lowercase().replace(Regex("[，。、！？,.!?\\s]"), "")
-                    val wakeWord = currentWakeWord.trim().lowercase()
-                    if (wakeWord.isNotEmpty() && !fuzzyWakeWordMatch(clean, wakeWord)) {
-                        Logger.i(TAG, "唤醒词不匹配: 期望「${wakeWord}」, 实际「${clean}」，中止并重新监听")
-                        pendingWakeVerification = false
-                        scope.launch {
-                            backendService.sendAbort()
-                            audioRecorder.stop("main")
-                            _deviceState.value = DeviceState.IDLE
-                            _aiState.value = AiState.IDLE
-                        }
-                        // 等服务器处理完中止后再启动唤醒，避免竞态
-                        scheduleWakeWordStartup(500)
-                    } else if (wakeWord.isNotEmpty()) {
-                        Logger.i(TAG, "✅ 唤醒词匹配成功: 「${clean}」")
-                        pendingWakeVerification = false
-                    }
-                }
             }
         }
 
@@ -524,13 +493,8 @@ class ConnectionRepositoryImpl @Inject constructor(
             val ok = audioRecorder.startWake(
                 owner = "main",
                 scope = scope,
-                onWakeDetected = callback@{ wakeText ->
+                onWakeDetected = { _ ->
                     Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
-
-                    // 如果有唤醒词，等待后续 ASR 验证
-                    if (currentWakeWord.isNotEmpty()) {
-                        pendingWakeVerification = true
-                    }
 
                     // 发送唤醒事件到服务器（ESP32 协议风格）
                     backendService.sendListenStart("realtime")
@@ -559,8 +523,8 @@ class ConnectionRepositoryImpl @Inject constructor(
     }
 
     override fun setWakeWord(wakeWord: String) {
-        currentWakeWord = wakeWord
-        Logger.i(TAG, "设置唤醒词: «${wakeWord}»")
+        // 云端文本匹配已移除，唤醒词验证完全由本地模板匹配器完成
+        Logger.d(TAG, "setWakeWord 已弃用 (云端文本匹配已移除)")
     }
 
     override fun isRecording(): Boolean = audioRecorder.isRecording
@@ -720,42 +684,4 @@ class ConnectionRepositoryImpl @Inject constructor(
         playbackManager.setVolume(level)
     }
 
-    /**
-     * 模糊唤醒词匹配：先精确 contains()，再降级到字符级重叠匹配。
-     *
-     * ASR 可能识别为"悠悠你好啊""悠悠泥好"等变体，strict contains 会失败。
-     * 算法：计算唯一字重叠率 ≥60% + 首字匹配 → 通过。
-     *
-     * 特别处理：短唤醒词（≤2个唯一字）只要首字匹配即通过。
-     * 例如"悠悠"（1个唯一字'悠'）→ ASR 返回"悠悠""优优""悠悠在做什么"，
-     * 只要含'悠'字就算匹配。长句含'悠'误命中概率极低。
-     */
-    private fun fuzzyWakeWordMatch(text: String, wakeWord: String): Boolean {
-        // 1. 精确子串匹配（快速通道，覆盖大部分情况）
-        if (text.contains(wakeWord)) return true
-
-        val uniqueWakeChars = wakeWord.toSet()      // 唤醒词唯一字集合
-        val textChars = text.toSet()                 // ASR 结果唯一字集合
-
-        // 2. 短唤醒词（≤2个唯一字）：只要首字出现就算匹配
-        //    例如"悠悠"→只要ASR结果含'悠'、 "张三"→含'张'
-        //    这些字在日常对话中不常见，误命中率极低
-        if (uniqueWakeChars.size <= 2) {
-            val firstCharMatch = wakeWord.first() in textChars
-            Logger.i(TAG, "短唤醒词模糊匹配: [${wakeWord}] 首字'${wakeWord.first()}'${if (firstCharMatch) "✅" else "❌"} 文本=[${text}]")
-            return firstCharMatch
-        }
-
-        // 3. 长唤醒词：字符级重叠匹配
-        val matched = uniqueWakeChars.count { it in textChars }
-        val ratio = matched.toDouble() / uniqueWakeChars.size
-
-        // 首字必须在 ASR 结果中（防误匹配："你好"→误配"悠悠你好"）
-        val firstCharMatch = wakeWord.first() in textChars
-
-        Logger.i(TAG, "模糊匹配: 唤醒词=[${wakeWord}] 唯一字数=${uniqueWakeChars.size} 重叠=${matched}/${uniqueWakeChars.size} " +
-                "首字=${firstCharMatch} 阈值=60% → ${if (ratio >= 0.6 && firstCharMatch) "✅" else "❌"}")
-
-        return ratio >= 0.6 && firstCharMatch
-    }
 }

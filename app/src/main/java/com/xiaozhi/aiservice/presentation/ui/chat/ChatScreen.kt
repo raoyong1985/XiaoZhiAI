@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -23,7 +22,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -83,13 +81,12 @@ fun ChatScreen(
         viewModel.checkWakeTemplate(displayWakeWord)
     }
 
-    // 顶部栏状态
     val connectionColor by animateColorAsState(
         targetValue = when (uiState.connectionState) {
-            is BotConnectionState.Connected -> Color(0xFF4CAF50)
-            is BotConnectionState.Connecting -> Color(0xFFFFC107)
-            is BotConnectionState.Error -> Color(0xFFE53935)
-            else -> Color(0xFF9E9E9E)
+            is BotConnectionState.Connected -> MaterialTheme.colorScheme.primary
+            is BotConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
+            is BotConnectionState.Error -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
         },
         label = "connection_color"
     )
@@ -181,8 +178,7 @@ fun ChatScreen(
                         }
                         Text(
                             text = if (stateText.isNotEmpty()) "${contact.name} · $stateText" else contact.name,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.titleLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -260,30 +256,30 @@ private fun WakeWordHintBanner(
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    Surface(
-        tonalElevation = 2.dp,
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            tonalElevation = 2.dp,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = null,
-                tint = primaryColor,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = "请在联系人编辑页录制唤醒模板，启用语音唤醒",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = primaryColor,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "请在联系人编辑页录制唤醒模板，启用语音唤醒",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
                 onClick = onDismiss,

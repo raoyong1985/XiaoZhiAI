@@ -14,7 +14,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.ClipData
@@ -25,7 +24,6 @@ import android.net.Uri
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.presentation.ui.components.ChatMessageList
@@ -60,10 +58,10 @@ fun GroupChatScreen(
 
     val connectionColor by animateColorAsState(
         targetValue = when (connectionState) {
-            is BotConnectionState.Connected -> Color(0xFF4CAF50)
-            is BotConnectionState.Connecting -> Color(0xFFFFC107)
-            is BotConnectionState.Error -> Color(0xFFE53935)
-            else -> Color(0xFF9E9E9E)
+            is BotConnectionState.Connected -> MaterialTheme.colorScheme.primary
+            is BotConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
+            is BotConnectionState.Error -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
         },
         label = "connection_color"
     )
@@ -93,10 +91,10 @@ fun GroupChatScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(group?.name ?: "群聊", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                        Text(group?.name ?: "群聊", style = MaterialTheme.typography.titleLarge)
                         Text(
                             "${group?.botIds?.size ?: 0} 个成员",
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }

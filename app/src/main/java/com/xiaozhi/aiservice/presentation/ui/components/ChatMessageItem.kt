@@ -16,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -25,7 +24,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
@@ -98,7 +96,6 @@ fun ChatMessageItem(
             Box(
                 modifier = Modifier
                     .widthIn(min = 60.dp, max = 320.dp)
-                    .shadow(1.dp, AppShapes.bubble)
                     .clip(RoundedCornerShape(
                             topStart = 12.dp,
                             topEnd = 12.dp,
@@ -119,8 +116,7 @@ fun ChatMessageItem(
                 if (!isFromMe && displayName.isNotEmpty()) {
                     Text(
                         text = displayName,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.labelMedium,
                         color = effectiveBotColor.nameColor
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -150,33 +146,24 @@ fun ChatMessageItem(
                         }
                         Text(
                             text = displayText,
-                            color = if (isFromMe) if (isDark) Color.White else Color(0xFF333333).copy(alpha = 0.85f)
-                                    else if (isDark) Color.White.copy(alpha = 0.92f)
-                                    else Color(0xFF333333).copy(alpha = 0.85f),
-                            fontSize = 15.sp
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodyLarge
                         )
                     }
                     else -> {
                         Text(
                             text = message.content,
-                            color = if (isFromMe) if (isDark) Color.White else Color(0xFF333333).copy(alpha = 0.85f)
-                                    else if (isDark) Color.White.copy(alpha = 0.92f)
-                                    else Color(0xFF333333).copy(alpha = 0.85f),
-                            fontSize = 15.sp
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodyLarge
                         )
                     }
                 }
                 if (showTimestamp) {
                     Spacer(modifier = Modifier.height(2.dp))
-                    val timestampColor = when {
-                        isFromMe -> if (isDark) Color.White.copy(alpha = 0.7f) else Color(0xFF666666).copy(alpha = 0.65f)
-                        isDark -> Color.White.copy(alpha = 0.7f)
-                        else -> Color(0xFF666666).copy(alpha = 0.65f)
-                    }
                     Text(
                         text = timeText,
-                        color = timestampColor,
-                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.align(if (isFromMe) Alignment.End else Alignment.Start)
                     )
                 }
@@ -284,8 +271,8 @@ fun DateSeparator(timestamp: Long) {
     ) {
         Text(
             text = dateFormat.format(Date(timestamp)),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
