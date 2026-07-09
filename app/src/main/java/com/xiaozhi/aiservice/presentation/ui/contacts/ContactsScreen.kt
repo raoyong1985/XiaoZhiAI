@@ -153,16 +153,26 @@ fun ContactsScreen(
         AlertDialog(
             onDismissRequest = { contactToDelete = null },
             shape = AppShapes.dialog,
-            title = { Text("删除联系人") },
-            text = { Text("确定删除 \"${contact.name}\" 吗？") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("删除联系人")
+                }
+            },
+            text = { Text("确定删除「${contact.name}」吗？此操作不可撤销。") },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         viewModel.deleteContact(contact.id)
                         contactToDelete = null
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text("删除")
                 }
             },
             dismissButton = {
@@ -178,13 +188,25 @@ fun ContactsScreen(
         AlertDialog(
             onDismissRequest = { contactToClear = null },
             shape = AppShapes.dialog,
-            title = { Text("清空聊天记录") },
-            text = { Text("确定要清空 \"${contact.name}\" 的所有聊天记录吗？") },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("清空聊天记录")
+                }
+            },
+            text = { Text("确定要清空「${contact.name}」的所有聊天记录吗？此操作不可撤销。") },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.clearMessages(contact.id)
-                    contactToClear = null
-                }) {
+                Button(
+                    onClick = {
+                        viewModel.clearMessages(contact.id)
+                        contactToClear = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
                     Text("清空")
                 }
             },
@@ -509,20 +531,21 @@ fun AddEditContactDialog(
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
-                            FilledTonalButton(                                    onClick = { viewModel.recordWakeTemplate(contactId) },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Mic,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        if (hasTemplate) "重录" else "录制",
-                                        fontSize = 12.sp
-                                    )
-                                }
+                            FilledTonalButton(
+                                onClick = { viewModel.recordWakeTemplate(contactId) },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    if (hasTemplate) "重录" else "录制",
+                                    fontSize = 12.sp
+                                )
+                            }
                             }
                         }
 
