@@ -303,40 +303,24 @@ private fun ContactItem(
                 }
                 DropdownMenu(
                     expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier
-                        .clip(AppShapes.menu)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(
-                            0.5.dp,
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                            AppShapes.menu
-                        )
+                    onDismissRequest = { showMenu = false }
                 ) {
                     SectionHeader("基本设置")
                     DropdownMenuItem(
                         text = { Text("编辑联系人") },
-                        onClick = {
-                            showMenu = false
-                            onEdit()
-                        },
+                        onClick = { showMenu = false; onEdit() },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                     )
                     DropdownMenuItem(
                         text = {
-                            Text(
-                                if (contact.inputMode == InputMode.VOICE) "切换为文字" else "切换为语音"
-                            )
+                            Text(if (contact.inputMode == InputMode.VOICE) "切换为文字" else "切换为语音")
                         },
-                        onClick = {
-                            showMenu = false
-                            onToggleInputMode()
-                        },
+                        onClick = { showMenu = false; onToggleInputMode() },
                         leadingIcon = {
                             Icon(
                                 if (contact.inputMode == InputMode.VOICE) Icons.Default.Keyboard else Icons.Default.Mic,
                                 contentDescription = null,
-                                tint = Color(0xFF4CAF50)
+                                tint = MaterialTheme.colorScheme.primary
                             )
                         }
                     )
@@ -345,34 +329,21 @@ private fun ContactItem(
                     SectionHeader("数据管理")
                     DropdownMenuItem(
                         text = { Text("清空聊天记录") },
-                        onClick = {
-                            showMenu = false
-                            onClearMessages()
-                        },
-                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF9800)) }
+                        onClick = { showMenu = false; onClearMessages() },
+                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                     )
                     DropdownMenuItem(
                         text = { Text("导出聊天记录") },
-                        onClick = {
-                            showMenu = false
-                            onExportMessages()
-                        },
+                        onClick = { showMenu = false; onExportMessages() },
                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                     )
                     MenuDivider()
 
                     DropdownMenuItem(
                         text = { Text("删除联系人", color = MaterialTheme.colorScheme.error) },
-                        onClick = {
-                            showMenu = false
-                            onDelete()
-                        },
+                        onClick = { showMenu = false; onDelete() },
                         leadingIcon = {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                         }
                     )
                 }

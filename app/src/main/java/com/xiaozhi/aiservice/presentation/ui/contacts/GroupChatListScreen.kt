@@ -142,15 +142,7 @@ fun GroupChatListScreen(
                                 }
                                 DropdownMenu(
                                     expanded = showMenu,
-                                    onDismissRequest = { showMenu = false },
-                                    modifier = Modifier
-                                        .clip(AppShapes.menu)
-                                        .background(MaterialTheme.colorScheme.surface)
-                                        .border(
-                                            0.5.dp,
-                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                            AppShapes.menu
-                                        )
+                                    onDismissRequest = { showMenu = false }
                                 ) {
                                     SectionHeader("基本设置")
                                     DropdownMenuItem(
@@ -160,9 +152,7 @@ fun GroupChatListScreen(
                                     )
                                     DropdownMenuItem(
                                         text = {
-                                            Text(
-                                                if (group.inputMode == 0) "切换为文字输入" else "切换为语音输入"
-                                            )
+                                            Text(if (group.inputMode == 0) "切换为文字输入" else "切换为语音输入")
                                         },
                                         onClick = {
                                             showMenu = false
@@ -173,7 +163,7 @@ fun GroupChatListScreen(
                                             Icon(
                                                 if (group.inputMode == 0) Icons.Default.Keyboard else Icons.Default.Mic,
                                                 contentDescription = null,
-                                                tint = Color(0xFF4CAF50)
+                                                tint = MaterialTheme.colorScheme.primary
                                             )
                                         }
                                     )
@@ -183,12 +173,12 @@ fun GroupChatListScreen(
                                     DropdownMenuItem(
                                         text = { Text("添加成员") },
                                         onClick = { showMenu = false; addingMemberGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null, tint = Color(0xFF4CAF50)) }
+                                        leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("删除成员") },
                                         onClick = { showMenu = false; removingMemberGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFFF9800)) }
+                                        leadingIcon = { Icon(Icons.Default.PersonRemove, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                                     )
                                     MenuDivider()
 
@@ -196,14 +186,11 @@ fun GroupChatListScreen(
                                     DropdownMenuItem(
                                         text = { Text("清空群聊记录") },
                                         onClick = { showMenu = false; clearingGroup = group },
-                                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFFFF9800)) }
+                                        leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("导出群聊记录") },
-                                        onClick = {
-                                            showMenu = false
-                                            viewModel.exportGroupMessages(group.id, context)
-                                        },
+                                        onClick = { showMenu = false; viewModel.exportGroupMessages(group.id, context) },
                                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                                     )
                                     MenuDivider()
@@ -343,7 +330,6 @@ fun GroupChatListScreen(
                                         containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer
                                         else MaterialTheme.colorScheme.surface
                                     ),
-                                    border = if (!isChecked) CardDefaults.outlinedCardBorder().copy(width = 0.5.dp) else null
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -429,7 +415,6 @@ fun GroupChatListScreen(
                                         containerColor = if (isChecked) MaterialTheme.colorScheme.errorContainer
                                         else MaterialTheme.colorScheme.surface
                                     ),
-                                    border = if (!isChecked) CardDefaults.outlinedCardBorder().copy(width = 0.5.dp) else null
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(12.dp),

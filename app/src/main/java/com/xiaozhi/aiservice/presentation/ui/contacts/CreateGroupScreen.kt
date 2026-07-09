@@ -118,9 +118,6 @@ fun CreateGroupScreen(
                                 else
                                     MaterialTheme.colorScheme.surface
                             ),
-                            border = if (!isSelected) CardDefaults.outlinedCardBorder().copy(
-                                width = 0.5.dp
-                            ) else null
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
