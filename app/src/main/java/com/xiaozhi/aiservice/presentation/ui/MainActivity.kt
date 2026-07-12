@@ -24,10 +24,19 @@ import com.xiaozhi.aiservice.presentation.ui.contacts.GroupChatScreen
 import com.xiaozhi.aiservice.presentation.viewmodel.ChatViewModel
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.Logger
+import com.xiaozhi.aiservice.domain.repository.ContactsRepository
+import com.xiaozhi.aiservice.domain.repository.GroupChatRepository
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var contactsRepository: ContactsRepository
+    @Inject lateinit var groupChatRepository: GroupChatRepository
 
     companion object {
         private const val TAG = "MainActivity"
@@ -52,6 +61,31 @@ class MainActivity : ComponentActivity() {
         setContent {
             XiaoZhiTheme {
                 MainNavigation()
+            }
+        }
+        // 从外部存储恢复联系人/群聊备份
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val contactsFile = java.io.File(getExternalFilesDir(null), "contacts_restore.json")
+                val groupsFile = java.io.File(getExternalFilesDir(null), "groups_restore.json")
+                if (contactsFile.exists()) {
+                    val json = contactsFile.readText()
+                    if (json.isNotBlank()) {
+                        contactsRepository.restoreContactsFromJson(json)
+                        Logger.i(TAG, "联系人恢复成功: ${contactsFile.length()} bytes")
+                    }
+                    contactsFile.delete()
+                }
+                if (groupsFile.exists()) {
+                    val json = groupsFile.readText()
+                    if (json.isNotBlank()) {
+                        groupChatRepository.restoreGroupsFromJson(json)
+                        Logger.i(TAG, "群聊恢复成功: ${groupsFile.length()} bytes")
+                    }
+                    groupsFile.delete()
+                }
+            } catch (e: Exception) {
+                Logger.w(TAG, "数据恢复失败: ${e.message}")
             }
         }
     }

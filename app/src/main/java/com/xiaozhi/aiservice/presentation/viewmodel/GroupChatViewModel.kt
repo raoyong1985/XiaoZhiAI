@@ -34,6 +34,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -301,21 +302,23 @@ class GroupChatViewModel @Inject constructor(
                     return@collect
                 }
                 Logger.i(TAG, "serviceReplaced: bot[$botId] 连接已重建，重建事件观察者")
-                // 取消旧观察者
                 botObserverJobs[botId]?.cancel()
-                // 注册新观察者
                 observeBotEvents(botId, currentGroupId, contact.name, newService)
             }
         }
 
-        // ── 接龙看门狗（15 秒周期） ──
+        observeCombinedConnectionState()
+        startRelayWatchdog()
+        startPingPongMode()
+    }
 
-        // ── 聚合所有 bot 的连接状态 ──
+    /**
+     * 聚合所有 bot 的连接状态 → 对外暴露单一 connectionState
+     */
+    private fun observeCombinedConnectionState() {
         viewModelScope.launch {
             val flows = botConnectionPool.all.values.map { it.connectionState }
-            // 初始状态
             _connectionState.value = BotConnectionState.Connecting
-            // 任意一个 bot 状态变化时重新聚合
             combine(flows) { states ->
                 when {
                     states.any { it is BotConnectionState.Connected } -> BotConnectionState.Connected
@@ -323,92 +326,77 @@ class GroupChatViewModel @Inject constructor(
                     states.any { it is BotConnectionState.Error } -> BotConnectionState.Error()
                     else -> BotConnectionState.Disconnected
                 }
-            }.collect { combined ->
-                _connectionState.value = combined
-            }
+            }.collect { _connectionState.value = it }
         }
-        // 职责：
-        // 1. 检测接龙是否卡死（等待某个 bot 但 >30 秒无响应）
-        // 2. 定期清理死 bot 标记（每 2 分钟一次）
-        // 3. 就绪状态时如果长时间无活动，自动触发下一轮
+    }
+
+    /**
+     * 接龙看门狗（15 秒周期）：检测卡死 + 清理死标记 + 空闲自动恢复
+     */
+    private fun startRelayWatchdog() {
         stuckRelayWatcher?.cancel()
         stuckRelayWatcher = viewModelScope.launch {
             var lastCleanup = 0L
             while (true) {
                 delay(15_000)
-
-                // 每 2 分钟清理一次死 bot 标记（给重连机会）
                 val now = System.currentTimeMillis()
                 if (now - lastCleanup > 120_000) {
                     lastCleanup = now
                     botConnectionPool.clearDead()
                     Logger.i(TAG, "清理死 bot 列表")
                 }
-
                 val rs = _relayState.value
-                if (_isRecording.value) continue  // 用户正在录音，跳过检测
-
+                if (_isRecording.value) continue
                 if (rs.waitingSpeakerIndex >= 0) {
-                    // 模式1：有等待的 bot——检查是否超时
                     val waitingBotId = rs.botIds.getOrNull(rs.waitingSpeakerIndex) ?: continue
                     val lastAudio = botLastAudioTime[waitingBotId] ?: 0L
-                    // 如果 lastAudio == 0，说明该 bot 从未收到过音频（刚被选中，正在转发/处理中）
-                    // ——不是卡死，给更长的 60s 超时
                     val timeoutMs = if (lastAudio == 0L) 60_000 else 30_000
                     val silenceDuration = System.currentTimeMillis() - lastAudio
                     if (silenceDuration > timeoutMs) {
                         Logger.w(TAG, "接龙卡死检测：等待[$waitingBotId] 已静默 ${silenceDuration/1000}s（超${timeoutMs/1000}s），清除等待状态并重启接龙")
                         _relayState.update { it.clearWaiting() }
                         botConnectionPool.clearDead()
-                        viewModelScope.launch {
-                            var retries = 0
-                            while (retries < 5) {
-                                triggerNextSpeaker("")
-                                if (_relayState.value.waitingSpeakerIndex >= 0) break
-                                delay(1000)
-                                retries++
-                            }
-                        }
+                        retryTriggerNextSpeaker()
                     }
                 } else if (rs.forwardRound >= 0 && rs.botIds.isNotEmpty()) {
-                    // 模式2：无等待 bot 但对话未结束——所有 bot 静默 >30s，自动恢复
                     val anyAudioRecently = rs.botIds.any {
-                        val t = botLastAudioTime[it] ?: 0L
-                        t > 0 && System.currentTimeMillis() - t < 30_000
+                        val t = botLastAudioTime[it] ?: 0L; t > 0 && System.currentTimeMillis() - t < 30_000
                     }
                     if (!anyAudioRecently) {
-                        // 检测是否包含结束语，避免无限接龙
-                        val lastText = _relayState.value.lastForwardedText.lowercase()
-                        val endKeywords = listOf("再见", "拜拜", "下次", "结束", "bye", "goodbye")
-                        if (endKeywords.any { lastText.contains(it) }) {
-                            continuousIdleRecoveries = 0
-                            Logger.i(TAG, "检测到结束语，跳过空闲恢复")
-                            continue
+                        if (_relayState.value.lastForwardedText.lowercase().let { t ->
+                            listOf("再见", "拜拜", "下次", "结束", "bye", "goodbye").any { t.contains(it) }
+                        }) {
+                            continuousIdleRecoveries = 0; continue
                         }
                         continuousIdleRecoveries++
-                        if (continuousIdleRecoveries >= 3) {
-                            Logger.w(TAG, "连续空闲恢复≥3次，停止自动恢复")
-                            continue
-                        }
+                        if (continuousIdleRecoveries >= 3) continue
                         Logger.w(TAG, "接龙空闲恢复：所有bot静默 >30s，清理死bot并重启接龙")
                         botConnectionPool.clearDead()
-                        // 重置轮次，防止卡在"已达最大轮次"
                         _relayState.update { it.copy(forwardRound = 0) }
-                        viewModelScope.launch {
-                            var retries = 0
-                            while (retries < 5) {
-                                triggerNextSpeaker("")
-                                if (_relayState.value.waitingSpeakerIndex >= 0) break
-                                delay(1000)
-                                retries++
-                            }
-                        }
+                        retryTriggerNextSpeaker()
                     }
                 }
             }
-        }  // stuckRelayWatcher
+        }
+    }
 
-        // ── 乒乓模式：监听接龙结束，解锁输入（仅双人群聊生效） ──
+    /** 重试 triggerNextSpeaker 最多 5 次 */
+    private fun retryTriggerNextSpeaker() {
+        viewModelScope.launch {
+            var retries = 0
+            while (retries < 5) {
+                triggerNextSpeaker("")
+                if (_relayState.value.waitingSpeakerIndex >= 0) break
+                delay(1000)
+                retries++
+            }
+        }
+    }
+
+    /**
+     * 乒乓模式：监听接龙结束，解锁输入（仅双人群聊生效）
+     */
+    private fun startPingPongMode() {
         viewModelScope.launch {
             _relayState.collectLatest { state ->
                 if (_isAiResponding.value && state.waitingSpeakerIndex < 0) {
@@ -979,9 +967,11 @@ class GroupChatViewModel @Inject constructor(
         groupChatUseCase.addBotToGroup(groupId, botId)
     }
 
-    /** 批量向群聊添加智能体成员 */
+    /** 批量向群聊添加智能体成员（并行连接） */
     suspend fun addBotsToGroup(groupId: String, botIds: List<String>) {
-        botIds.forEach { groupChatUseCase.addBotToGroup(groupId, it) }
+        kotlinx.coroutines.coroutineScope {
+            botIds.map { async { groupChatUseCase.addBotToGroup(groupId, it) } }.awaitAll()
+        }
     }
 
     /** 从群聊移除智能体成员 */
@@ -989,9 +979,11 @@ class GroupChatViewModel @Inject constructor(
         groupChatUseCase.removeBotFromGroup(groupId, botId)
     }
 
-    /** 批量从群聊移除智能体成员 */
+    /** 批量从群聊移除智能体成员（并行移除） */
     suspend fun removeBotsFromGroup(groupId: String, botIds: List<String>) {
-        botIds.forEach { groupChatUseCase.removeBotFromGroup(groupId, it) }
+        kotlinx.coroutines.coroutineScope {
+            botIds.map { async { groupChatUseCase.removeBotFromGroup(groupId, it) } }.awaitAll()
+        }
     }
 
     /** 清空群聊消息记录 */

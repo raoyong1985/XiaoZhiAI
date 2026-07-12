@@ -194,6 +194,12 @@ class GroupChatRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun restoreGroupsFromJson(json: String) {
+        context.groupDataStore.edit { preferences ->
+            preferences[GROUPS_KEY] = json
+        }
+    }
+
     /** 向群聊中添加智能体成员（去重） */
     override suspend fun addBotToGroup(groupId: String, botId: String) {
         context.groupDataStore.edit { preferences ->

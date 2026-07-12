@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -42,6 +43,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "ConnectionRepo"
+/** TTS 播放结束到允许唤醒的冷却时间（ms），防止残余回声触发假唤醒 */
+private const val WAKE_COOLDOWN_MS = 3000L
 
 @Singleton
 class ConnectionRepositoryImpl @Inject constructor(
@@ -159,9 +162,18 @@ class ConnectionRepositoryImpl @Inject constructor(
     // 录音模式互斥锁：唤醒模式 vs 直播模式，阻止竞态
     private val recordingLock = Any()
 
+    /** 音频发送 Channel：合并 onOpusPacket 回调（每包一个协程）为单消费者 */
+    private val audioSendChannel = Channel<ByteArray>(Channel.BUFFERED)
+
     init {
         observeBackendService()
         loadWakeTemplatesFromStore()
+        // 单消费者协程：串行发送音频包，避免每包一个 scope.launch 的调度开销
+        scope.launch {
+            for (packet in audioSendChannel) {
+                sendAudio(packet)
+            }
+        }
     }
 
     private fun loadWakeTemplatesFromStore() {
@@ -226,6 +238,9 @@ class ConnectionRepositoryImpl @Inject constructor(
                     if (newAiState == AiState.SPEAKING && oldAiState != AiState.SPEAKING) {
                         // ⚠️ 无条件停止录音（唤醒模式 + 对话模式），防止 TTS 回声被捕获触发唤醒
                         audioRecorder.stop("main")
+                        // AI 说话前启用软 AEC，让 TtsReferenceBuffer 开始收集 TTS 参考信号
+                        audioService.softAecEnabled = true
+                        audioService.softAec.reset()
                         _deviceState.value = DeviceState.SPEAKING
                     }
 
@@ -480,7 +495,7 @@ class ConnectionRepositoryImpl @Inject constructor(
         if (_aiState.value != AiState.IDLE) return false
 
         // TTS 刚结束冷却期（3秒），防止残余回声被捕获触发假唤醒
-        if (System.currentTimeMillis() - lastSpeakingEndMs < 3000) {
+        if (System.currentTimeMillis() - lastSpeakingEndMs < WAKE_COOLDOWN_MS) {
             Logger.i(TAG, "唤醒模式延迟启动：TTS 刚结束（冷却中），跳过")
             return false
         }
@@ -495,17 +510,14 @@ class ConnectionRepositoryImpl @Inject constructor(
                 scope = scope,
                 onWakeDetected = { _ ->
                     Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
-
                     // 发送唤醒事件到服务器（ESP32 协议风格）
                     backendService.sendListenStart("realtime")
-
-                    scope.launch {
-                        _aiState.value = AiState.LISTENING
-                        weStartedRecording = true
-                        _deviceState.value = DeviceState.LISTENING
-                    }
+                    // StateFlow + @Volatile 无需 launch 包装，PCM 回调在后台线程
+                    _aiState.value = AiState.LISTENING
+                    weStartedRecording = true
+                    _deviceState.value = DeviceState.LISTENING
                 },
-                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } }
+                onOpusPacket = { packet -> audioSendChannel.trySend(packet) }
             )
             return ok
         }
@@ -549,7 +561,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                     scope = scope,
                     enableVAD = enableVAD,
                     startMuteMs = muteMs,
-                    onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
+                    onOpusPacket = { packet -> audioSendChannel.trySend(packet) },
                     onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
                 )) {
                 val audioErr = audioService.lastRecordError
@@ -622,6 +634,9 @@ class ConnectionRepositoryImpl @Inject constructor(
         if (audioService.isAecSupported()) {
             audioService.setAecEnabled(true)
         }
+        // 启用软件 NLMS AEC（TTS 参考信号版）
+        audioService.softAecEnabled = true
+        audioService.softAec.reset()
         if (audioService.isAgcSupported()) {
             audioService.setAgcEnabled(true)
         }

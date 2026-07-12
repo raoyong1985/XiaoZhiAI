@@ -70,16 +70,12 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
         viewModel.setCurrentWakeWord(displayWakeWord)
+        viewModel.checkWakeTemplate(displayWakeWord)
     }
     DisposableEffect(Unit) {
         onDispose {
             viewModel.disconnect()
         }
-    }
-
-    // 检查是否需要录制唤醒词
-    LaunchedEffect(displayWakeWord) {
-        viewModel.checkWakeTemplate(displayWakeWord)
     }
 
     val connectionColor by animateColorAsState(

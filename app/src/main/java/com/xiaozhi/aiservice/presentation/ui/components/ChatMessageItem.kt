@@ -97,7 +97,7 @@ fun ChatMessageItem(
         Box {
             Box(
                 modifier = Modifier
-                    .widthIn(min = 60.dp, max = 320.dp)
+                    .widthIn(min = 60.dp, max = 280.dp)
                     .shadow(1.dp, AppShapes.bubble)
                     .clip(RoundedCornerShape(
                             topStart = 12.dp,

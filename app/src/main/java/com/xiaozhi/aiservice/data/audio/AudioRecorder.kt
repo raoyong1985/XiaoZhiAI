@@ -59,6 +59,24 @@ class AudioRecorder(
     private var silenceStartTime = 0L
     private val SILENCE_GRACE_MS = 300L  // 词语间停顿不超过300ms不重置timer
 
+    // ── 三级预检（节能）──
+    /** 三级预检帧计数器：每隔多少帧执行一次完整 VAD */
+    private var frameCounter = 0
+    /** 连续低能量帧数，用于拉长 VAD 间隔 */
+    private var consecutiveLowEnergy = 0
+    /** 最大连续低能帧数后跳过 VAD 检查 */
+    private val MAX_LOW_ENERGY_FRAMES = 5
+    /** 三级预检的低能量阈值（低于此值直接跳过 VAD，省 ONNX 推理） */
+    private val ENERGY_PRE_CHECK_THRESHOLD = 0.4f  // WAKE_RMS_THRESHOLD 的 40%
+
+    // ── SNR 估计 ──
+    /** 噪声底噪 RMS 指数移动平均 */
+    private var noiseFloorRms = 200.0
+    /** 最近 2s 的最大 RMS（用于 SNR 计算） */
+    private var recentPeakRms = 200.0
+    /** SNR 平滑值，避免每帧抖动 */
+    private var smoothedSnrDb = 20f
+
     companion object {
         // "悠悠"约400-500ms，400ms可让用户说到一半时就触发（缩短响应延迟）
         private const val WAKE_HOLD_MS = 400L
@@ -101,6 +119,12 @@ class AudioRecorder(
         wakeTriggered = false
         wakeVoiceStartTime = 0L
         silenceStartTime = 0L
+        // 重置三级预检和 SNR 状态
+        frameCounter = 0
+        consecutiveLowEnergy = 0
+        noiseFloorRms = 200.0
+        recentPeakRms = 200.0
+        smoothedSnrDb = 20f
         // 重置环形缓冲
         synchronized(wakeRingLock) {
             wakeRingWritePos = 0
@@ -245,11 +269,46 @@ class AudioRecorder(
             }
         }
 
+        // 每帧更新 SNR 估计（即便不跑 VAD 也跟踪环境噪声）
+        val currentRms = calcRms(amplified)
+        // 噪声底噪指数移动平均（取静音段的 RMS）
+        if (currentRms < noiseFloorRms * 1.5 || noiseFloorRms < 1) {
+            noiseFloorRms = noiseFloorRms * 0.95 + currentRms * 0.05
+        }
+        // 跟踪峰值
+        if (currentRms > recentPeakRms) {
+            recentPeakRms = currentRms
+        } else {
+            recentPeakRms = recentPeakRms * 0.995 + currentRms * 0.005
+        }
+        // 计算平滑 SNR
+        if (noiseFloorRms > 1.0 && recentPeakRms > noiseFloorRms) {
+            val snrLinear = (recentPeakRms / noiseFloorRms).toFloat()
+            val snrDb = 20f * kotlin.math.log10(snrLinear).coerceIn(0f, 40f)
+            smoothedSnrDb = smoothedSnrDb * 0.9f + snrDb * 0.1f
+        }
+
+        // ── 三级预检 Level 1: RMS 能量预检查（每秒约 100 次，0.01ms/次）──
+        // 能量太低 → 跳过 FSMN VAD，省 ONNX 推理
+        frameCounter++
+        val energyOk = currentRms > WAKE_RMS_THRESHOLD * ENERGY_PRE_CHECK_THRESHOLD
+        if (!energyOk) {
+            consecutiveLowEnergy++
+            // 连续低能量 → 拉长 VAD 检查间隔（省电）
+            if (consecutiveLowEnergy > MAX_LOW_ENERGY_FRAMES) {
+                // 跳过本轮 VAD，重置 VAD 计时让 ONNX 更晚执行
+                lastVadCheckMs = now
+                return
+            }
+        } else {
+            consecutiveLowEnergy = 0
+        }
+
         // ✅ 降频：每 200ms 才跑 VAD（ONNX 推理），中间帧直接跳过
         if (now - lastVadCheckMs < VAD_CHECK_INTERVAL_MS) return
         lastVadCheckMs = now
 
-        // 语音检测（用已增益数据，优先 FSMN VAD）
+        // ── 三级预检 Level 2: FSMN VAD（ONNX）或 RMS 降级 ──
         val hasVoice = if (wakeUseFsmn && wakeFsmnVad != null) {
             try { wakeFsmnVad!!.isVoice(amplified) }
             catch (_: Exception) { calcRms(amplified) > WAKE_RMS_THRESHOLD }
@@ -320,7 +379,7 @@ class AudioRecorder(
         val matcher = wakeTemplateMatcher
         if (matcher != null && matcher.hasTemplates()) {
             val ringData = getWakeRingData()
-            val matchedContactId = matcher.match(ringData)
+            val matchedContactId = matcher.match(ringData, smoothedSnrDb)
             if (matchedContactId == null) {
                 // 不匹配 → 静默重置，继续监听
                 Logger.d(TAG, "🔇 本地匹配未通过，静默重置唤醒")

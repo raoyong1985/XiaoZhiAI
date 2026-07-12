@@ -50,6 +50,10 @@ class AudioService {
 
     private var audioRecord: AudioRecord? = null
     private val audioEnhancer = AudioEnhancer()
+    /** 软件 NLMS AEC 回声消除器（TTS 参考信号版） */
+    val softAec = SoftAec()
+    /** 软件 AEC 启用标志 */
+    @Volatile var softAecEnabled = false
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
     @Volatile private var sampleRate = DEFAULT_SAMPLE_RATE
@@ -300,6 +304,18 @@ class AudioService {
 
                         vadPcmData = acquireBuffer(readSize)
                         System.arraycopy(buffer, 0, vadPcmData, 0, readSize)
+
+                        // ── 软件 NLMS AEC：用 TTS 参考信号消除残响回声 ──
+                        if (softAecEnabled) {
+                            val refPcm = TtsReferenceBuffer.readLatest(readSize)
+                            if (refPcm != null) {
+                                val processed = softAec.process(vadPcmData.copyOf(readSize), refPcm)
+                                System.arraycopy(processed, 0, vadPcmData, 0, minOf(readSize, processed.size))
+                            } else {
+                                // 参考缓冲不足时仍正常传输音频（无 AEC 降级）
+                            }
+                        }
+
                         try {
                             onAudioData(vadPcmData)
                         } finally {
@@ -435,6 +451,9 @@ class AudioService {
         audioRecord = null
         // 5. 释放 AudioFX 增强器（AEC+AGC+NS）
         audioEnhancer.release()
+        // 重置软件 NLMS AEC
+        softAec.reset()
+        softAecEnabled = false
 
         // 6. 清理 owner 记录（不再有活跃录音）
         if (recorderOwner != null) {

@@ -560,6 +560,8 @@ class NativeOpusDecoder(
                     val pcmBytes = byteBuffer.array()
 
                     onPcm?.invoke(pcmBytes)
+                    // 同步写入 TTS 参考缓冲（供 SoftAec 回声消除使用）
+                    TtsReferenceBuffer.write(pcmBytes)
 
                     if (audioQueue.remainingCapacity() > 0) {
                         audioQueue.offer(pcmBytes)

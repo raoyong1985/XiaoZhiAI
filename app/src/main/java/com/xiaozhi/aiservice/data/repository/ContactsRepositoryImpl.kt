@@ -64,6 +64,12 @@ class ContactsRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun restoreContactsFromJson(json: String) {
+        context.contactsDataStore.edit { preferences ->
+            preferences[CONTACTS_KEY] = json
+        }
+    }
+
     override suspend fun deleteContact(contactId: String) {
         context.contactsDataStore.edit { preferences ->
             val json = preferences[CONTACTS_KEY] ?: "[]"

@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,6 +110,7 @@ fun ContactsScreen(
 
     val wakeTemplatesMap by viewModel.wakeTemplates.collectAsState()
     val recordingContactId by viewModel.recordingTemplateId.collectAsState()
+    val trainingContactId by viewModel.trainingContactId.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.toastEvent.collect { message ->
@@ -123,6 +125,7 @@ fun ContactsScreen(
             viewModel = viewModel,
             wakeTemplatesMap = wakeTemplatesMap,
             recordingContactId = recordingContactId,
+            trainingContactId = trainingContactId,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -138,6 +141,7 @@ fun ContactsScreen(
             viewModel = viewModel,
             wakeTemplatesMap = wakeTemplatesMap,
             recordingContactId = recordingContactId,
+            trainingContactId = trainingContactId,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -365,6 +369,7 @@ fun AddEditContactDialog(
     viewModel: ContactsViewModel,
     wakeTemplatesMap: Map<String, String>,
     recordingContactId: String?,
+    trainingContactId: String?,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {
@@ -372,6 +377,7 @@ fun AddEditContactDialog(
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
+    var wakeWord by remember { mutableStateOf(contact?.wakeWord ?: "") }
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
@@ -381,10 +387,15 @@ fun AddEditContactDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.surface
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(),
+            shape = AppShapes.dialog,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                // ── Top bar ──
                 TopAppBar(
                     title = {
                         Text(
@@ -392,161 +403,187 @@ fun AddEditContactDialog(
                             style = MaterialTheme.typography.titleLarge
                         )
                     },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭")
-                        }
-                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     )
                 )
 
+                // ── Form content ──
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    Text("基本配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("名称") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("例如：小智一号") }
-                    )
-
-                    Divider()
-
-                    Text("服务器配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    OutlinedTextField(
-                        value = serverUrl,
-                        onValueChange = { serverUrl = it },
-                        label = { Text("WebSocket 服务器") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("wss://api.tenclass.net/xiaozhi/v1/") }
-                    )
-                    OutlinedTextField(
-                        value = otaUrl,
-                        onValueChange = { otaUrl = it },
-                        label = { Text("OTA 注册地址") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("https://api.tenclass.net/xiaozhi/ota/") }
-                    )
-
-                    Divider()
-
-                    Text("语音唤醒", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    val contactId = contact?.id ?: newContactId
-                    val exampleWake = if (name.isNotBlank()) "${name}${name}" else "悠悠悠悠"
-
-                    val hasTemplate = wakeTemplatesMap.containsKey(contactId)
-                    val isRecordingThis = recordingContactId == contactId
-
-                    if (isRecordingThis) {
-                        Row(
+                    // 基本配置
+                    FormSection(title = "基本配置") {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            label = { Text("名称") },
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
+                            singleLine = true,
+                            placeholder = { Text("例如：小智一号") },
+                            shape = AppShapes.menu
+                        )
+                    }
+
+                    // 服务器配置
+                    FormSection(title = "服务器配置") {
+                        OutlinedTextField(
+                            value = serverUrl,
+                            onValueChange = { serverUrl = it },
+                            label = { Text("WebSocket 服务器") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("wss://api.tenclass.net/xiaozhi/v1/") },
+                            shape = AppShapes.menu
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = otaUrl,
+                            onValueChange = { otaUrl = it },
+                            label = { Text("OTA 注册地址") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("https://api.tenclass.net/xiaozhi/ota/") },
+                            shape = AppShapes.menu
+                        )
+                    }
+
+                    // 语音唤醒
+                    FormSection(title = "语音唤醒") {
+                        val contactId = contact?.id ?: newContactId
+                        val effectiveWake = wakeWord.ifBlank { "${name}${name}" }
+
+                        OutlinedTextField(
+                            value = wakeWord,
+                            onValueChange = { wakeWord = it },
+                            label = { Text("唤醒词") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("例如：${name}${name}") },
+                            shape = AppShapes.menu
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val hasTemplate = wakeTemplatesMap.containsKey(contactId)
+                        val isRecordingThis = recordingContactId == contactId
+                        val isTrainingThis = trainingContactId == contactId
+
+                        if (isRecordingThis) {
+                            WakeStatusRow(
+                                icon = {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                },
+                                title = "正在录制唤醒模板",
+                                subtitle = "请说出「${effectiveWake}」",
+                                color = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "正在录制唤醒模板",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    "请说出「${exampleWake}」",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        } else if (isTrainingThis) {
+                            WakeStatusRow(
+                                icon = {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                },
+                                title = "正在自动训练唤醒模板",
+                                subtitle = "合成「${effectiveWake}」音频并提取声纹特征",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (hasTemplate) Icons.Default.CheckCircle else Icons.Default.Mic,
+                                        contentDescription = null,
+                                        tint = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = if (hasTemplate) "本地唤醒模板已录制" else "未录制唤醒模板",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "录制后可在离线时使用本地声纹匹配",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilledTonalButton(
+                                        onClick = { viewModel.recordWakeTemplate(contactId) },
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        shape = AppShapes.menu
+                                    ) {
+                                        Text(
+                                            if (hasTemplate) "重录" else "录制",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                    FilledTonalButton(
+                                        onClick = { viewModel.trainWakeTemplate(contactId, effectiveWake) },
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        shape = AppShapes.menu
+                                    ) {
+                                        Text(
+                                            "自动训练",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (hasTemplate) Icons.Default.CheckCircle else Icons.Default.Mic,
-                                contentDescription = null,
-                                tint = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (hasTemplate) "本地唤醒模板已录制" else "未录制唤醒模板",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "录制后可在离线时使用本地声纹匹配",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            FilledTonalButton(
-                                onClick = { viewModel.recordWakeTemplate(contactId) },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    if (hasTemplate) "重录" else "录制",
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-                            }
+                    }
+
+                    // 设备标识
+                    FormSection(title = "设备标识") {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("版本：${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("设备ID：$generatedDeviceId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("客户端ID：$generatedClientId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
+                    }
 
-                    Divider()
-
-                    Text("设备标识", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Text("版本：${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("设备ID：$generatedDeviceId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("客户端ID：$generatedClientId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-
-                    Spacer(modifier = Modifier.height(80.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
+                // ── Bottom buttons ──
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    tonalElevation = 1.dp
+                    tonalElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surface
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
                             .navigationBarsPadding(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.End
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.height(48.dp).weight(1f)
-                        ) {
-                            Text("取消")
+                        TextButton(onClick = onDismiss) {
+                            Text("取消", style = MaterialTheme.typography.labelLarge)
                         }
-                        Button(
+                        TextButton(
                             onClick = {
-                                if (name.isBlank()) return@Button
+                                if (name.isBlank()) return@TextButton
                                 val newContact = BotContact(
                                     id = newContactId,
                                     name = name.trim(),
@@ -554,18 +591,69 @@ fun AddEditContactDialog(
                                     otaUrl = otaUrl.trim(),
                                     deviceId = generatedDeviceId,
                                     clientId = generatedClientId,
-                                    wakeWord = "${name.trim()}${name.trim()}"
+                                    wakeWord = wakeWord.trim().ifBlank { "${name.trim()}${name.trim()}" }
                                 )
                                 onSave(newContact)
                             },
-                            enabled = name.isNotBlank(),
-                            modifier = Modifier.height(48.dp).weight(1f)
+                            enabled = name.isNotBlank()
                         ) {
-                            Text("保存")
+                            Text("保存", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+// ── 表单分区组件 ──
+
+@Composable
+private fun FormSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        content()
+    }
+}
+
+@Composable
+private fun WakeStatusRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    color: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(AppShapes.menu)
+            .background(color.copy(alpha = 0.08f))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        icon()
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = color
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

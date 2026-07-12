@@ -1,7 +1,9 @@
 package com.xiaozhi.aiservice.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.xiaozhi.aiservice.data.audio.TtsWakeTrainer
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
@@ -10,6 +12,7 @@ import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import com.xiaozhi.aiservice.utils.Logger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,7 +30,8 @@ private const val TAG = "ContactsViewModel"
 @HiltViewModel
 class ContactsViewModel @Inject constructor(
     private val contactsRepository: ContactsRepository,
-    private val messageRepository: MessageRepository
+    private val messageRepository: MessageRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     /** 唤醒模板：contactId → base64 */
@@ -39,6 +43,10 @@ class ContactsViewModel @Inject constructor(
 
     private val _recordingTemplateId = MutableStateFlow<String?>(null)
     val recordingTemplateId: StateFlow<String?> = _recordingTemplateId
+
+    /** 自动训练中的联系人 ID */
+    private val _trainingContactId = MutableStateFlow<String?>(null)
+    val trainingContactId: StateFlow<String?> = _trainingContactId
 
     private val _toastEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val toastEvent: SharedFlow<String> = _toastEvent
@@ -130,6 +138,40 @@ class ContactsViewModel @Inject constructor(
                 _toastEvent.tryEmit("录音失败：${e.message}")
             } finally {
                 _recordingTemplateId.value = null
+            }
+        }
+    }
+
+    /**
+     * TTS 自动训练唤醒词模板。
+     * 使用 Android TextToSpeech 引擎合成唤醒词音频，无需用户录音。
+     */
+    fun trainWakeTemplate(contactId: String, wakeWord: String) {
+        if (_trainingContactId.value != null) return
+        if (wakeWord.isBlank()) {
+            _toastEvent.tryEmit("请先输入唤醒词")
+            return
+        }
+        _trainingContactId.value = contactId
+        viewModelScope.launch {
+            try {
+                Logger.w(TAG, "TTS 自动训练唤醒词: contact=$contactId, word=「$wakeWord」")
+                _toastEvent.tryEmit("正在用 Edge TTS 在线合成唤醒词「$wakeWord」…")
+                val trainer = TtsWakeTrainer()
+                val base64 = trainer.train(wakeWord)
+                if (base64 != null) {
+                    contactsRepository.saveWakeTemplate(contactId, base64)
+                    Logger.i(TAG, "TTS 自动训练模板: 保存成功")
+                    _toastEvent.tryEmit("✅ 唤醒词模板训练完成（TTS 自动合成）")
+                } else {
+                    Logger.w(TAG, "TTS 自动训练模板: 合成失败")
+                    _toastEvent.tryEmit("Edge TTS 合成失败，请检查网络连接后重试")
+                }
+            } catch (e: Exception) {
+                Logger.e(TAG, "TTS 自动训练异常: ${e.message}")
+                _toastEvent.tryEmit("训练失败：${e.message}")
+            } finally {
+                _trainingContactId.value = null
             }
         }
     }

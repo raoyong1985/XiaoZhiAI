@@ -221,14 +221,24 @@ fun GroupChatListScreen(
         AlertDialog(
             onDismissRequest = { editingGroup = null },
             shape = AppShapes.dialog,
-            title = { Text("编辑群聊名称") },
+            title = {
+                Text(
+                    "编辑群聊名称",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
             text = {
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
                     label = { Text("群聊名称") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    )
                 )
             },
             confirmButton = {
@@ -242,10 +252,21 @@ fun GroupChatListScreen(
                         }
                     },
                     enabled = newName.isNotBlank()
-                ) { Text("保存") }
+                ) {
+                    Text(
+                        "保存",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             },
             dismissButton = {
-                TextButton(onClick = { editingGroup = null }) { Text("取消") }
+                TextButton(onClick = { editingGroup = null }) {
+                    Text(
+                        "取消",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         )
     }

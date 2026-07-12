@@ -46,6 +46,9 @@ interface GroupChatRepository {
     /** 清空指定群聊的所有消息记录 */
     suspend fun clearGroupMessages(groupId: String)
 
+    /** 从 JSON 恢复全部群聊 */
+    suspend fun restoreGroupsFromJson(json: String)
+
     // ── 消息管理 ──
 
     /**

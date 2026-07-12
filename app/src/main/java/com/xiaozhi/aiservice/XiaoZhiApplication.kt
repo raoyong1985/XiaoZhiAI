@@ -2,6 +2,8 @@ package com.xiaozhi.aiservice
 
 import android.app.Application
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import com.xiaozhi.aiservice.data.audio.NativeOpusDecoder
 import com.xiaozhi.aiservice.data.remote.ConnectivityReceiver
 import com.xiaozhi.aiservice.data.remote.LocalCommandRouter
@@ -26,9 +28,12 @@ class XiaoZhiApplication : Application() {
         LocalCommandRouter.init(this, mcpToolRegistry)
         GlobalServices.xiaozhiBackend = entryPoint.xiaozhiBackend()
         entryPoint.audioService().init(this)
-        WebViewSpeaker.init(this)
         startForegroundService()
-        ConnectivityReceiver.register(this)
+        // 非关键初始化延迟到主线程队列尾部，减少冷启动时间
+        Handler(Looper.getMainLooper()).post {
+            WebViewSpeaker.init(this)
+            ConnectivityReceiver.register(this)
+        }
     }
 
     private fun startForegroundService() {

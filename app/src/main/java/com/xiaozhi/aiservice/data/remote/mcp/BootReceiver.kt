@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.data.remote.mcp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.xiaozhi.aiservice.data.remote.XiaoZhiForegroundService
 import com.xiaozhi.aiservice.utils.Logger
 
@@ -26,13 +27,26 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
         Logger.i("BootReceiver", "恢复闹钟和提醒: action=$action")
-        // 重启时拉起前台 Service
+        // ⚠️ Android 12+ 限制后台启动前台服务。
+        // BOOT_COMPLETED / MY_PACKAGE_REPLACED 属于后台广播，
+        // 直接 startForegroundService 会抛 ForegroundServiceStartNotAllowedException。
+        // 兜底：延迟 2s+try-catch 以防竞态。
         try {
             val fgsIntent = Intent(context, XiaoZhiForegroundService::class.java)
-            context.startForegroundService(fgsIntent)
-            Logger.i("BootReceiver", "已拉起前台保活 Service")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val handler = android.os.Handler(context.mainLooper)
+                handler.postDelayed({
+                    try {
+                        context.startForegroundService(fgsIntent)
+                    } catch (e2: Exception) {
+                        Logger.e("BootReceiver", "延迟启动前台 Service 仍失败: ${e2.message}")
+                    }
+                }, 2000L)
+            } else {
+                context.startForegroundService(fgsIntent)
+            }
         } catch (e: Exception) {
-            Logger.e("BootReceiver", "拉起前台 Service 失败: ${e.message}")
+            Logger.e("BootReceiver", "启动前台 Service 失败: ${e.message}")
         }
         try {
             AlarmPersistence.restoreAll(context)

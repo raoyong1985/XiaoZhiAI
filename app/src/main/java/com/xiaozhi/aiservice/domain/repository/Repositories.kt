@@ -94,6 +94,9 @@ interface ContactsRepository {
     suspend fun saveContact(contact: BotContact)
     suspend fun deleteContact(contactId: String)
 
+    /** 从 JSON 恢复全部联系人 */
+    suspend fun restoreContactsFromJson(json: String)
+
     /** 获取所有联系人唤醒模板：contactId → base64 编码的 40维 MFCC 平均特征 */
     fun getWakeTemplates(): Flow<Map<String, String>>
 
