@@ -24,3 +24,4 @@ Thumbs.db
 *.keystore
 keystore.properties
 __pycache__/
+.omo

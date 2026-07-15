@@ -189,7 +189,7 @@ fun ChatMessageItem(
                 }
             )
             if (onDelete != null) {
-                Divider()
+                HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text("删除", color = MaterialTheme.colorScheme.error) },
                     onClick = {

@@ -175,8 +175,13 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             audioManager.setStreamVolume(android.media.AudioManager.STREAM_RING, maxVol, 0)
 
             // 震动
-            @Suppress("DEPRECATION")
-            val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            val vibrator = if (Build.VERSION.SDK_INT >= 33) {
+                val vm = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
             if (vibrator != null) {
                 if (Build.VERSION.SDK_INT >= 26) {
                     vibrator.vibrate(

@@ -72,7 +72,8 @@ fun ContactsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
                 Icon(Icons.Default.Add, contentDescription = "添加联系人")
             }
@@ -107,9 +108,8 @@ fun ContactsScreen(
             }
         }
     }
-
-    val wakeTemplatesMap by viewModel.wakeTemplates.collectAsState()
     val trainingContactId by viewModel.trainingContactId.collectAsState()
+    val trainingStatusMap by viewModel.trainingStatus.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.toastEvent.collect { message ->
@@ -122,8 +122,8 @@ fun ContactsScreen(
         AddEditContactDialog(
             contact = null,
             viewModel = viewModel,
-            wakeTemplatesMap = wakeTemplatesMap,
             trainingContactId = trainingContactId,
+            trainingStatusMap = trainingStatusMap,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -137,8 +137,8 @@ fun ContactsScreen(
         AddEditContactDialog(
             contact = contact,
             viewModel = viewModel,
-            wakeTemplatesMap = wakeTemplatesMap,
             trainingContactId = trainingContactId,
+            trainingStatusMap = trainingStatusMap,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -352,7 +352,7 @@ private fun ContactItem(
             containerColor = MaterialTheme.colorScheme.surface
         )
     )
-    Divider(
+    HorizontalDivider(
         modifier = Modifier.padding(start = 72.dp),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
         thickness = 0.5.dp
@@ -364,26 +364,27 @@ private fun ContactItem(
 fun AddEditContactDialog(
     contact: BotContact?,
     viewModel: ContactsViewModel,
-    wakeTemplatesMap: Map<String, String>,
     trainingContactId: String?,
+    trainingStatusMap: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {
     val isEditing = contact != null
+    val contactId = contact?.id ?: java.util.UUID.randomUUID().toString()
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
     var wakeWord by remember { mutableStateOf(contact?.wakeWord ?: "") }
-    // 新建联系人时，唤醒词自动跟随名称（名称输入后自动填充）
-    if (!isEditing && contact == null && wakeWord.isEmpty()) {
-        val wakeDefault = "$name $name"
-        LaunchedEffect(name) {
-            if (name.isNotBlank()) wakeWord = wakeDefault
+    val wakeWordAutoFilled = remember { mutableStateOf(false) }
+    LaunchedEffect(name) {
+        if (!wakeWordAutoFilled.value && wakeWord.isEmpty() && name.isNotBlank()) {
+            wakeWord = "$name $name"
+            wakeWordAutoFilled.value = true
         }
     }
-    val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
+    val trainingStatus = trainingStatusMap[contactId] ?: ""
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
-    val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
+    val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(contactId)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -458,7 +459,6 @@ fun AddEditContactDialog(
 
                     // 语音唤醒
                     FormSection(title = "语音唤醒") {
-                        val contactId = contact?.id ?: newContactId
                         val effectiveWake = wakeWord.ifBlank { "${name} ${name}" }
 
                         OutlinedTextField(
@@ -499,6 +499,18 @@ fun AddEditContactDialog(
                                 )
                             }
                         }
+
+                        // 训练状态文本（显示在弹窗内，不依赖 Toast/Snackbar）
+                        if (trainingStatus.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = trainingStatus,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (trainingStatus.startsWith("✅")) MaterialTheme.colorScheme.primary
+                                       else if (trainingStatus.startsWith("❌")) MaterialTheme.colorScheme.error
+                                       else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     // 设备标识
@@ -533,7 +545,7 @@ fun AddEditContactDialog(
                             onClick = {
                                 if (name.isBlank()) return@TextButton
                                 val newContact = BotContact(
-                                    id = newContactId,
+                                    id = contactId,
                                     name = name.trim(),
                                     serverUrl = serverUrl.trim(),
                                     otaUrl = otaUrl.trim(),
@@ -623,7 +635,7 @@ fun SectionHeader(title: String) {
 
 @Composable
 fun MenuDivider() {
-    Divider(
+    HorizontalDivider(
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
         color = MaterialTheme.colorScheme.outlineVariant,
     )

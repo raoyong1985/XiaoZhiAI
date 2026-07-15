@@ -308,15 +308,15 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // 不在这初始化解码器，等 hello 收到后再初始化
                     Logger.i(TAG, "已连接，等待服务器hello...")
 
-                    // 连接建立后，在 IDLE 状态启动唤醒词检测
-                    // 延迟启动避免与初始化流程竞争
-                    scheduleWakeWordStartup(3000)
+                    // 连接建立后立即启动唤醒词检测（ESP32 在 hello 后立刻开始 WakeNet）
+                    // 延迟 1s 避免与初始化流程竞争
+                    scheduleWakeWordStartup(1000)
                 } else if (state is BotConnectionState.Disconnected ||
                            state is BotConnectionState.Error) {
                     playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
                     // 断开后延迟再启动唤醒，让残留 TTS 播完
-                    scheduleWakeWordStartup(3000)
+                    scheduleWakeWordStartup(1000)
                 }
             }
         }
@@ -485,48 +485,62 @@ class ConnectionRepositoryImpl @Inject constructor(
      * 检测到连续语音后自动过渡到编码发送。
      */
     override fun startWakeWordMode(): Boolean {
-        if (_aiState.value != AiState.IDLE) return false
+        // 允许在 IDLE 或 LISTENING 状态下启动唤醒
+        // LISTENING = 服务器通知客户端正在倾听（此时可切入唤醒模式）
+        if (_aiState.value == AiState.SPEAKING || _aiState.value == AiState.PROCESSING) {
+            Logger.w(TAG, "唤醒模式启动被拦截：AI 正忙 (state=${_aiState.value})")
+            return false
+        }
 
         // TTS 刚结束冷却期（3秒），防止残余回声被捕获触发假唤醒
         if (System.currentTimeMillis() - lastSpeakingEndMs < WAKE_COOLDOWN_MS) {
-            Logger.i(TAG, "唤醒模式延迟启动：TTS 刚结束（冷却中），跳过")
+            Logger.w(TAG, "唤醒模式延迟启动：TTS 刚结束（冷却中），跳过")
             return false
         }
 
         synchronized(recordingLock) {
-            // 二次检查：可能在获取锁期间录音已被对话启动
-            if (audioRecorder.isRecording) return false
+            // 如果正在录音（对话模式），先停止再启动唤醒模式
+            if (audioRecorder.isRecording) {
+                Logger.w(TAG, "唤醒模式启动：停止当前录音，切入唤醒检测模式")
+                audioRecorder.stop("main")
+                weStartedRecording = false
+            }
+
+            // 从持久化存储加载 DSCNN 唤醒模板到 AudioRecorder 的 KWS 引擎
+            if (!audioRecorder.kwsEngine.hasTemplates()) {
+                kotlinx.coroutines.runBlocking {
+                    val templates = contactsRepository.getWakeTemplates().first()
+                    for ((cid, b64) in templates) {
+                        if (b64.length < 10) continue
+                        try {
+                            val bytes = java.util.Base64.getDecoder().decode(b64)
+                            // MFCC 矩阵 = 2520 floats × 4 bytes = 10080 bytes
+                            if (bytes.size == 10080) {
+                                audioRecorder.kwsEngine.restoreTemplate(cid, "", bytes)
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                val n = audioRecorder.kwsEngine.templateCount()
+                if (n > 0) Logger.i(TAG, "已加载 $n 个唤醒模板到 AudioRecorder")
+            }
+
             // ESP32 方案：VAD 触发后直接通知服务器，不再设置本地模板匹配器
             val ok = audioRecorder.startWake(
                 owner = "main",
                 scope = scope,
                 onWakeDetected = { contactId ->
-                    Logger.i(TAG, "🎤 唤醒触发: contactId=$contactId")
-                    // 如果有匹配的联系人ID，切到对应智能体
-                    if (contactId.isNotBlank() && contactId != _currentContactId) {
-                        val config = lastConnectionConfig
-                        if (config != null) {
-                            _currentContactId = contactId
-                            Logger.i(TAG, "🔄 唤醒切换到联系人: $contactId")
-                            scope.launch {
-                                backendService.disconnect()
-                                delay(200)
-                                backendService.connect(
-                                    config.serverUrl, config.otaUrl,
-                                    config.deviceId, config.clientId, config.accessToken
-                                )
-                            }
-                        } else {
-                            Logger.w(TAG, "唤醒切换失败: 无连接配置")
-                        }
+                    Logger.w(TAG, "🎤 唤醒触发: contactId=$contactId")
+                    // 切到实时对话模式：停唤醒录音 → 启动编码录音 → 发 detect
+                    // startListening 内部会调用 audioRecorder.stop + startLive + sendListenStart
+                    scope.launch {
+                        audioService.fsmnVad.reset()
+                        // 传联系人名字作为 detect 文本（ESP32 方案：服务器用 text 验证唤醒词）
+                        val contacts = contactsRepository.getContacts().first()
+                        val contactName = contacts.find { it.id == contactId }?.name ?: contactId
+                        backendService.sendListenDetect(contactName)
+                        startListening("realtime")
                     }
-                    // 发送 detect 消息
-                    audioService.fsmnVad.reset()
-                    backendService.sendListenDetect(contactId)
-                    backendService.sendListenStart("realtime")
-                    _aiState.value = AiState.LISTENING
-                    weStartedRecording = true
-                    _deviceState.value = DeviceState.LISTENING
                 },
                 onOpusPacket = { packet -> audioSendChannel.trySend(packet) }
             )

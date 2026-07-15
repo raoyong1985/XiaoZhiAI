@@ -44,6 +44,15 @@ class ContactsViewModel @Inject constructor(
     private val _trainingContactId = MutableStateFlow<String?>(null)
     val trainingContactId: StateFlow<String?> = _trainingContactId
 
+    /** 训练状态文本（contactId → 状态），各联系人独立显示 */
+    private val _trainingStatus = MutableStateFlow<Map<String, String>>(emptyMap())
+    val trainingStatus: StateFlow<Map<String, String>> = _trainingStatus
+
+    /**
+     * 获取指定联系人的训练状态
+     */
+    fun getTrainingStatus(contactId: String): String = _trainingStatus.value[contactId] ?: ""
+
     private val _toastEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val toastEvent: SharedFlow<String> = _toastEvent
 
@@ -85,21 +94,28 @@ class ContactsViewModel @Inject constructor(
     fun trainWakeTemplate(contactId: String, wakeWord: String) {
         if (_trainingContactId.value != null) return
         if (wakeWord.isBlank()) {
-            _toastEvent.tryEmit("请先输入唤醒词")
+            _trainingStatus.value = _trainingStatus.value + (contactId to "请先输入唤醒词")
             return
         }
         _trainingContactId.value = contactId
+        _trainingStatus.value = _trainingStatus.value + (contactId to "正在用 Edge TTS 合成「$wakeWord」…")
         viewModelScope.launch {
             try {
                 Logger.w(TAG, "KWS 自动训练: contact=$contactId, word=「$wakeWord」")
-                _toastEvent.tryEmit("正在用 Edge TTS 合成唤醒词「$wakeWord」…")
 
                 // 初始化 KWS 引擎
-                if (kwsEngine == null) {
+                if (kwsEngine == null || !kwsEngine!!.initialized) {
+                    _trainingStatus.value = _trainingStatus.value + (contactId to "正在加载唤醒词引擎…")
                     kwsEngine = com.xiaozhi.aiservice.data.audio.KwsEngine()
                     kwsEngine!!.init(context)
                 }
+                if (!kwsEngine!!.initialized) {
+                    Logger.e(TAG, "KWS 引擎初始化失败")
+                    _trainingStatus.value = _trainingStatus.value + (contactId to "❌ KWS 引擎初始化失败（ONNX 模型加载异常）")
+                    return@launch
+                }
 
+                _trainingStatus.value = _trainingStatus.value + (contactId to "正在合成唤醒词音频…")
                 val edgeTts = com.xiaozhi.aiservice.data.audio.EdgeTtsSynthesizer()
 
                 // 用 Edge TTS 合成多种语速变体
@@ -115,35 +131,41 @@ class ContactsViewModel @Inject constructor(
                 val normal = edgeTts.synthesize(wakeWord, splitAfter)
                 if (normal != null) pcmSamples.add(normal)
 
-                // 慢速语速（修改 SSML prosody）
+                // 慢速语速
+                _trainingStatus.value = _trainingStatus.value + (contactId to "正在合成多样化本…")
                 val slow = edgeTts.synthesize(wakeWord)
                 if (slow != null) pcmSamples.add(slow)
 
-                // 再合成一次，增加样本量（Edge TTS 每次合成略有差异）
                 val extra = edgeTts.synthesize(wakeWord)
                 if (extra != null) pcmSamples.add(extra)
 
                 if (pcmSamples.size < 2) {
                     Logger.w(TAG, "KWS 训练失败: Edge TTS 合成次数不足")
-                    _toastEvent.tryEmit("Edge TTS 合成失败，请检查网络连接后重试")
+                    _trainingStatus.value = _trainingStatus.value + (contactId to "❌ Edge TTS 合成失败，请检查网络连接后重试")
                     return@launch
                 }
 
-                // 提取 embedding 并平均后添加模板
+                _trainingStatus.value = _trainingStatus.value + (contactId to "正在提取声纹特征…")
                 val success = kwsEngine!!.addTemplateFromMultiplePcm(contactId, wakeWord, pcmSamples)
                 if (success) {
                     Logger.i(TAG, "✅ KWS 模板训练成功: $contactId 「$wakeWord」")
-                    _toastEvent.tryEmit("✅ 唤醒词「$wakeWord」训练完成（DSCNN embedding）")
-                    // 同步存到持久化存储
-                    contactsRepository.saveWakeTemplate(contactId, wakeWord)
+                    _trainingStatus.value = _trainingStatus.value + (contactId to "✅ 唤醒词「$wakeWord」训练完成")
+                    // 保存 embedding 到持久化存储
+                    val td = kwsEngine!!.getTemplateData(contactId)
+                    if (td != null) {
+                        val buf = java.nio.ByteBuffer.allocate(2520 * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        buf.asFloatBuffer().put(td.embedding)
+                        val b64 = java.util.Base64.getEncoder().encodeToString(buf.array())
+                        contactsRepository.saveWakeTemplate(contactId, b64)
+                    }
                 } else {
                     Logger.w(TAG, "KWS 模板训练: 合成音频太短")
-                    _toastEvent.tryEmit("合成音频太短，请重试")
+                    _trainingStatus.value = _trainingStatus.value + (contactId to "❌ 合成音频太短，请重试")
                 }
 
             } catch (e: Exception) {
                 Logger.e(TAG, "KWS 训练异常: ${e.message}")
-                _toastEvent.tryEmit("训练失败：${e.message}")
+                _trainingStatus.value = _trainingStatus.value + (contactId to "❌ 训练失败：${e.message}")
             } finally {
                 _trainingContactId.value = null
             }

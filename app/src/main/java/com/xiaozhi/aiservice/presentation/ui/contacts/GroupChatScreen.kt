@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.content.ClipData
@@ -58,10 +59,10 @@ fun GroupChatScreen(
 
     val connectionColor by animateColorAsState(
         targetValue = when (connectionState) {
-            is BotConnectionState.Connected -> MaterialTheme.colorScheme.primary
-            is BotConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
-            is BotConnectionState.Error -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.outline
+            is BotConnectionState.Connected -> Color(0xFF4CAF50)  // 绿色
+            is BotConnectionState.Connecting -> Color(0xFFFFC107)  // 黄色
+            is BotConnectionState.Error -> Color(0xFF9E9E9E)  // 灰色
+            else -> Color(0xFF9E9E9E)  // 灰色（离线）
         },
         label = "connection_color"
     )
