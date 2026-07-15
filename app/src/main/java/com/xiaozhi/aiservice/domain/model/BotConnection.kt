@@ -18,6 +18,7 @@ interface BotConnection {
     fun disconnect()
     fun destroy()
     fun sendListenStart(mode: String)
+    fun sendListenDetect(text: String = "")
     fun sendListenStop()
     fun sendListenStopOnly()
     fun sendAbort(reason: String = "")

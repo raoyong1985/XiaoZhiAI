@@ -80,6 +80,8 @@ interface ConnectionRepository {
     // 唤醒词设置
     fun setWakeWord(wakeWord: String)
     fun startWakeWordMode(): Boolean
+    /** 发送唤醒检测通知到服务器（ESP32 协议 detect），服务端通过 ASR 匹配 wakeup_words */
+    fun sendListenDetect(text: String = "")
     /** 重新从持久化存储加载唤醒模板到内存匹配器 */
     fun reloadWakeTemplates()
     /** 检查当前是否有任何录音运行（唤醒模式或实时模式） */

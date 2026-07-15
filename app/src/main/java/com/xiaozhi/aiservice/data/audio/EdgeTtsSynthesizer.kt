@@ -52,10 +52,21 @@ class EdgeTtsSynthesizer {
      * 合成语音并返回 16kHz 16-bit PCM 数据。
      */
     suspend fun synthesize(text: String, voice: String = "zh-CN-XiaoxiaoNeural"): ByteArray? =
+        synthesize(text, -1, voice)
+
+    /**
+     * 合成语音并返回 16kHz 16-bit PCM 数据。
+     * 支持在指定字符位置后插入停顿（用于重复唤醒词如"悠悠|悠悠"）。
+
+     * @param text 合成文本
+     * @param splitAfter 在此字符索引后插入停顿（-1 = 不停顿）
+     * @param voice TTS 语音
+     */
+    suspend fun synthesize(text: String, splitAfter: Int, voice: String = "zh-CN-XiaoxiaoNeural"): ByteArray? =
         withContext(Dispatchers.IO) {
             try {
-                Logger.w(TAG, "开始 Edge TTS 合成: 「$text」voice=$voice")
-                val mp3Bytes = doWsSynthesize(text, voice) ?: return@withContext null
+                Logger.w(TAG, "开始 Edge TTS 合成: 「$text」voice=$voice splitAfter=$splitAfter")
+                val mp3Bytes = doWsSynthesize(text, voice, splitAfter) ?: return@withContext null
                 Logger.w(TAG, "Edge TTS MP3 下载完成: ${mp3Bytes.size} bytes")
                 val pcmBytes = decodeMp3ToPcm(mp3Bytes) ?: return@withContext null
                 Logger.w(TAG, "Edge TTS PCM 解码完成: ${pcmBytes.size} bytes @16kHz")
@@ -69,7 +80,7 @@ class EdgeTtsSynthesizer {
     /**
      * WebSocket 协议实现：连接 → 发配置 → 发SSML → 收音频
      */
-    private suspend fun doWsSynthesize(text: String, voice: String): ByteArray? =
+    private suspend fun doWsSynthesize(text: String, voice: String, splitAfter: Int = -1): ByteArray? =
         suspendCancellableCoroutine { cont ->
             try {
                 val connId = UUID.randomUUID().toString().replace("-", "")
@@ -103,7 +114,7 @@ class EdgeTtsSynthesizer {
                         Logger.w(TAG, "WebSocket 已连接")
                         // 连续发送 config + SSML，不等待服务器响应（edge-tts 协议要求）
                         ws.send(buildConfigMessage())
-                        val ssml = buildSsmlMessage(text, voice)
+                        val ssml = buildSsmlMessage(text, voice, splitAfter)
                         ws.send(ssml)
                         Logger.w(TAG, "Config + SSML 已连续发送")
                     }
@@ -360,7 +371,7 @@ class EdgeTtsSynthesizer {
     /**
      * 构建 SSML 请求消息
      */
-    private fun buildSsmlMessage(text: String, voice: String): String {
+    private fun buildSsmlMessage(text: String, voice: String, splitAfter: Int = -1): String {
         val requestId = UUID.randomUUID().toString().replace("-", "")
         val timestamp = java.text.SimpleDateFormat(
             "EEE MMM dd yyyy HH:mm:ss 'GMT+0000 (Coordinated Universal Time)Z'",
@@ -369,10 +380,21 @@ class EdgeTtsSynthesizer {
         // 转换为 Edge TTS 全称格式：zh-CN-XiaoxiaoNeural → Microsoft Server Speech Text to Speech Voice (zh-CN, XiaoxiaoNeural)
         val fullVoiceName = expandVoiceName(voice)
         val lang = if (voice.startsWith("zh-")) "zh-CN" else "en-US"
-        val ssml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$lang'>" +
-                "<voice name='$fullVoiceName'>" +
-                "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>${escapeXml(text)}</prosody>" +
-                "</voice></speak>"
+        val ssml = if (splitAfter >= 0 && splitAfter < text.length - 1) {
+            val part1 = escapeXml(text.substring(0, splitAfter + 1))
+            val part2 = escapeXml(text.substring(splitAfter + 1))
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$lang'>" +
+                    "<voice name='$fullVoiceName'>" +
+                    "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>$part1</prosody>" +
+                    "<break time='300ms'/>" +
+                    "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>$part2</prosody>" +
+                    "</voice></speak>"
+        } else {
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$lang'>" +
+                    "<voice name='$fullVoiceName'>" +
+                    "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>${escapeXml(text)}</prosody>" +
+                    "</voice></speak>"
+        }
         return "X-RequestId:$requestId\r\n" +
                 "Content-Type:application/ssml+xml\r\n" +
                 "X-Timestamp:$timestamp\r\n" +

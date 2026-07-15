@@ -417,6 +417,20 @@ class XiaoZhiBackendService(
     }
 
     /**
+     * 发送 detect 消息（ESP32 协议风格的唤醒检测通知）
+     * 服务端收到后通过 ASR 结果匹配 wakeup_words 决定动作（欢迎语/LLM/静默）
+     */
+    override fun sendListenDetect(text: String) {
+        val message = JsonObject().apply {
+            addProperty("session_id", sessionId)
+            addProperty("type", "listen")
+            addProperty("state", "detect")
+            addProperty("text", text)
+        }
+        sendTextMessage(message.toString())
+    }
+
+    /**
      * 开始监听
      * @param mode "auto", "manual", 或 "realtime"
      */

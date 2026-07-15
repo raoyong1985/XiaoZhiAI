@@ -113,12 +113,10 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 重新加载唤醒模板并启动唤醒检测 */
+    /** ESP32 方案：启动唤醒检测（VAD -> detect -> 服务端 ASR 验证唤醒词）*/
     fun setCurrentWakeWord(contactName: String) {
-        Logger.i(TAG, "设置唤醒: «${contactName}»")
-        // 重新加载唤醒模板确保内存匹配器与持久化一致
-        connectionRepository.reloadWakeTemplates()
-        // 启动唤醒检测（单 AudioRecord，自动过渡）
+        Logger.i(TAG, "设置唤醒: <<${contactName}>>（ESP32 方案：服务端 ASR）")
+        // ESP32 方案：移除本地模板加载，唤醒词验证由服务端 ASR + wakeup_words 完成
         val started = connectionRepository.startWakeWordMode()
         Logger.i(TAG, "唤醒模式启动${if (started) "成功" else "失败"}，录音中=${connectionRepository.isRecording()}")
     }

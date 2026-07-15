@@ -8,7 +8,6 @@ import com.xiaozhi.aiservice.data.settings.AudioSettings
 import com.xiaozhi.aiservice.data.audio.AudioService
 import com.xiaozhi.aiservice.data.audio.AudioRecorder
 import com.xiaozhi.aiservice.data.audio.OpusEncoder
-import com.xiaozhi.aiservice.data.audio.WakeTemplateMatcher
 import com.xiaozhi.aiservice.data.logging.AndroidLogger
 import com.xiaozhi.aiservice.data.remote.XiaoZhiBackendService
 import com.xiaozhi.aiservice.domain.audio.AudioPlaybackManager
@@ -131,8 +130,8 @@ class ConnectionRepositoryImpl @Inject constructor(
     private var _currentContactId: String = ""
     override val currentContactId: String get() = _currentContactId
 
-    // 本地唤醒模板匹配器
-    val wakeTemplateMatcher = WakeTemplateMatcher()
+    // 最近一次连接配置（唤醒切换联系人时复用）
+    private var lastConnectionConfig: ConnectionConfig? = null
 
     // 跟踪我们自己启动的录音（用于 AI 说话时自动停止，避免回声）
     private var weStartedRecording = false
@@ -167,7 +166,7 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     init {
         observeBackendService()
-        loadWakeTemplatesFromStore()
+        // ESP32 方案：唤醒词验证由服务端 ASR + wakeup_words 完成，移除本地模板加载
         // 单消费者协程：串行发送音频包，避免每包一个 scope.launch 的调度开销
         scope.launch {
             for (packet in audioSendChannel) {
@@ -177,19 +176,11 @@ class ConnectionRepositoryImpl @Inject constructor(
     }
 
     private fun loadWakeTemplatesFromStore() {
-        scope.launch {
-            contactsRepository.getWakeTemplates().collect { templates ->
-                wakeTemplateMatcher.clear()
-                templates.forEach { (contactId, base64) ->
-                    wakeTemplateMatcher.addTemplate(contactId, base64, contactId)
-                }
-                Logger.i(TAG, "已加载 ${wakeTemplateMatcher.templateCount()} 个唤醒模板到本地匹配器")
-            }
-        }
+        // ESP32 方案：移除本地模板加载，唤醒词验证由服务端 ASR + wakeup_words 完成
     }
 
     override fun reloadWakeTemplates() {
-        // collect 会自动同步 DataStore 变更，无需手动加载
+        // ESP32 方案：无操作，唤醒词验证由服务端 ASR + wakeup_words 完成
     }
 
     private fun observeBackendService() {
@@ -383,6 +374,8 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     override suspend fun connect(config: ConnectionConfig, contactId: String): Result<Unit> {
         Logger.i(TAG, "ConnectionRepositoryImpl.connect() called: serverUrl=${config.serverUrl}, contactId=$contactId, deviceId=${config.deviceId}")
+        // 保存配置，供唤醒切换联系人时复用
+        lastConnectionConfig = config
 
         // 互斥：连接新联系人前先断开旧连接
         if (_connectionState.value is BotConnectionState.Connected ||
@@ -503,16 +496,34 @@ class ConnectionRepositoryImpl @Inject constructor(
         synchronized(recordingLock) {
             // 二次检查：可能在获取锁期间录音已被对话启动
             if (audioRecorder.isRecording) return false
-            // 设置唤醒模板匹配器
-            audioRecorder.wakeTemplateMatcher = wakeTemplateMatcher
+            // ESP32 方案：VAD 触发后直接通知服务器，不再设置本地模板匹配器
             val ok = audioRecorder.startWake(
                 owner = "main",
                 scope = scope,
-                onWakeDetected = { _ ->
-                    Logger.i(TAG, "🎤 唤醒触发，发送 listen_start")
-                    // 发送唤醒事件到服务器（ESP32 协议风格）
+                onWakeDetected = { contactId ->
+                    Logger.i(TAG, "🎤 唤醒触发: contactId=$contactId")
+                    // 如果有匹配的联系人ID，切到对应智能体
+                    if (contactId.isNotBlank() && contactId != _currentContactId) {
+                        val config = lastConnectionConfig
+                        if (config != null) {
+                            _currentContactId = contactId
+                            Logger.i(TAG, "🔄 唤醒切换到联系人: $contactId")
+                            scope.launch {
+                                backendService.disconnect()
+                                delay(200)
+                                backendService.connect(
+                                    config.serverUrl, config.otaUrl,
+                                    config.deviceId, config.clientId, config.accessToken
+                                )
+                            }
+                        } else {
+                            Logger.w(TAG, "唤醒切换失败: 无连接配置")
+                        }
+                    }
+                    // 发送 detect 消息
+                    audioService.fsmnVad.reset()
+                    backendService.sendListenDetect(contactId)
                     backendService.sendListenStart("realtime")
-                    // StateFlow + @Volatile 无需 launch 包装，PCM 回调在后台线程
                     _aiState.value = AiState.LISTENING
                     weStartedRecording = true
                     _deviceState.value = DeviceState.LISTENING
@@ -535,8 +546,12 @@ class ConnectionRepositoryImpl @Inject constructor(
     }
 
     override fun setWakeWord(wakeWord: String) {
-        // 云端文本匹配已移除，唤醒词验证完全由本地模板匹配器完成
-        Logger.d(TAG, "setWakeWord 已弃用 (云端文本匹配已移除)")
+        // 云端文本匹配已移除，唤醒词验证完全由服务端 ASR + wakeup_words 配置完成
+        Logger.d(TAG, "setWakeWord 已弃用（ESP32 方案：服务端 ASR + wakeup_words）")
+    }
+
+    override fun sendListenDetect(text: String) {
+        backendService.sendListenDetect(text)
     }
 
     override fun isRecording(): Boolean = audioRecorder.isRecording

@@ -3,7 +3,6 @@ package com.xiaozhi.aiservice.presentation.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.xiaozhi.aiservice.data.audio.TtsWakeTrainer
 import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.ChatMessage
 import com.xiaozhi.aiservice.domain.model.InputMode
@@ -40,9 +39,6 @@ class ContactsViewModel @Inject constructor(
 
     val contacts: StateFlow<List<BotContact>> = contactsRepository.getContacts()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-
-    private val _recordingTemplateId = MutableStateFlow<String?>(null)
-    val recordingTemplateId: StateFlow<String?> = _recordingTemplateId
 
     /** 自动训练中的联系人 ID */
     private val _trainingContactId = MutableStateFlow<String?>(null)
@@ -84,68 +80,8 @@ class ContactsViewModel @Inject constructor(
         }
     }
 
-    fun recordWakeTemplate(contactId: String) {
-        if (_recordingTemplateId.value != null) return
-        _recordingTemplateId.value = contactId
-        viewModelScope.launch {
-            try {
-                Logger.i(TAG, "录制唤醒模板: contact=$contactId")
-                val result = withContext(Dispatchers.IO) {
-                    val sampleRate = 16000
-                    val durationSec = 3
-                    val bufferSize = sampleRate * durationSec * 2
-                    val minBuffer = android.media.AudioRecord.getMinBufferSize(
-                        sampleRate,
-                        android.media.AudioFormat.CHANNEL_IN_MONO,
-                        android.media.AudioFormat.ENCODING_PCM_16BIT
-                    )
-                    val bufSize = maxOf(bufferSize, minBuffer * 2)
-                    val audioRecord = android.media.AudioRecord(
-                        android.media.MediaRecorder.AudioSource.MIC,
-                        sampleRate,
-                        android.media.AudioFormat.CHANNEL_IN_MONO,
-                        android.media.AudioFormat.ENCODING_PCM_16BIT,
-                        bufSize
-                    )
-                    if (audioRecord.state != android.media.AudioRecord.STATE_INITIALIZED) {
-                        return@withContext null
-                    }
-                    audioRecord.startRecording()
-                    val pcmBuffer = ByteArray(bufferSize)
-                    var totalRead = 0
-                    while (totalRead < bufferSize) {
-                        val read = audioRecord.read(pcmBuffer, totalRead, bufferSize - totalRead)
-                        if (read > 0) totalRead += read
-                        if (read < 0) break
-                    }
-                    audioRecord.stop()
-                    audioRecord.release()
-                    if (totalRead < 1600) return@withContext null
-                    val speechSegment = extractSpeechSegment(pcmBuffer, totalRead)
-                    if (speechSegment.size < 1600) return@withContext null
-                    Logger.i(TAG, "录制唤醒模板: ${totalRead} → ${speechSegment.size} bytes")
-                    speechSegment
-                }
-                if (result != null) {
-                    contactsRepository.saveWakeTemplateFromPcm(contactId, result)
-                    Logger.i(TAG, "录制唤醒模板: 保存成功")
-                } else {
-                    Logger.w(TAG, "录制唤醒模板: 录音太短或未检测到有效语音")
-                    _toastEvent.tryEmit("未检测到有效语音，请对着麦克风说出唤醒词")
-                }
-            } catch (e: Exception) {
-                Logger.e(TAG, "录制唤醒模板失败: ${e.message}")
-                _toastEvent.tryEmit("录音失败：${e.message}")
-            } finally {
-                _recordingTemplateId.value = null
-            }
-        }
-    }
+    private var kwsEngine: com.xiaozhi.aiservice.data.audio.KwsEngine? = null
 
-    /**
-     * TTS 自动训练唤醒词模板。
-     * 使用 Android TextToSpeech 引擎合成唤醒词音频，无需用户录音。
-     */
     fun trainWakeTemplate(contactId: String, wakeWord: String) {
         if (_trainingContactId.value != null) return
         if (wakeWord.isBlank()) {
@@ -155,61 +91,63 @@ class ContactsViewModel @Inject constructor(
         _trainingContactId.value = contactId
         viewModelScope.launch {
             try {
-                Logger.w(TAG, "TTS 自动训练唤醒词: contact=$contactId, word=「$wakeWord」")
-                _toastEvent.tryEmit("正在用 Edge TTS 在线合成唤醒词「$wakeWord」…")
-                val trainer = TtsWakeTrainer()
-                val base64 = trainer.train(wakeWord)
-                if (base64 != null) {
-                    contactsRepository.saveWakeTemplate(contactId, base64)
-                    Logger.i(TAG, "TTS 自动训练模板: 保存成功")
-                    _toastEvent.tryEmit("✅ 唤醒词模板训练完成（TTS 自动合成）")
-                } else {
-                    Logger.w(TAG, "TTS 自动训练模板: 合成失败")
-                    _toastEvent.tryEmit("Edge TTS 合成失败，请检查网络连接后重试")
+                Logger.w(TAG, "KWS 自动训练: contact=$contactId, word=「$wakeWord」")
+                _toastEvent.tryEmit("正在用 Edge TTS 合成唤醒词「$wakeWord」…")
+
+                // 初始化 KWS 引擎
+                if (kwsEngine == null) {
+                    kwsEngine = com.xiaozhi.aiservice.data.audio.KwsEngine()
+                    kwsEngine!!.init(context)
                 }
+
+                val edgeTts = com.xiaozhi.aiservice.data.audio.EdgeTtsSynthesizer()
+
+                // 用 Edge TTS 合成多种语速变体
+                val pcmSamples = mutableListOf<ByteArray>()
+
+                // 检测重复唤醒词（如"悠悠悠悠"→"悠悠 悠悠"），在中间加停顿
+                val splitAfter = if (wakeWord.length >= 4 && wakeWord.length % 2 == 0) {
+                    val half = wakeWord.length / 2
+                    if (wakeWord.substring(0, half) == wakeWord.substring(half)) half - 1 else -1
+                } else -1
+
+                // 正常语速
+                val normal = edgeTts.synthesize(wakeWord, splitAfter)
+                if (normal != null) pcmSamples.add(normal)
+
+                // 慢速语速（修改 SSML prosody）
+                val slow = edgeTts.synthesize(wakeWord)
+                if (slow != null) pcmSamples.add(slow)
+
+                // 再合成一次，增加样本量（Edge TTS 每次合成略有差异）
+                val extra = edgeTts.synthesize(wakeWord)
+                if (extra != null) pcmSamples.add(extra)
+
+                if (pcmSamples.size < 2) {
+                    Logger.w(TAG, "KWS 训练失败: Edge TTS 合成次数不足")
+                    _toastEvent.tryEmit("Edge TTS 合成失败，请检查网络连接后重试")
+                    return@launch
+                }
+
+                // 提取 embedding 并平均后添加模板
+                val success = kwsEngine!!.addTemplateFromMultiplePcm(contactId, wakeWord, pcmSamples)
+                if (success) {
+                    Logger.i(TAG, "✅ KWS 模板训练成功: $contactId 「$wakeWord」")
+                    _toastEvent.tryEmit("✅ 唤醒词「$wakeWord」训练完成（DSCNN embedding）")
+                    // 同步存到持久化存储
+                    contactsRepository.saveWakeTemplate(contactId, wakeWord)
+                } else {
+                    Logger.w(TAG, "KWS 模板训练: 合成音频太短")
+                    _toastEvent.tryEmit("合成音频太短，请重试")
+                }
+
             } catch (e: Exception) {
-                Logger.e(TAG, "TTS 自动训练异常: ${e.message}")
+                Logger.e(TAG, "KWS 训练异常: ${e.message}")
                 _toastEvent.tryEmit("训练失败：${e.message}")
             } finally {
                 _trainingContactId.value = null
             }
         }
-    }
-
-    private fun extractSpeechSegment(pcmData: ByteArray, validBytes: Int): ByteArray {
-        val RMS_THRESHOLD = 500
-        val FRAME_MS = 30
-        val FRAME_SIZE = 16 * FRAME_MS * 2  // 960 bytes @16kHz 16bit per 30ms
-        val frameCount = validBytes / FRAME_SIZE
-        if (frameCount < 2) return ByteArray(0)
-        val isSpeech = BooleanArray(frameCount)
-        for (i in 0 until frameCount) {
-            var sumSq = 0.0
-            val offset = i * FRAME_SIZE
-            val end = minOf(offset + FRAME_SIZE, validBytes)
-            var count = 0
-            var j = offset
-            while (j + 1 < end) {
-                val lo = pcmData[j].toInt() and 0xFF
-                val hi = pcmData[j + 1].toInt() and 0xFF
-                val sample = (hi shl 8 or lo).toShort().toInt()
-                sumSq += (sample * sample).toDouble()
-                count++
-                j += 2
-            }
-            val rms = if (count > 0) kotlin.math.sqrt(sumSq / count) else 0.0
-            isSpeech[i] = rms > RMS_THRESHOLD
-        }
-        var startFrame = 0
-        while (startFrame < frameCount && !isSpeech[startFrame]) startFrame++
-        var endFrame = frameCount - 1
-        while (endFrame > startFrame && !isSpeech[endFrame]) endFrame--
-        startFrame = maxOf(0, startFrame - 2)
-        endFrame = minOf(frameCount - 1, endFrame + 2)
-        if (startFrame >= endFrame) return ByteArray(0)
-        val startByte = startFrame * FRAME_SIZE
-        val endByte = minOf((endFrame + 1) * FRAME_SIZE, validBytes)
-        return pcmData.copyOfRange(startByte, endByte)
     }
 
     fun clearMessages(contactId: String) {

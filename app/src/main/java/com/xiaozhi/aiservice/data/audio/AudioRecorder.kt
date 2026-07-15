@@ -9,18 +9,31 @@ private const val TAG = "AudioRecorder"
  * 统一录音管理器：单 AudioRecord 管线。
  *
  * 职责：
- * - 唤醒检测（FSMN VAD + 环形缓冲 + 无缝过渡到编码）
+ * - 唤醒检测（FSMN VAD → KWS CNN 唤醒词识别）
+ * - AEC 回声消除（防止 TTS 自激）
  * - 创建/销毁 OpusEncoder
  * - 启动/停止 AudioService 录音（带 VAD）
  * - 8 秒录音超时（群聊/单聊一致）
  * - 回调隔离（generation 机制防陈旧回调）
  *
- * 核心设计（模仿 ESP32 AFE 单管线）：
- *   单 AudioRecord → PCM → [唤醒模式: FSMN VAD + 环形缓冲] → [触发后: Opus编码 → 发送]
- *                          → [实时模式: Opus编码 → 发送]
+ * 架构（对应 ESP32 AFE 流水线）：
+ *   PCM → [AudioAEC 回声消除] → [RMS预检] → [FSMN VAD] → [环形缓冲 2s]
+ *                                                          ↓ 检测到语音
+ *                                                     [MfccExtractor: 提取40×63 MFCC]
+ *                                                          ↓
+ *                                                     [KwsEngine: DSCNN 推理]
+ *                                                          ↓ 唤醒词
+ *                                                     Opus编码 → WebSocket发送
+ *
+ * 唤醒词验证由 KwsEngine 本地完成（DSCNN ONNX 模型），
+ * 无需依赖服务器 ASR，和 ESP32 的 WakeNet 方案一致。
  */
 class AudioRecorder(
-    private val audioService: AudioService
+    private val audioService: AudioService,
+    /** KWS 唤醒词引擎（替代 MFCC 余弦匹配）*/
+    val kwsEngine: KwsEngine = KwsEngine(),
+    /** AEC 回声消除器 */
+    val aec: AudioAEC = AudioAEC()
 ) {
     private var opusEncoder: OpusEncoder? = null
     private var nativeOpusEncoder: NativeOpusEncoder? = null
@@ -50,8 +63,8 @@ class AudioRecorder(
     private var gainBuffer: ByteArray? = null
     private var onWakeDetected: ((String) -> Unit)? = null
     private var wakeModeActive = false
-    /** 唤醒模板匹配器（可选，设置后 VAD 触发后需本地匹配成功才发 listen_start） */
-    var wakeTemplateMatcher: WakeTemplateMatcher? = null
+    // ESP32 方案：VAD 触发后直接通知服务器，不依赖本地模板匹配
+    // 唤醒词验证由服务器 ASR + wakeup_words 配置完成
     /** VAD 降频计时：每 100ms 跑一次 ONNX 推理，中间帧跳过 */
     private var lastVadCheckMs = 0L
     private val VAD_CHECK_INTERVAL_MS = 100L
@@ -113,6 +126,25 @@ class AudioRecorder(
 
         // 初始化 FSMN VAD（唤醒用）
         initWakeVad()
+
+        // 初始化 KWS 引擎
+        if (!kwsEngine.initialized) {
+            val ctx = audioService.getAppContext()
+            if (ctx != null) {
+                kwsEngine.init(ctx)
+            }
+            if (!kwsEngine.initialized) {
+                Logger.w(TAG, "KWS 引擎未就绪，将降级到 VAD 直接触发")
+            }
+        }
+        // 重置 KWS 状态
+        kwsEngine.reset()
+        kwsConfirmed = false
+        wakeMfccReady = false
+        mfccExtractor.reset()
+
+        // 重置 AEC
+        aec.reset()
 
         isRecording = true
         wakeModeActive = true
@@ -231,26 +263,36 @@ class AudioRecorder(
         return true
     }
 
+    // ── KWS 唤醒词确认（替代直接触发） ──
+    private val mfccExtractor = MfccExtractor()
+    private var kwsConfirmed = false
+    private var wakeMfccReady = false
+    private var lastWakeMfcc: FloatArray? = null
+    /** 最后匹配到的联系人 ID（唤醒触发时传给上层，用于切换联系人）*/
+    private var matchedContactId: String = ""
+
     /**
-     * 唤醒模式 PCM 处理：FSMN VAD + 环形缓冲 + 触发后过渡到编码
+     * 唤醒模式 PCM 处理：AEC → FSMN VAD + 环形缓冲 → KWS 唤醒词确认 → 触发
      */
     private fun handleWakePcm(pcmData: ByteArray, onOpusPacket: (ByteArray) -> Unit) {
         if (!wakeModeActive) {
-            // 已过渡到实时模式，直接编码（唤醒模式增益已由缓冲端完成，实时模式不加增益避免失真）
+            // 已过渡到实时模式，直接编码
             nativeOpusEncoder?.encode(pcmData) ?: opusEncoder?.encode(pcmData)
             return
         }
 
-        // ——— 前置增益 2x：让 ASR 收到更清晰的音频，提高唤醒词识别率 ———
-        val amplified = if (WAKE_GAIN != 1.0f) applyGain(pcmData, WAKE_GAIN) else pcmData
+        // ===== 1. AEC 回声消除（对应 ESP32 AFE） =====
+        val echoCanceled = if (aec.enabled) aec.process(pcmData) else pcmData
+
+        // ===== 2. 前置增益 2x =====
+        val amplified = if (WAKE_GAIN != 1.0f) applyGain(echoCanceled, WAKE_GAIN) else echoCanceled
 
         val now = System.currentTimeMillis()
 
-        // 写入环形缓冲（固定 circular array，零分配零扩容）
+        // 写入环形缓冲
         synchronized(wakeRingLock) {
             val len = amplified.size
             if (len >= wakeBufferMaxBytes) {
-                // 数据比缓冲还大，直接保留末尾
                 System.arraycopy(amplified, len - wakeBufferMaxBytes, wakeRingBuffer, 0, wakeBufferMaxBytes)
                 wakeRingWritePos = 0
                 wakeRingSize = wakeBufferMaxBytes
@@ -269,34 +311,36 @@ class AudioRecorder(
             }
         }
 
-        // 每帧更新 SNR 估计（即便不跑 VAD 也跟踪环境噪声）
+        // ===== 3. 同时提取 MFCC 特征（喂 MfccExtractor） =====
+        // 将 PCM byte 转 float 后喂入
+        val pcmFloats = pcmBytesToFloats(amplified)
+        mfccExtractor.feed(pcmFloats)
+        if (mfccExtractor.isReady()) {
+            wakeMfccReady = true
+        }
+
+        // 每帧更新 SNR 估计
         val currentRms = calcRms(amplified)
-        // 噪声底噪指数移动平均（取静音段的 RMS）
         if (currentRms < noiseFloorRms * 1.5 || noiseFloorRms < 1) {
             noiseFloorRms = noiseFloorRms * 0.95 + currentRms * 0.05
         }
-        // 跟踪峰值
         if (currentRms > recentPeakRms) {
             recentPeakRms = currentRms
         } else {
             recentPeakRms = recentPeakRms * 0.995 + currentRms * 0.005
         }
-        // 计算平滑 SNR
         if (noiseFloorRms > 1.0 && recentPeakRms > noiseFloorRms) {
             val snrLinear = (recentPeakRms / noiseFloorRms).toFloat()
             val snrDb = 20f * kotlin.math.log10(snrLinear).coerceIn(0f, 40f)
             smoothedSnrDb = smoothedSnrDb * 0.9f + snrDb * 0.1f
         }
 
-        // ── 三级预检 Level 1: RMS 能量预检查（每秒约 100 次，0.01ms/次）──
-        // 能量太低 → 跳过 FSMN VAD，省 ONNX 推理
+        // ── 三级预检 Level 1: RMS 能量预检查 ──
         frameCounter++
         val energyOk = currentRms > WAKE_RMS_THRESHOLD * ENERGY_PRE_CHECK_THRESHOLD
         if (!energyOk) {
             consecutiveLowEnergy++
-            // 连续低能量 → 拉长 VAD 检查间隔（省电）
             if (consecutiveLowEnergy > MAX_LOW_ENERGY_FRAMES) {
-                // 跳过本轮 VAD，重置 VAD 计时让 ONNX 更晚执行
                 lastVadCheckMs = now
                 return
             }
@@ -304,11 +348,10 @@ class AudioRecorder(
             consecutiveLowEnergy = 0
         }
 
-        // ✅ 降频：每 200ms 才跑 VAD（ONNX 推理），中间帧直接跳过
         if (now - lastVadCheckMs < VAD_CHECK_INTERVAL_MS) return
         lastVadCheckMs = now
 
-        // ── 三级预检 Level 2: FSMN VAD（ONNX）或 RMS 降级 ──
+        // ── 三级预检 Level 2: FSMN VAD ──
         val hasVoice = if (wakeUseFsmn && wakeFsmnVad != null) {
             try { wakeFsmnVad!!.isVoice(amplified) }
             catch (_: Exception) { calcRms(amplified) > WAKE_RMS_THRESHOLD }
@@ -317,27 +360,88 @@ class AudioRecorder(
         }
 
         if (hasVoice) {
-            silenceStartTime = 0L  // 有人声，清除静音计时
+            silenceStartTime = 0L
             if (wakeVoiceStartTime == 0L) wakeVoiceStartTime = now
-            if (!wakeTriggered && now - wakeVoiceStartTime >= WAKE_HOLD_MS) {
-                triggerWake(onOpusPacket)
+
+            // ── 三级预检 Level 3: KWS 唤醒词确认 ──
+            // 对应 ESP32 的 esp_wakenet_detect()
+            if (!wakeTriggered && !kwsConfirmed && now - wakeVoiceStartTime >= WAKE_HOLD_MS) {
+                if (wakeMfccReady && kwsEngine.initialized && kwsEngine.hasTemplates()) {
+                    val mfccFeatures = mfccExtractor.getInputData()
+                    lastWakeMfcc = mfccFeatures
+                    val matched = kwsEngine.match(mfccFeatures)
+                    if (matched != null) {
+                        kwsConfirmed = true
+                        matchedContactId = matched
+                        Logger.i(TAG, "🎯 KWS 确认唤醒词: $matched (score=${"%.3f".format(kwsEngine.lastScore)})")
+                        triggerWake(onOpusPacket, matched)
+                    } else {
+                        // KWS 拒绝：不是唤醒词
+                        Logger.d(TAG, "KWS 拒绝: score=${"%.3f".format(kwsEngine.lastScore)}")
+                        wakeVoiceStartTime = 0L
+                        wakeMfccReady = false
+                        mfccExtractor.reset()
+                        kwsEngine.reset()
+                    }
+                } else if (!kwsEngine.hasTemplates()) {
+                    // 无模板 → 降级到 VAD 直接触发
+                    Logger.w(TAG, "KWS 无唤醒模板，降级到 VAD 直接触发")
+                    triggerWake(onOpusPacket)
+                } else {
+                    // KWS 未就绪 → 降级
+                    Logger.w(TAG, "KWS 未就绪，降级到 VAD 直接触发")
+                    triggerWake(onOpusPacket)
+                }
             }
         } else {
-            // 静音：不超过容错期不重置，防止词语间隙打断唤醒
             if (silenceStartTime == 0L) silenceStartTime = now
 
-            // 静音容错期内检查：如果说话总时长已到 WAKE_HOLD_MS，触发
-            if (!wakeTriggered && wakeVoiceStartTime > 0 &&
+            // 静音容错期内检查
+            if (!wakeTriggered && !kwsConfirmed &&
+                wakeVoiceStartTime > 0 &&
                 now - silenceStartTime <= SILENCE_GRACE_MS &&
                 now - wakeVoiceStartTime >= WAKE_HOLD_MS) {
-                Logger.i(TAG, "🎤 静音容错期内触发唤醒（累计语音 ${now - wakeVoiceStartTime}ms）")
-                triggerWake(onOpusPacket)
+                if (wakeMfccReady && kwsEngine.initialized && kwsEngine.hasTemplates()) {
+                    val mfccFeatures = mfccExtractor.getInputData()
+                    lastWakeMfcc = mfccFeatures
+                    val matchedId = kwsEngine.match(mfccFeatures)
+                    if (matchedId != null) {
+                        kwsConfirmed = true
+                        matchedContactId = matchedId
+                        Logger.i(TAG, "🎯 KWS 确认（容错期），触发唤醒: $matchedId")
+                        triggerWake(onOpusPacket, matchedContactId)
+                    } else {
+                        wakeVoiceStartTime = 0L
+                        wakeMfccReady = false
+                        mfccExtractor.reset()
+                    }
+                } else if (!kwsEngine.hasTemplates()) {
+                    triggerWake(onOpusPacket)
+                }
             }
 
             if (now - silenceStartTime > SILENCE_GRACE_MS) {
                 wakeVoiceStartTime = 0L
+                // 重置 KWS 状态（一段话结束）
+                kwsConfirmed = false
+                if (wakeMfccReady) {
+                    wakeMfccReady = false
+                    mfccExtractor.reset()
+                }
             }
         }
+    }
+
+    /** PCM 字节转 float 数组 [-1, 1] */
+    private fun pcmBytesToFloats(pcmBytes: ByteArray): FloatArray {
+        val n = pcmBytes.size / 2
+        val floats = FloatArray(n)
+        for (i in 0 until n) {
+            val lo = pcmBytes[i * 2].toInt() and 0xFF
+            val hi = pcmBytes[i * 2 + 1].toInt() and 0xFF
+            floats[i] = ((hi shl 8 or lo).toShort()).toFloat() / 32768f
+        }
+        return floats
     }
 
     /** 停止录音和编码器 */
@@ -354,6 +458,11 @@ class AudioRecorder(
         opusEncoder?.stop()
         opusEncoder = null
         wakeFsmnVad?.reset()
+        // 重置 KWS 和 AEC 状态
+        kwsConfirmed = false
+        wakeMfccReady = false
+        mfccExtractor.reset()
+        aec.reset()
         Logger.i(TAG, "录音已停止")
     }
 
@@ -363,37 +472,21 @@ class AudioRecorder(
         scope = null
         wakeFsmnVad?.reset()
         wakeFsmnVad = null
+        kwsEngine.release()
+        mfccExtractor.reset()
+        aec.reset()
     }
 
     /**
      * 触发唤醒：创建编码器、发送缓冲 PCM、切为实时模式、回调上层
-     * 从 hasVoice 路径和静音容错路径都能调用，消除代码重复
+     * 将 KWS 匹配到的联系人 ID 传给上层，自动切换到对应智能体
+     *
+     * @param contactId KWS 匹配到的联系人 ID，空字符串表示无模板降级触发
      */
-    private fun triggerWake(onOpusPacket: (ByteArray) -> Unit) {
+    private fun triggerWake(onOpusPacket: (ByteArray) -> Unit, contactId: String = "") {
         if (wakeTriggered) return
         wakeTriggered = true
-        Logger.i(TAG, "🎤 检测到连续语音，过渡到实时编码")
-
-        // ——— 本地唤醒模板匹配 ———
-        // 如果有模板，先匹配再决定是否触发
-        val matcher = wakeTemplateMatcher
-        if (matcher != null && matcher.hasTemplates()) {
-            val ringData = getWakeRingData()
-            val matchedContactId = matcher.match(ringData, smoothedSnrDb)
-            if (matchedContactId == null) {
-                // 不匹配 → 静默重置，继续监听
-                Logger.d(TAG, "🔇 本地匹配未通过，静默重置唤醒")
-                wakeTriggered = false
-                wakeVoiceStartTime = 0L
-                silenceStartTime = 0L
-                synchronized(wakeRingLock) {
-                    wakeRingWritePos = 0
-                    wakeRingSize = 0
-                }
-                return  // 不触发，不发送任何数据到服务器
-            }
-            Logger.i(TAG, "🎯 本地唤醒匹配: contact=$matchedContactId，发送 listen_start")
-        }
+        Logger.i(TAG, "🎤 唤醒触发: contactId=$contactId")
 
         val sampleRate = audioService.getSampleRate()
         val nativeEncoder = NativeOpusEncoder(sampleRate = sampleRate)
@@ -413,14 +506,14 @@ class AudioRecorder(
             Logger.i(TAG, "发送唤醒缓冲 ${buffered.size}B")
             nativeOpusEncoder?.encode(buffered) ?: opusEncoder?.encode(buffered)
         }
-        // 重置环形缓冲
         synchronized(wakeRingLock) {
             wakeRingWritePos = 0
             wakeRingSize = 0
         }
 
         wakeModeActive = false
-        onWakeDetected?.invoke("")
+        // 传 contactId 给上层（ConnectionRepositoryImpl 根据 ID 切换联系人）
+        onWakeDetected?.invoke(contactId)
     }
 
     /**

@@ -109,7 +109,6 @@ fun ContactsScreen(
     }
 
     val wakeTemplatesMap by viewModel.wakeTemplates.collectAsState()
-    val recordingContactId by viewModel.recordingTemplateId.collectAsState()
     val trainingContactId by viewModel.trainingContactId.collectAsState()
 
     LaunchedEffect(Unit) {
@@ -124,7 +123,6 @@ fun ContactsScreen(
             contact = null,
             viewModel = viewModel,
             wakeTemplatesMap = wakeTemplatesMap,
-            recordingContactId = recordingContactId,
             trainingContactId = trainingContactId,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
@@ -140,7 +138,6 @@ fun ContactsScreen(
             contact = contact,
             viewModel = viewModel,
             wakeTemplatesMap = wakeTemplatesMap,
-            recordingContactId = recordingContactId,
             trainingContactId = trainingContactId,
             onDismiss = { editingContact = null },
             onSave = { updated ->
@@ -368,7 +365,6 @@ fun AddEditContactDialog(
     contact: BotContact?,
     viewModel: ContactsViewModel,
     wakeTemplatesMap: Map<String, String>,
-    recordingContactId: String?,
     trainingContactId: String?,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
@@ -378,6 +374,13 @@ fun AddEditContactDialog(
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
     var wakeWord by remember { mutableStateOf(contact?.wakeWord ?: "") }
+    // 新建联系人时，唤醒词自动跟随名称（名称输入后自动填充）
+    if (!isEditing && contact == null && wakeWord.isEmpty()) {
+        val wakeDefault = "$name $name"
+        LaunchedEffect(name) {
+            if (name.isNotBlank()) wakeWord = wakeDefault
+        }
+    }
     val newContactId: String = contact?.id ?: java.util.UUID.randomUUID().toString()
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(newContactId)
@@ -456,7 +459,7 @@ fun AddEditContactDialog(
                     // 语音唤醒
                     FormSection(title = "语音唤醒") {
                         val contactId = contact?.id ?: newContactId
-                        val effectiveWake = wakeWord.ifBlank { "${name}${name}" }
+                        val effectiveWake = wakeWord.ifBlank { "${name} ${name}" }
 
                         OutlinedTextField(
                             value = wakeWord,
@@ -469,23 +472,9 @@ fun AddEditContactDialog(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val hasTemplate = wakeTemplatesMap.containsKey(contactId)
-                        val isRecordingThis = recordingContactId == contactId
                         val isTrainingThis = trainingContactId == contactId
 
-                        if (isRecordingThis) {
-                            WakeStatusRow(
-                                icon = {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                },
-                                title = "正在录制唤醒模板",
-                                subtitle = "请说出「${effectiveWake}」",
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        } else if (isTrainingThis) {
+                        if (isTrainingThis) {
                             WakeStatusRow(
                                 icon = {
                                     CircularProgressIndicator(
@@ -498,57 +487,16 @@ fun AddEditContactDialog(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         } else {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (hasTemplate) Icons.Default.CheckCircle else Icons.Default.Mic,
-                                        contentDescription = null,
-                                        tint = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = if (hasTemplate) "本地唤醒模板已录制" else "未录制唤醒模板",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Medium,
-                                            color = if (hasTemplate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "录制后可在离线时使用本地声纹匹配",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilledTonalButton(
-                                        onClick = { viewModel.recordWakeTemplate(contactId) },
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                        modifier = Modifier.weight(1f),
-                                        shape = AppShapes.menu
-                                    ) {
-                                        Text(
-                                            if (hasTemplate) "重录" else "录制",
-                                            style = MaterialTheme.typography.labelMedium
-                                        )
-                                    }
-                                    FilledTonalButton(
-                                        onClick = { viewModel.trainWakeTemplate(contactId, effectiveWake) },
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                        modifier = Modifier.weight(1f),
-                                        shape = AppShapes.menu
-                                    ) {
-                                        Text(
-                                            "自动训练",
-                                            style = MaterialTheme.typography.labelMedium
-                                        )
-                                    }
-                                }
+                            FilledTonalButton(
+                                onClick = { viewModel.trainWakeTemplate(contactId, effectiveWake) },
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = AppShapes.menu
+                            ) {
+                                Text(
+                                    "自动训练",
+                                    style = MaterialTheme.typography.labelMedium
+                                )
                             }
                         }
                     }
@@ -591,7 +539,7 @@ fun AddEditContactDialog(
                                     otaUrl = otaUrl.trim(),
                                     deviceId = generatedDeviceId,
                                     clientId = generatedClientId,
-                                    wakeWord = wakeWord.trim().ifBlank { "${name.trim()}${name.trim()}" }
+                                    wakeWord = wakeWord.trim().ifBlank { "${name.trim()} ${name.trim()}" }
                                 )
                                 onSave(newContact)
                             },
