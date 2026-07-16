@@ -486,9 +486,11 @@ class ConnectionRepositoryImpl @Inject constructor(
      * 检测到连续语音后自动过渡到编码发送。
      */
     override fun startWakeWordMode(): Boolean {
-        // 允许在 IDLE 或 LISTENING 状态下启动唤醒
-        // LISTENING = 服务器通知客户端正在倾听（此时可切入唤醒模式）
-        if (_aiState.value == AiState.SPEAKING || _aiState.value == AiState.PROCESSING) {
+        // ESP32 风格：唤醒词可打断 Speaking，简短冷却后重新监听
+        if (_aiState.value == AiState.SPEAKING) {
+            Logger.w(TAG, "唤醒词打断 AI 说话")
+            // 让 onWakeDetected 回调处理打断逻辑
+        } else if (_aiState.value == AiState.PROCESSING) {
             Logger.w(TAG, "唤醒模式启动被拦截：AI 正忙 (state=${_aiState.value})")
             return false
         }
@@ -532,9 +534,14 @@ class ConnectionRepositoryImpl @Inject constructor(
                 scope = scope,
                 onWakeDetected = { contactId ->
                     Logger.w(TAG, "🎤 唤醒触发: contactId=$contactId")
-                    // 切到语音对话模式：停唤醒录音 → 启动编码录音 → 发 detect
-                    // startListening 内部会调用 audioRecorder.stop + startLive + sendListenStart
                     scope.launch {
+                        // ESP32 风格：如果 AI 正在说话，先打断再重新监听
+                        if (_aiState.value == AiState.SPEAKING) {
+                            Logger.w(TAG, "唤醒打断 AI 说话：发送 abort + 强制停止播放")
+                            backendService.sendAbort("wake_word_interrupt")
+                            playbackManager.flushSource("main")
+                            audioService.softAecEnabled = false
+                        }
                         audioService.fsmnVad.reset()
                         // 传联系人名字作为 detect 文本（ESP32 方案：服务器用 text 验证唤醒词）
                         val contacts = contactsRepository.getContacts().first()
