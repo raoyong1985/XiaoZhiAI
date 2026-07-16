@@ -216,9 +216,6 @@ private fun MainNavigation() {
             "chat" -> {
                 val contact = contacts.find { it.id == selectedContactId }
                 if (contact != null) {
-                    LaunchedEffect(contact.id) {
-                        chatViewModel.setCurrentWakeWord(contact.name)
-                    }
                     ChatScreen(
                         viewModel = chatViewModel,
                         contact = contact,

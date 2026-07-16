@@ -72,7 +72,6 @@ fun ChatScreen(
 
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
-        viewModel.setCurrentWakeWord(displayWakeWord)
         viewModel.checkWakeTemplate(displayWakeWord)
     }
     DisposableEffect(Unit) {
