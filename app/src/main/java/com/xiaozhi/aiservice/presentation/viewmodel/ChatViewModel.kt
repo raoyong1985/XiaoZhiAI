@@ -113,11 +113,11 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 设置当前唤醒词（不自动启动，由状态机在需要时调用 startWakeWordMode） */
+    /** 设置当前唤醒词并启动唤醒检测（FSMN VAD + MFCC DTW） */
     fun setCurrentWakeWord(contactName: String) {
-        Logger.i(TAG, "设置唤醒词: <<${contactName}>>（ESP32 方案：服务端 ASR）")
-        // 只记录唤醒词名称，不启动唤醒模式
-        // 唤醒模式由状态机在 stopListening/disconnect 后自动启动
+        Logger.i(TAG, "设置唤醒词: <<${contactName}>>（FSMN VAD + MFCC DTW）")
+        val started = connectionRepository.startWakeWordMode()
+        Logger.i(TAG, "唤醒模式启动${if (started) "成功" else "失败"}，录音中=${connectionRepository.isRecording()}")
     }
 
     fun disconnect() {

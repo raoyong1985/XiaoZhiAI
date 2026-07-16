@@ -342,8 +342,12 @@ class AudioRecorder(
         if (now - lastVadCheckMs < VAD_CHECK_INTERVAL_MS) return
         lastVadCheckMs = now
 
-        // ── 三级预检 Level 2: RMS 能量检测（唤醒模式不走 FSMN VAD，避免误过滤）
-        val hasVoice = calcRms(amplified) > WAKE_RMS_THRESHOLD
+        // ── 三级预检 Level 2: FSMN VAD 或 RMS 能量检测 ──
+        val hasVoice = if (wakeUseFsmn && wakeFsmnVad != null) {
+            wakeFsmnVad!!.isVoice(amplified)
+        } else {
+            calcRms(amplified) > WAKE_RMS_THRESHOLD
+        }
 
         if (hasVoice) {
             silenceStartTime = 0L
