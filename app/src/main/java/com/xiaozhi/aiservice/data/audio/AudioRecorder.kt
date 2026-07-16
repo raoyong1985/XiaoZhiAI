@@ -111,8 +111,7 @@ class AudioRecorder(
     fun startWake(
         owner: String,
         scope: CoroutineScope,
-        onWakeDetected: (String) -> Unit,
-        onOpusPacket: (ByteArray) -> Unit
+        onWakeDetected: (String) -> Unit
     ): Boolean {
         if (isRecording) return false
         this.scope = scope
@@ -129,10 +128,7 @@ class AudioRecorder(
 
         // 初始化 KWS 引擎
         if (!kwsEngine.initialized) {
-            val ctx = audioService.getAppContext()
-            if (ctx != null) {
-                kwsEngine.init(ctx)
-            }
+            kwsEngine.init()
             if (!kwsEngine.initialized) {
                 Logger.w(TAG, "KWS 引擎未就绪，将降级到 VAD 直接触发")
             }
@@ -167,7 +163,7 @@ class AudioRecorder(
 
         // 启动单 AudioRecord，PCM 回调由我们处理
         if (!audioService.startRecording(owner, { pcmData ->
-            handleWakePcm(pcmData, onOpusPacket)
+            handleWakePcm(pcmData)
         }, false)) {  // enableVAD=false：唤醒模式常驻，不 auto-stop
             Logger.e(TAG, "唤醒模式：AudioService 录音启动失败")
             isRecording = false
@@ -269,7 +265,7 @@ class AudioRecorder(
     /**
      * 唤醒模式 PCM 处理：AEC → FSMN VAD + 环形缓冲 → VAD触发 → KWS识别联系人
      */
-    private fun handleWakePcm(pcmData: ByteArray, onOpusPacket: (ByteArray) -> Unit) {
+    private fun handleWakePcm(pcmData: ByteArray) {
         if (!wakeModeActive) {
             // 已过渡到实时模式，直接编码
             nativeOpusEncoder?.encode(pcmData) ?: opusEncoder?.encode(pcmData)
@@ -369,7 +365,7 @@ class AudioRecorder(
                         Logger.w(TAG, "DTW 未匹配, dist=${"%.2f".format(kwsEngine.lastScore)}")
                     }
                 }
-                triggerWake(onOpusPacket, matchedContact)
+                triggerWake(matchedContact)
             }
         } else {
             if (silenceStartTime == 0L) silenceStartTime = now
@@ -385,7 +381,7 @@ class AudioRecorder(
                     val matched = kwsEngine.match(mfccData)
                     if (matched != null) matchedContact = matched
                 }
-                triggerWake(onOpusPacket, matchedContact)
+                triggerWake(matchedContact)
             }
 
             if (now - silenceStartTime > SILENCE_GRACE_MS) {
@@ -449,7 +445,7 @@ class AudioRecorder(
      *
      * @param contactId KWS 匹配到的联系人 ID，空字符串表示无模板降级触发
      */
-    private fun triggerWake(onOpusPacket: (ByteArray) -> Unit, contactId: String = "") {
+    private fun triggerWake(contactId: String = "") {
         if (wakeTriggered) return
         wakeTriggered = true
         Logger.w(TAG, "🎤 唤醒触发: contactId=$contactId")

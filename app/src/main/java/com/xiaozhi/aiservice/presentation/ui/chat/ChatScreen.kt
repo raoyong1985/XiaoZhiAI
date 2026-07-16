@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -109,7 +111,7 @@ fun ChatScreen(
 
     val stateIcon = when (uiState.aiState) {
         AiState.LISTENING -> if (isVoiceMode) Icons.Default.Mic else null
-        AiState.SPEAKING -> Icons.Default.VolumeUp
+        AiState.SPEAKING -> Icons.AutoMirrored.Filled.VolumeUp
         AiState.PROCESSING -> Icons.Default.Psychology
         else -> null
     }
@@ -185,7 +187,7 @@ fun ChatScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {

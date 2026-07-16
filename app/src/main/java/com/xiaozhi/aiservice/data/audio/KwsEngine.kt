@@ -1,9 +1,9 @@
 package com.xiaozhi.aiservice.data.audio
 
-import android.content.Context
 import com.xiaozhi.aiservice.utils.Logger
 import kotlin.math.min
 import kotlin.math.sqrt
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * KWS（Keyword Spotting）唤醒词引擎。
@@ -20,8 +20,8 @@ import kotlin.math.sqrt
  *   - 不需要训练，无 ONNX 依赖
  */
 class KwsEngine(
-    /** DTW 距离阈值（越小越严格），默认 3.0 */
-    private var matchThreshold: Float = 3.0f
+    /** DTW 距离阈值（越小越严格），默认 2.0 */
+    private var matchThreshold: Float = 2.0f
 ) {
     companion object {
         private const val TAG = "KwsEngine"
@@ -36,7 +36,7 @@ class KwsEngine(
         private set
 
     // ===== 模板存储（联系人ID → MFCC 矩阵） =====
-    private val templates = mutableMapOf<String, TemplateData>()
+    private val templates = ConcurrentHashMap<String, TemplateData>()
     data class TemplateData(
         val embedding: FloatArray,  // 2520D = 63×40 MFCC matrix
         val wakeWord: String
@@ -48,7 +48,7 @@ class KwsEngine(
         private set
 
     // ===== 初始化 =====
-    fun init(context: Context) {
+    fun init() {
         initialized = true
         Logger.w(TAG, "KWS 引擎初始化完成 (DTW mode, threshold=$matchThreshold)")
     }
@@ -184,27 +184,47 @@ class KwsEngine(
 
         var bestContact: String? = null
         var bestDistance = Float.MAX_VALUE
+        var secondBestDistance = Float.MAX_VALUE
 
         for ((contactId, template) in templates) {
             val distance = dtwDistance(mfccFeatureMap, template.embedding)
             if (distance < bestDistance) {
+                secondBestDistance = bestDistance
                 bestDistance = distance
                 bestContact = contactId
+            } else if (distance < secondBestDistance) {
+                secondBestDistance = distance
             }
         }
 
         lastScore = bestDistance
 
-        if (bestContact != null && bestDistance <= matchThreshold) {
-            val word = templates[bestContact]?.wakeWord ?: ""
-            Logger.w(TAG, "🎯 DTW 匹配成功: $bestContact 「$word」 dist=${"%.2f".format(bestDistance)}")
-            return bestContact
+        if (bestContact == null) return null
+
+        // ── 自适应判决：只看绝对值不够，还要看相对差距 ──
+        // 阈值 1：绝对距离必须 < matchThreshold（越严格）
+        if (bestDistance > matchThreshold) {
+            Logger.w(TAG, "DTW 距离 ${"%.2f".format(bestDistance)} > 阈值 $matchThreshold")
+            return null
         }
 
-        if (bestDistance < matchThreshold * 2) {
-            Logger.w(TAG, "DTW 未通过: 最佳=$bestContact dist=${"%.2f".format(bestDistance)} thr=$matchThreshold")
+        // 阈值 2（动态）：最佳 vs 次佳的距离差距比
+        // 如果有多个模板，最佳距离必须明显优于次佳（gap > 30%），否则判为模糊
+        val gapRatio = if (secondBestDistance < Float.MAX_VALUE && secondBestDistance > 0) {
+            bestDistance / secondBestDistance
+        } else {
+            0f  // 只有一个模板，无法比较
         }
-        return null
+
+        if (gapRatio > 0.7f && gapRatio > 0f) {
+            // 最佳和次佳太接近（差距 < 30%），拒绝避免误报
+            Logger.w(TAG, "DTW 模糊拒绝: best=${"%.2f".format(bestDistance)} 2nd=${"%.2f".format(secondBestDistance)} ratio=${"%.2f".format(gapRatio)}")
+            return null
+        }
+
+        val word = templates[bestContact]?.wakeWord ?: ""
+        Logger.w(TAG, "🎯 DTW 匹配成功: $bestContact 「$word」 dist=${"%.2f".format(bestDistance)} gap=${"%.2f".format(gapRatio)}")
+        return bestContact
     }
 
     // ===== CMVN 归一化状态（实时底噪抑制） =====
@@ -268,7 +288,6 @@ class KwsEngine(
         // DTW 累积距离（滚动数组）
         val prev = FloatArray(m) { Float.MAX_VALUE }
         val curr = FloatArray(m)
-        var tmp: FloatArray
 
         prev[0] = cost[0][0]
         for (j in 1 until m) prev[j] = prev[j - 1] + cost[0][j]
@@ -278,9 +297,7 @@ class KwsEngine(
             for (j in 1 until m) {
                 curr[j] = cost[i][j] + minOf(prev[j], curr[j - 1], prev[j - 1])
             }
-            // 交换数组
-            tmp = prev; prev.copyInto(curr); // not used in loop below
-            // 直接把 curr 复制到 prev 用于下一轮
+            // 把 curr 复制到 prev 用于下一轮
             System.arraycopy(curr, 0, prev, 0, m)
         }
 

@@ -107,7 +107,7 @@ class ContactsViewModel @Inject constructor(
                 if (kwsEngine == null || !kwsEngine!!.initialized) {
                     _trainingStatus.value = _trainingStatus.value + (contactId to "正在加载唤醒词引擎…")
                     kwsEngine = com.xiaozhi.aiservice.data.audio.KwsEngine()
-                    kwsEngine!!.init(context)
+                    kwsEngine!!.init()
                 }
                 if (!kwsEngine!!.initialized) {
                     Logger.e(TAG, "KWS 引擎初始化失败")

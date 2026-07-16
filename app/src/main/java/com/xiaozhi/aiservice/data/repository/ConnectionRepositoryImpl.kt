@@ -64,6 +64,7 @@ class ConnectionRepositoryImpl @Inject constructor(
     override val aiState: StateFlow<AiState> = _aiState.asStateFlow()
 
     // AI 说话时持唤醒锁，阻止黑屏休眠
+    @Suppress("DEPRECATION")
     private val wakeLock: PowerManager.WakeLock? = run {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         pm?.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "XiaoZhi:BotSpeaking")
@@ -531,7 +532,7 @@ class ConnectionRepositoryImpl @Inject constructor(
                 scope = scope,
                 onWakeDetected = { contactId ->
                     Logger.w(TAG, "🎤 唤醒触发: contactId=$contactId")
-                    // 切到实时对话模式：停唤醒录音 → 启动编码录音 → 发 detect
+                    // 切到语音对话模式：停唤醒录音 → 启动编码录音 → 发 detect
                     // startListening 内部会调用 audioRecorder.stop + startLive + sendListenStart
                     scope.launch {
                         audioService.fsmnVad.reset()
@@ -539,10 +540,9 @@ class ConnectionRepositoryImpl @Inject constructor(
                         val contacts = contactsRepository.getContacts().first()
                         val contactName = contacts.find { it.id == contactId }?.name ?: contactId
                         backendService.sendListenDetect(contactName)
-                        startListening("realtime")
+                        startListening("auto")
                     }
                 },
-                onOpusPacket = { packet -> audioSendChannel.trySend(packet) }
             )
             return ok
         }
@@ -680,8 +680,9 @@ class ConnectionRepositoryImpl @Inject constructor(
                 onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
                 onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
             )) {
-            Logger.e(TAG, "${mode} 模式重启监听失败")
+            Logger.e(TAG, "${mode} 模式重启监听失败，回退到唤醒词模式")
             _aiState.value = AiState.IDLE
+            startWakeWordMode()
             return
         }
         backendService.sendListenStart(mode)

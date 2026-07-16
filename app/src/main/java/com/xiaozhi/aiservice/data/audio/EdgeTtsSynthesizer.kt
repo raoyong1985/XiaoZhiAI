@@ -4,8 +4,9 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.xiaozhi.aiservice.utils.Logger
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -31,6 +32,7 @@ import kotlin.coroutines.resume
  * 所有 Android 手机只要能上网就能用。
  */
 class EdgeTtsSynthesizer {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
         private const val TAG = "EdgeTts"
@@ -126,7 +128,7 @@ class EdgeTtsSynthesizer {
                         if (path == "turn.end") {
                             turnEndReceived = true
                             Logger.w(TAG, "收到 turn.end")
-                            kotlinx.coroutines.GlobalScope.launch {
+                            scope.launch {
                                 delay(500)
                                 ws.close(1000, "完成")
                             }
@@ -200,7 +202,7 @@ class EdgeTtsSynthesizer {
                 })
 
                 // 超时保护
-                GlobalScope.launch {
+                scope.launch {
                     delay(30000)
                     if (cont.isActive) {
                         Logger.w(TAG, "Edge TTS 超时 (30s)")

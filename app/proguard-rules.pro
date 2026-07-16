@@ -27,6 +27,9 @@
 # Keep all data model / MCP classes
 -keep class com.xiaozhi.aiservice.data.remote.mcp.** { *; }
 
+# Keep repository implementations (Gson serialization)
+-keep class com.xiaozhi.aiservice.data.repository.** { *; }
+
 # Keep all enums (values() used by Gson)
 -keepclassmembers enum * {
     <fields>;
