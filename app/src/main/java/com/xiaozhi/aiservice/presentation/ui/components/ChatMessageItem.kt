@@ -107,7 +107,6 @@ fun ChatMessageItem(
                         )
                     )
                     .background(bubbleColor)
-                    .bounceClick(pressedScale = 0.97f, stiffness = androidx.compose.animation.core.Spring.StiffnessVeryLow)
                     .combinedClickable(
                         onClick = {},
                         onLongClick = { showContextMenu = true }
@@ -176,7 +175,15 @@ fun ChatMessageItem(
         // 上下文菜单
         DropdownMenu(
             expanded = showContextMenu,
-            onDismissRequest = { showContextMenu = false }
+            onDismissRequest = { showContextMenu = false },
+            modifier = Modifier
+                .clip(AppShapes.menu)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(
+                    0.5.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    AppShapes.menu
+                )
         ) {
             DropdownMenuItem(
                 text = { Text("复制") },

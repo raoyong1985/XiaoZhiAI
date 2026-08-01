@@ -1,8 +1,10 @@
 package com.xiaozhi.aiservice.presentation.ui.components
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,14 +79,10 @@ fun InputBar(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "recording")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600),
-            repeatMode = RepeatMode.Reverse
-        ),
+    // 录音脉冲：one-shot 动画，状态变化才动（v1.5.66 回退，避免无限循环耗电掉帧）
+    val scale by animateFloatAsState(
+        targetValue = if (isRecording) 1.15f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "recording_scale"
     )
 
@@ -104,23 +102,7 @@ fun InputBar(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                AnimatedContent(
-                    targetState = inputMode,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInHorizontally { it } + fadeIn(animationSpec = tween(200))).togetherWith(
-                                slideOutHorizontally { -it } + fadeOut(animationSpec = tween(200))
-                            )
-                        } else {
-                            (slideInHorizontally { -it } + fadeIn(animationSpec = tween(200))).togetherWith(
-                                slideOutHorizontally { it } + fadeOut(animationSpec = tween(200))
-                            )
-                        }
-                    },
-                    label = "input_mode",
-                    modifier = Modifier.fillMaxWidth()
-                ) { mode ->
-                    when (mode) {
+                when (inputMode) {
                         0 -> {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -165,6 +147,13 @@ fun InputBar(
                                     modifier = Modifier
                                         .fillMaxWidth(0.85f)
                                         .heightIn(max = 220.dp)
+                                        .clip(AppShapes.menu)
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .border(
+                                            0.5.dp,
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                            AppShapes.menu
+                                        )
                                 ) {
                                     val isDark = isSystemInDarkTheme()
                                     filteredMembers.forEach { name ->
@@ -254,9 +243,8 @@ fun InputBar(
                             }  // ← Row
                         }  // ← Box(@mention)
                     }  // ← 1 -> mode
-                }  // ← when(mode)
-            }  // ← AnimatedContent
-        }  // ← Column
+                }  // ← when(inputMode)
+            }  // ← Column
     }  // ← Box(Surface)
   }  // ← Surface
 }  // ← fun InputBar

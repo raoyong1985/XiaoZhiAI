@@ -28,7 +28,6 @@ import com.xiaozhi.aiservice.domain.model.BotContact
 import com.xiaozhi.aiservice.domain.model.InputMode
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
-import com.xiaozhi.aiservice.presentation.ui.components.bounceClick
 import com.xiaozhi.aiservice.presentation.viewmodel.ContactsViewModel
 import com.xiaozhi.aiservice.utils.DeviceIdHelper
 
@@ -246,7 +245,6 @@ private fun ContactItem(
 
     ListItem(
         modifier = Modifier
-            .bounceClick()
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
         headlineContent = {
@@ -305,7 +303,15 @@ private fun ContactItem(
                 }
                 DropdownMenu(
                     expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier
+                        .clip(AppShapes.menu)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            0.5.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                            AppShapes.menu
+                        )
                 ) {
                     SectionHeader("基本设置")
                     DropdownMenuItem(

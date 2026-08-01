@@ -114,7 +114,7 @@ fun AvatarView(
             .clip(CircleShape)
             .background(bgColor)
             .then(
-                if (onClick != null) Modifier.bounceClick().clickable(onClick = onClick)
+                if (onClick != null) Modifier.clickable(onClick = onClick)
                 else Modifier
             ),
         contentAlignment = Alignment.Center

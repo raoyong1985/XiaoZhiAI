@@ -25,7 +25,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.xiaozhi.aiservice.presentation.theme.AppShapes
 import com.xiaozhi.aiservice.presentation.ui.components.AvatarView
 import com.xiaozhi.aiservice.presentation.ui.components.BotColorScheme
-import com.xiaozhi.aiservice.presentation.ui.components.bounceClick
 import com.xiaozhi.aiservice.presentation.viewmodel.GroupChatViewModel
 import kotlinx.coroutines.launch
 
@@ -96,7 +95,6 @@ fun GroupChatListScreen(
                 items(groups, key = { it.id }) { group ->
                     ListItem(
                         modifier = Modifier
-                            .bounceClick()
                             .clickable { onGroupClick(group.id) }
                             .padding(horizontal = 4.dp),
                         headlineContent = {
@@ -141,7 +139,15 @@ fun GroupChatListScreen(
                                 }
                                 DropdownMenu(
                                     expanded = showMenu,
-                                    onDismissRequest = { showMenu = false }
+                                    onDismissRequest = { showMenu = false },
+                                    modifier = Modifier
+                                        .clip(AppShapes.menu)
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .border(
+                                            0.5.dp,
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                            AppShapes.menu
+                                        )
                                 ) {
                                     SectionHeader("基本设置")
                                     DropdownMenuItem(
@@ -234,7 +240,7 @@ fun GroupChatListScreen(
                     label = { Text("群聊名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = AppShapes.menu,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = MaterialTheme.colorScheme.outline
