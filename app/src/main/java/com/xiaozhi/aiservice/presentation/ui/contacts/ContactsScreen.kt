@@ -110,6 +110,7 @@ fun ContactsScreen(
     }
     val trainingContactId by viewModel.trainingContactId.collectAsState()
     val trainingStatusMap by viewModel.trainingStatus.collectAsState()
+    val wakeTemplates by viewModel.wakeTemplates.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.toastEvent.collect { message ->
@@ -124,6 +125,7 @@ fun ContactsScreen(
             viewModel = viewModel,
             trainingContactId = trainingContactId,
             trainingStatusMap = trainingStatusMap,
+            wakeTemplates = wakeTemplates,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -139,6 +141,7 @@ fun ContactsScreen(
             viewModel = viewModel,
             trainingContactId = trainingContactId,
             trainingStatusMap = trainingStatusMap,
+            wakeTemplates = wakeTemplates,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -366,6 +369,7 @@ fun AddEditContactDialog(
     viewModel: ContactsViewModel,
     trainingContactId: String?,
     trainingStatusMap: Map<String, String>,
+    wakeTemplates: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {
@@ -473,6 +477,7 @@ fun AddEditContactDialog(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         val isTrainingThis = trainingContactId == contactId
+                        val hasTemplate = wakeTemplates.containsKey(contactId)
 
                         if (isTrainingThis) {
                             WakeStatusRow(
@@ -496,6 +501,21 @@ fun AddEditContactDialog(
                                 Text(
                                     "自动训练",
                                     style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+
+                        // 已有模板时提供删除入口（训练错/换唤醒词后可单独清理）
+                        if (hasTemplate && !isTrainingThis) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = { viewModel.deleteWakeTemplate(contactId) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "删除已训练模板",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
                                 )
                             }
                         }

@@ -99,14 +99,11 @@ interface ContactsRepository {
     /** 从 JSON 恢复全部联系人 */
     suspend fun restoreContactsFromJson(json: String)
 
-    /** 获取所有联系人唤醒模板：contactId → base64 编码的 40维 MFCC 平均特征 */
+    /** 获取所有联系人唤醒模板：contactId → base64 编码的 MFCC 矩阵（DTW 变长） */
     fun getWakeTemplates(): Flow<Map<String, String>>
 
     /** 保存联系人唤醒模板 */
     suspend fun saveWakeTemplate(contactId: String, templateBase64: String)
-
-    /** 从 PCM 音频中提取 MFCC 唤醒模板并保存（隐藏 Data 层实现细节） */
-    suspend fun saveWakeTemplateFromPcm(contactId: String, pcmData: ByteArray)
 
     /** 删除联系人唤醒模板 */
     suspend fun deleteWakeTemplate(contactId: String)

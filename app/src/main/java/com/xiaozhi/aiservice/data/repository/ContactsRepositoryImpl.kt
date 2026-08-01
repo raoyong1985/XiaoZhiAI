@@ -9,7 +9,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.xiaozhi.aiservice.domain.model.BotContact
-import com.xiaozhi.aiservice.data.audio.WakeTemplateMatcher
 import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -119,11 +118,6 @@ class ContactsRepositoryImpl @Inject constructor(
             templates[contactId] = templateBase64
             preferences[WAKE_TEMPLATES_KEY] = gson.toJson(templates)
         }
-    }
-
-    override suspend fun saveWakeTemplateFromPcm(contactId: String, pcmData: ByteArray) {
-        val templateBase64 = WakeTemplateMatcher.extractTemplateFromPcm(pcmData)
-        saveWakeTemplate(contactId, templateBase64)
     }
 
     override suspend fun deleteWakeTemplate(contactId: String) {

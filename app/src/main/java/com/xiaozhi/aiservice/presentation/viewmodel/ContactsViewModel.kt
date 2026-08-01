@@ -67,6 +67,15 @@ class ContactsViewModel @Inject constructor(
 
     fun saveContact(contact: BotContact) {
         viewModelScope.launch {
+            // 检测唤醒词变更：旧模板对不上新唤醒词，自动失效
+            val old = contacts.value.firstOrNull { it.id == contact.id }
+            if (old != null &&
+                old.wakeWord != contact.wakeWord &&
+                wakeTemplates.value.containsKey(contact.id)
+            ) {
+                Logger.i(TAG, "唤醒词变更 ${old.wakeWord} → ${contact.wakeWord}，清除旧模板")
+                contactsRepository.deleteWakeTemplate(contact.id)
+            }
             contactsRepository.saveContact(contact)
         }
     }
@@ -74,6 +83,8 @@ class ContactsViewModel @Inject constructor(
     fun deleteContact(contactId: String) {
         viewModelScope.launch {
             contactsRepository.deleteContact(contactId)
+            // 清理训练状态残留（联系人已删除，状态无意义）
+            _trainingStatus.value = _trainingStatus.value - contactId
         }
     }
 
@@ -158,6 +169,11 @@ class ContactsViewModel @Inject constructor(
                         buf.asFloatBuffer().put(td.embedding)
                         val b64 = java.util.Base64.getEncoder().encodeToString(buf.array())
                         contactsRepository.saveWakeTemplate(contactId, b64)
+                    }
+                    // 训练成功自动同步唤醒词到联系人（免手动点保存）
+                    val existing = contacts.value.firstOrNull { it.id == contactId }
+                    if (existing != null && existing.wakeWord != wakeWord) {
+                        contactsRepository.saveContact(existing.copy(wakeWord = wakeWord))
                     }
                 } else {
                     Logger.w(TAG, "KWS 模板训练: 合成音频太短")
