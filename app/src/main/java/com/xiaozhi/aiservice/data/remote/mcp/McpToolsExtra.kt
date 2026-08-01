@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
@@ -257,6 +258,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         // 等待短时间收集扫描结果
         delay(1500)
 
+        @SuppressLint("MissingPermission")  // 上方已做 ACCESS_FINE_LOCATION 运行时检查
         val results = wifiManager.scanResults
             .sortedByDescending { it.level }
             .take(maxResults)
@@ -266,7 +268,11 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             @Suppress("DEPRECATION")
             val sr = scanResult as android.net.wifi.ScanResult
             arr.add(JsonObject().apply {
-                val ssidStr = sr.wifiSsid?.toString() ?: "(hidden)"
+                val ssidStr = if (Build.VERSION.SDK_INT >= 33) {
+                    sr.wifiSsid?.toString() ?: "(hidden)"
+                } else {
+                    sr.SSID ?: "(hidden)"
+                }
                 addProperty("ssid", ssidStr)
                 addProperty("bssid", sr.BSSID)
                 addProperty("rssi", sr.level)
@@ -298,7 +304,6 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             "timeout_ms" to jsonNumberProp("扫描时长（毫秒），默认 4000，建议 3000-8000"),
         )
     ) { args ->
-        val ctx = registry.context
         val maxResults = (args["max_results"] as? Number)?.toInt()?.coerceIn(1, 50) ?: 20
         val scanTimeout = (args["timeout_ms"] as? Number)?.toLong()?.coerceIn(2000, 15000) ?: 4000L
 
@@ -312,101 +317,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
             if (btPerm != null) return@registerTool btPerm
         }
 
-        val bluetoothManager = if (Build.VERSION.SDK_INT >= 31) {
-            ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
-        }
-        val adapter = bluetoothManager?.adapter ?: throw Exception("此设备不支持蓝牙")
-        if (!adapter.isEnabled) throw Exception("蓝牙已关闭，请先开启蓝牙")
-
-        // ── BLE 扫描（API 21+，更高效）──
-        val foundBleDevices = mutableSetOf<Pair<String, String>>()  // name to address
-        val leScanner = if (Build.VERSION.SDK_INT >= 21) adapter.bluetoothLeScanner else null
-        var bleScanDone = false
-
-        if (leScanner != null) {
-            val scanCallback = object : android.bluetooth.le.ScanCallback() {
-                override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
-                    val device = result?.device ?: return
-                    val name = device.name ?: result?.scanRecord?.deviceName ?: "(未知)"
-                    if (name != "(未知)" || device.address.isNotEmpty()) {
-                        foundBleDevices.add(name to device.address)
-                    }
-                }
-                override fun onBatchScanResults(results: MutableList<android.bluetooth.le.ScanResult>?) {
-                    results?.forEach { r ->
-                        val d = r.device ?: return@forEach
-                        foundBleDevices.add((d.name ?: "(未知)") to d.address)
-                    }
-                }
-            }
-            try {
-                val settings = android.bluetooth.le.ScanSettings.Builder()
-                    .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY)
-                    .build()
-                leScanner.startScan(null, settings, scanCallback)
-                delay(scanTimeout)
-                leScanner.stopScan(scanCallback)
-                bleScanDone = true
-            } catch (_: Exception) {
-                // BLE 扫描失败（权限不足等），回退到经典扫描
-            }
-        }
-
-        // ── 经典蓝牙发现（补全经典 BT 设备）──
-        val foundClassicDevices = mutableListOf<Pair<String, String>>()
-        if (!bleScanDone) {
-            val receiver = object : android.content.BroadcastReceiver() {
-                override fun onReceive(context: Context, intent: android.content.Intent) {
-                    if (intent.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) return
-                    val device = if (Build.VERSION.SDK_INT >= 33) {
-                        intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
-                    }
-                    if (device != null) {
-                        val name = device.name ?: "(未知)"
-                        if (foundClassicDevices.none { it.second == device.address }) {
-                            foundClassicDevices.add(name to device.address)
-                        }
-                    }
-                }
-            }
-            ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
-            adapter.startDiscovery()
-            delay(minOf(scanTimeout, 8000L))
-            adapter.cancelDiscovery()
-            try { ctx.unregisterReceiver(receiver) } catch (_: Exception) {}
-        }
-
-        // ── 已配对设备（所有方式都包含）──
-        val bonded = adapter.bondedDevices?.map { (it.name ?: "(未知)") to it.address } ?: emptyList()
-
-        // ── 合并去重 ──
-        val allDevices = (bonded + foundBleDevices + foundClassicDevices)
-            .distinctBy { it.second }
-            .take(maxResults)
-
-        val arr = JsonArray()
-        allDevices.forEach { (name, address) ->
-            arr.add(JsonObject().apply {
-                addProperty("name", name)
-                addProperty("address", address)
-                addProperty("paired", bonded.any { it.second == address })
-                addProperty("nearby", foundBleDevices.any { it.second == address } || foundClassicDevices.any { it.second == address })
-                addProperty("scan_type", if (foundBleDevices.any { it.second == address }) "ble" else "classic")
-            })
-        }
-
-        JsonObject().apply {
-            add("devices", arr)
-            addProperty("count", arr.size())
-            addProperty("scan_method", if (bleScanDone) "ble_scanner" else "classic_discovery")
-            addProperty("bluetooth_enabled", adapter.isEnabled)
-        }
+        scanBluetooth(registry, maxResults, scanTimeout)
     }
 
 
@@ -983,5 +894,108 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         } catch (e: Exception) {
             throw Exception("无法打开应用设置: ${e.message}")
         }
+    }
+}
+
+/**
+ * 蓝牙扫描实现（权限已在调用方运行时检查过，此处 SuppressLint 避免 lint 误报）
+ */
+@SuppressLint("MissingPermission")
+private suspend fun scanBluetooth(registry: MCPToolRegistry, maxResults: Int, scanTimeout: Long): JsonObject {
+    val ctx = registry.context
+    val bluetoothManager = if (Build.VERSION.SDK_INT >= 31) {
+        ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+    }
+    val adapter = bluetoothManager?.adapter ?: throw Exception("此设备不支持蓝牙")
+    if (!adapter.isEnabled) throw Exception("蓝牙已关闭，请先开启蓝牙")
+
+    // ── BLE 扫描（API 21+，更高效）──
+    val foundBleDevices = mutableSetOf<Pair<String, String>>()  // name to address
+    val leScanner = if (Build.VERSION.SDK_INT >= 21) adapter.bluetoothLeScanner else null
+    var bleScanDone = false
+
+    if (leScanner != null) {
+        val scanCallback = object : android.bluetooth.le.ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
+                val device = result?.device ?: return
+                val name = device.name ?: result?.scanRecord?.deviceName ?: "(未知)"
+                if (name != "(未知)" || device.address.isNotEmpty()) {
+                    foundBleDevices.add(name to device.address)
+                }
+            }
+            override fun onBatchScanResults(results: MutableList<android.bluetooth.le.ScanResult>?) {
+                results?.forEach { r ->
+                    val d = r.device ?: return@forEach
+                    foundBleDevices.add((d.name ?: "(未知)") to d.address)
+                }
+            }
+        }
+        try {
+            val settings = android.bluetooth.le.ScanSettings.Builder()
+                .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
+            leScanner.startScan(null, settings, scanCallback)
+            delay(scanTimeout)
+            leScanner.stopScan(scanCallback)
+            bleScanDone = true
+        } catch (_: Exception) {
+            // BLE 扫描失败（权限不足等），回退到经典扫描
+        }
+    }
+
+    // ── 经典蓝牙发现（补全经典 BT 设备）──
+    val foundClassicDevices = mutableListOf<Pair<String, String>>()
+    if (!bleScanDone) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: android.content.Intent) {
+                if (intent.action == BluetoothAdapter.ACTION_DISCOVERY_FINISHED) return
+                val device = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<android.bluetooth.BluetoothDevice>(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                }
+                if (device != null) {
+                    val name = device.name ?: "(未知)"
+                    if (foundClassicDevices.none { it.second == device.address }) {
+                        foundClassicDevices.add(name to device.address)
+                    }
+                }
+            }
+        }
+        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
+        adapter.startDiscovery()
+        delay(minOf(scanTimeout, 8000L))
+        adapter.cancelDiscovery()
+        try { ctx.unregisterReceiver(receiver) } catch (_: Exception) {}
+    }
+
+    // ── 已配对设备（所有方式都包含）──
+    val bonded = adapter.bondedDevices?.map { (it.name ?: "(未知)") to it.address } ?: emptyList()
+
+    // ── 合并去重 ──
+    val allDevices = (bonded + foundBleDevices + foundClassicDevices)
+        .distinctBy { it.second }
+        .take(maxResults)
+
+    val arr = JsonArray()
+    allDevices.forEach { (name, address) ->
+        arr.add(JsonObject().apply {
+            addProperty("name", name)
+            addProperty("address", address)
+            addProperty("paired", bonded.any { it.second == address })
+            addProperty("nearby", foundBleDevices.any { it.second == address } || foundClassicDevices.any { it.second == address })
+            addProperty("scan_type", if (foundBleDevices.any { it.second == address }) "ble" else "classic")
+        })
+    }
+
+    return JsonObject().apply {
+        add("devices", arr)
+        addProperty("count", arr.size())
+        addProperty("scan_method", if (bleScanDone) "ble_scanner" else "classic_discovery")
+        addProperty("bluetooth_enabled", adapter.isEnabled)
     }
 }

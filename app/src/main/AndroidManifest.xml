@@ -37,6 +37,7 @@
 
     <!-- SMS read -->
     <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <!-- Storage for chat history (Android 9 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -58,6 +59,7 @@
 
     <!-- Phone calls -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <!-- Contacts lookup for ai_make_call -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -67,12 +69,14 @@
 
     <!-- SMS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <!-- WiFi control -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!-- System settings -->
-    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Foreground service microphone -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />

@@ -1,5 +1,6 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -16,6 +17,7 @@ import androidx.core.app.NotificationManagerCompat
  */
 class AlarmReceiver : BroadcastReceiver() {
 
+    @SuppressLint("MissingPermission")  // 闹钟提醒:无通知权限时静默失败
     override fun onReceive(context: Context, intent: Intent) {
         val hour = intent.getIntExtra("hour", 8)
         val minute = intent.getIntExtra("minute", 0)

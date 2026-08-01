@@ -1,6 +1,7 @@
 package com.xiaozhi.aiservice.data.remote.mcp
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -273,6 +274,7 @@ object CalendarHelper {
  * 发送通知引导用户开启权限，并返回标准的权限不足 JSON
  * 在后台服务中无法可靠地 startActivity，用通知替代
  */
+@SuppressLint("MissingPermission")  // 引导通知:无权限时仍尝试提醒,失败静默
 fun sendPermissionGuideNotification(permissionName: String): JsonObject {
     val ctx = AppContext.context
     val channelId = "permission_guide"
