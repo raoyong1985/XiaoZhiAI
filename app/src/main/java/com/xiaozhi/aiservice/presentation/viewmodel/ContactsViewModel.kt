@@ -118,7 +118,7 @@ class ContactsViewModel @Inject constructor(
                 _trainingStatus.value = _trainingStatus.value + (contactId to "正在合成唤醒词音频…")
                 val edgeTts = com.xiaozhi.aiservice.data.audio.EdgeTtsSynthesizer()
 
-                // 用 Edge TTS 合成多种语速变体
+                // 用 Edge TTS 合成多种语速变体（normal / slow / fast）
                 val pcmSamples = mutableListOf<ByteArray>()
 
                 // 检测重复唤醒词（如"悠悠悠悠"→"悠悠 悠悠"），在中间加停顿
@@ -127,17 +127,18 @@ class ContactsViewModel @Inject constructor(
                     if (wakeWord.substring(0, half) == wakeWord.substring(half)) half - 1 else -1
                 } else -1
 
-                // 正常语速
+                // 正常语速（重复词带停顿）
                 val normal = edgeTts.synthesize(wakeWord, splitAfter)
                 if (normal != null) pcmSamples.add(normal)
 
-                // 慢速语速
+                // 慢速变体（rate -20%）
                 _trainingStatus.value = _trainingStatus.value + (contactId to "正在合成多样化本…")
-                val slow = edgeTts.synthesize(wakeWord)
+                val slow = edgeTts.synthesize(wakeWord, -1, rate = -20)
                 if (slow != null) pcmSamples.add(slow)
 
-                val extra = edgeTts.synthesize(wakeWord)
-                if (extra != null) pcmSamples.add(extra)
+                // 快速变体（rate +15%）
+                val fast = edgeTts.synthesize(wakeWord, -1, rate = 15)
+                if (fast != null) pcmSamples.add(fast)
 
                 if (pcmSamples.size < 2) {
                     Logger.w(TAG, "KWS 训练失败: Edge TTS 合成次数不足")
@@ -150,10 +151,10 @@ class ContactsViewModel @Inject constructor(
                 if (success) {
                     Logger.i(TAG, "✅ KWS 模板训练成功: $contactId 「$wakeWord」")
                     _trainingStatus.value = _trainingStatus.value + (contactId to "✅ 唤醒词「$wakeWord」训练完成")
-                    // 保存 embedding 到持久化存储
+                    // 保存 embedding 到持久化存储（按真实维度，trim 后可能 < 2520）
                     val td = kwsEngine!!.getTemplateData(contactId)
                     if (td != null) {
-                        val buf = java.nio.ByteBuffer.allocate(2520 * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        val buf = java.nio.ByteBuffer.allocate(td.embedding.size * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                         buf.asFloatBuffer().put(td.embedding)
                         val b64 = java.util.Base64.getEncoder().encodeToString(buf.array())
                         contactsRepository.saveWakeTemplate(contactId, b64)

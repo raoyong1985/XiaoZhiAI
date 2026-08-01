@@ -20,8 +20,8 @@ import java.util.concurrent.ConcurrentHashMap
  *   - 不需要训练，无 ONNX 依赖
  */
 class KwsEngine(
-    /** DTW 距离阈值（越小越严格），默认 2.0 */
-    private var matchThreshold: Float = 2.0f
+    /** DTW 平均每帧距离阈值（越小越严格）。63 帧累加阈值 2.0 ≈ 平均每帧 0.032，取 0.05 留余量 */
+    private var matchThreshold: Float = 0.05f
 ) {
     companion object {
         private const val TAG = "KwsEngine"
@@ -185,15 +185,22 @@ class KwsEngine(
         var bestContact: String? = null
         var bestDistance = Float.MAX_VALUE
         var secondBestDistance = Float.MAX_VALUE
+        var bestFrames = CONTEXT_FRAMES
+        var secondBestFrames = CONTEXT_FRAMES
 
         for ((contactId, template) in templates) {
             val distance = dtwDistance(mfccFeatureMap, template.embedding)
-            if (distance < bestDistance) {
+            val frames = template.embedding.size / N_MFCC
+            val norm = if (frames > 0) distance / frames else distance
+            if (norm < bestDistance) {
                 secondBestDistance = bestDistance
-                bestDistance = distance
+                secondBestFrames = bestFrames
+                bestDistance = norm
+                bestFrames = frames
                 bestContact = contactId
-            } else if (distance < secondBestDistance) {
-                secondBestDistance = distance
+            } else if (norm < secondBestDistance) {
+                secondBestDistance = norm
+                secondBestFrames = frames
             }
         }
 
@@ -202,13 +209,15 @@ class KwsEngine(
         if (bestContact == null) return null
 
         // ── 自适应判决：只看绝对值不够，还要看相对差距 ──
-        // 阈值 1：绝对距离必须 < matchThreshold（越严格）
+        // 阈值 1：按帧数归一化的平均距离必须 < matchThreshold
+        // trim 静音后模板帧数可能 < 63，累加距离会偏小；归一化到平均每帧距离，
+        // 使不同长度模板可比（matchThreshold 语义 = 平均每帧 DTW 成本）
         if (bestDistance > matchThreshold) {
-            Logger.w(TAG, "DTW 距离 ${"%.2f".format(bestDistance)} > 阈值 $matchThreshold")
+            Logger.w(TAG, "DTW 距离 ${"%.3f".format(bestDistance)} (raw=${"%.2f".format(bestDistance * bestFrames)}/${bestFrames}帧) > 阈值 $matchThreshold")
             return null
         }
 
-        // 阈值 2（动态）：最佳 vs 次佳的距离差距比
+        // 阈值 2（动态）：最佳 vs 次佳的距离差距比（都用归一化距离）
         // 如果有多个模板，最佳距离必须明显优于次佳（gap > 30%），否则判为模糊
         val gapRatio = if (secondBestDistance < Float.MAX_VALUE && secondBestDistance > 0) {
             bestDistance / secondBestDistance
@@ -218,12 +227,12 @@ class KwsEngine(
 
         if (gapRatio > 0.7f && gapRatio > 0f) {
             // 最佳和次佳太接近（差距 < 30%），拒绝避免误报
-            Logger.w(TAG, "DTW 模糊拒绝: best=${"%.2f".format(bestDistance)} 2nd=${"%.2f".format(secondBestDistance)} ratio=${"%.2f".format(gapRatio)}")
+            Logger.w(TAG, "DTW 模糊拒绝: best=${"%.3f".format(bestDistance)} 2nd=${"%.3f".format(secondBestDistance)} ratio=${"%.2f".format(gapRatio)}")
             return null
         }
 
         val word = templates[bestContact]?.wakeWord ?: ""
-        Logger.w(TAG, "🎯 DTW 匹配成功: $bestContact 「$word」 dist=${"%.2f".format(bestDistance)} gap=${"%.2f".format(gapRatio)}")
+        Logger.w(TAG, "🎯 DTW 匹配成功: $bestContact 「$word」 dist=${"%.3f".format(bestDistance)}/${bestFrames}帧 raw=${"%.2f".format(bestDistance * bestFrames)} gap=${"%.2f".format(gapRatio)}")
         return bestContact
     }
 
@@ -310,14 +319,16 @@ class KwsEngine(
 
     /**
      * 从持久化的 MFCC 矩阵字节数组恢复模板。
+     * 支持变长（trim 静音后帧数可能 < 63），按实际字节数计算帧数。
      */
     fun restoreTemplate(contactId: String, wakeWord: String, embeddingBytes: ByteArray): Boolean {
-        if (embeddingBytes.size != EMBEDDING_DIM * 4) return false
-        val emb = FloatArray(EMBEDDING_DIM)
+        val n = embeddingBytes.size / 4
+        if (n < N_MFCC || n % N_MFCC != 0) return false  // 至少 1 帧，且是 40 维的整数倍
+        val emb = FloatArray(n)
         val buf = java.nio.ByteBuffer.wrap(embeddingBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         buf.asFloatBuffer().get(emb)
         templates[contactId] = TemplateData(emb, wakeWord)
-        Logger.w(TAG, "✅ 已恢复唤醒模板: contact=$contactId 「$wakeWord」 (${EMBEDDING_DIM}D MFCC DTW)")
+        Logger.w(TAG, "✅ 已恢复唤醒模板: contact=$contactId 「$wakeWord」 (${n / N_MFCC} 帧 MFCC DTW)")
         return true
     }
 

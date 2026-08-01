@@ -517,8 +517,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                         if (b64.length < 10) continue
                         try {
                             val bytes = java.util.Base64.getDecoder().decode(b64)
-                            // MFCC 矩阵 = 2520 floats × 4 bytes = 10080 bytes
-                            if (bytes.size == 10080) {
+                            // MFCC 矩阵 = N×40 floats × 4 bytes（trim 后可能 < 63 帧）
+                            if (bytes.size >= 160 && bytes.size % 160 == 0) {
                                 audioRecorder.kwsEngine.restoreTemplate(cid, "", bytes)
                             }
                         } catch (_: Exception) {}
