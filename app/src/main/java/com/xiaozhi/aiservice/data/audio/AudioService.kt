@@ -71,7 +71,6 @@ class AudioService {
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
     private var appContext: android.content.Context? = null
-    private var audioSettingsBackup = mutableMapOf<String, Boolean>()  // 存旧增强配置
 
     /** 上次录音启动/运行失败的详细原因，供上层日志 */ 
     @Volatile var lastRecordError: String? = null

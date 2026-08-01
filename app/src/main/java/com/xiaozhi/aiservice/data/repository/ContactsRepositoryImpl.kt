@@ -122,8 +122,7 @@ class ContactsRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveWakeTemplateFromPcm(contactId: String, pcmData: ByteArray) {
-        val matcher = WakeTemplateMatcher()
-        val templateBase64 = matcher.extractTemplateFromPcm(pcmData)
+        val templateBase64 = WakeTemplateMatcher.extractTemplateFromPcm(pcmData)
         saveWakeTemplate(contactId, templateBase64)
     }
 

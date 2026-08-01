@@ -94,9 +94,7 @@ class MainActivity : ComponentActivity() {
         val permissionsToRequest = mutableListOf<String>()
 
         val basePermissions = listOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.INTERNET,
-            Manifest.permission.ACCESS_NETWORK_STATE
+            Manifest.permission.RECORD_AUDIO
         )
 
         for (permission in basePermissions) {

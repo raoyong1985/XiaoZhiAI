@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.data.remote
 import com.xiaozhi.aiservice.utils.Logger
 import com.google.gson.Gson
 import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonNull
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -849,154 +850,166 @@ class XiaoZhiBackendService(
         val msgId = payload?.get("id") ?: com.google.gson.JsonNull.INSTANCE
 
         when (method) {
-            "initialize" -> {
-                val params = payload?.get("params")?.asJsonObject
-                val capabilities = params?.getAsJsonObject("capabilities")
-                val vision = capabilities?.getAsJsonObject("vision")
-                val visionUrlStr = vision?.get("url")?.asString
-                if (visionUrlStr != null) {
-                    visionUrl = visionUrlStr
-                    Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
-                }
-                val visionTokenStr = vision?.get("token")?.asString
-                if (visionTokenStr != null) {
-                    visionToken = visionTokenStr
-                    Logger.i(TAG, "服务器视觉AI Token: $visionTokenStr")
-                }
-                val response = JsonObject().apply {
-                    addProperty("type", "mcp")
-                    addProperty("session_id", sessionId)
-                    val responsePayload = JsonObject().apply {
-                        addProperty("jsonrpc", "2.0")
-                        add("id", msgId)
-                        val result = JsonObject().apply {
-                            addProperty("protocolVersion", "2024-11-05")
-                            add("capabilities", JsonObject().apply { add("tools", JsonObject()) })
-                            val serverInfo = JsonObject().apply {
-                                addProperty("name", "xiaozhi-android")
-                                addProperty("version", "1.0.0")
-                            }
-                            add("serverInfo", serverInfo)
-                        }
-                        add("result", result)
-                    }
-                    add("payload", responsePayload)
-                }
-                sendTextMessage(response.toString())
-                Logger.i(TAG, "回复MCP initialized响应")
-            }
-            "tools/list" -> {
-                val toolList = mcpToolRegistry.getToolList()
-                val response = JsonObject().apply {
-                    addProperty("type", "mcp")
-                    addProperty("session_id", sessionId)
-                    val responsePayload = JsonObject().apply {
-                        addProperty("jsonrpc", "2.0")
-                        add("id", msgId)
-                        add("result", JsonObject().apply { add("tools", toolList) })
-                    }
-                    add("payload", responsePayload)
-                }
-                sendTextMessage(response.toString())
-                Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
-            }
-            "resources/list" -> {
-                val response = JsonObject().apply {
-                addProperty("type", "mcp")
-                addProperty("session_id", sessionId)
-                val responsePayload = JsonObject().apply {
-                    addProperty("jsonrpc", "2.0")
-                    add("id", msgId)
-                    add("result", JsonObject().apply {
-                        add("resources", JsonArray())
-                    })
-                }
-                add("payload", responsePayload)
-                }
-                sendTextMessage(response.toString())
-                Logger.i(TAG, "回复MCP resources/list响应(空)")
-                }
-                "resources/read" -> {
-                val response = JsonObject().apply {
-                addProperty("type", "mcp")
-                addProperty("session_id", sessionId)
-                val responsePayload = JsonObject().apply {
-                    addProperty("jsonrpc", "2.0")
-                    add("id", msgId)
-                    add("result", JsonObject().apply {
-                        add("contents", JsonArray())
-                    })
-                }
-                add("payload", responsePayload)
-                }
-                sendTextMessage(response.toString())
-                Logger.i(TAG, "回复MCP resources/read响应(空)")
-                }
-                "prompts/list" -> {
-                val response = JsonObject().apply {
-                addProperty("type", "mcp")
-                addProperty("session_id", sessionId)
-                val responsePayload = JsonObject().apply {
-                    addProperty("jsonrpc", "2.0")
-                    add("id", msgId)
-                    add("result", JsonObject().apply {
-                        add("prompts", JsonArray())
-                    })
-                }
-                add("payload", responsePayload)
-                }
-                sendTextMessage(response.toString())
-                Logger.i(TAG, "回复MCP prompts/list响应(空)")
-            }
-            "tools/call" -> {
-                val params = payload?.get("params")?.asJsonObject
-                val toolName = params?.get("name")?.asString ?: ""
-                val arguments = params?.get("arguments")?.asJsonObject
-                val argsMap = mutableMapOf<String, Any>()
-                arguments?.entrySet()?.forEach { (k, v) ->
-                    argsMap[k] = when {
-                        v.isJsonPrimitive -> {
-                            val prim = v.asJsonPrimitive
-                            if (prim.isString) prim.asString
-                            else if (prim.isNumber) prim.asNumber
-                            else if (prim.isBoolean) prim.asBoolean
-                            else prim.toString()
-                        }
-                        else -> v.toString()
-                    }
-                }
-                scope.launch(Dispatchers.IO) {
-                    val (isSuccess, result) = mcpToolRegistry.callTool(toolName, argsMap)
-                    val response = JsonObject().apply {
-                        addProperty("type", "mcp")
-                        addProperty("session_id", sessionId)
-                        val responsePayload = JsonObject().apply {
-                            addProperty("jsonrpc", "2.0")
-                            add("id", msgId)
-                            if (isSuccess) {
-                                add("result", JsonObject().apply {
-                                    add("content", JsonArray().apply {
-                                        add(JsonObject().apply {
-                                            addProperty("type", "text")
-                                            addProperty("text", (result as JsonObject).toString())
-                                        })
-                                    })
-                                })
-                            } else {
-                                add("error", JsonObject().apply {
-                                    addProperty("code", -32603)
-                                    addProperty("message", result as String)
-                                })
-                            }
-                        }
-                        add("payload", responsePayload)
-                    }
-                    sendTextMessage(response.toString())
-                    Logger.i(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
-                }
-            }
+            "initialize" -> handleMcpInitialize(payload, msgId)
+            "tools/list" -> handleMcpToolsList(msgId)
+            "resources/list" -> handleMcpResourcesList(msgId)
+            "resources/read" -> handleMcpResourcesRead(msgId)
+            "prompts/list" -> handleMcpPromptsList(msgId)
+            "tools/call" -> handleMcpToolsCall(payload, msgId)
             "notifications/initialized" -> { /* JSON-RPC 通知，无需回复 */ }
             else -> Logger.w(TAG, "未知MCP方法: $method")
+        }
+    }
+
+    private fun handleMcpInitialize(payload: JsonObject?, msgId: JsonElement) {
+        val params = payload?.get("params")?.asJsonObject
+        val capabilities = params?.getAsJsonObject("capabilities")
+        val vision = capabilities?.getAsJsonObject("vision")
+        val visionUrlStr = vision?.get("url")?.asString
+        if (visionUrlStr != null) {
+            visionUrl = visionUrlStr
+            Logger.i(TAG, "服务器视觉AI URL: $visionUrlStr")
+        }
+        val visionTokenStr = vision?.get("token")?.asString
+        if (visionTokenStr != null) {
+            visionToken = visionTokenStr
+            Logger.i(TAG, "服务器视觉AI Token: $visionTokenStr")
+        }
+        val response = JsonObject().apply {
+            addProperty("type", "mcp")
+            addProperty("session_id", sessionId)
+            val responsePayload = JsonObject().apply {
+                addProperty("jsonrpc", "2.0")
+                add("id", msgId)
+                val result = JsonObject().apply {
+                    addProperty("protocolVersion", "2024-11-05")
+                    add("capabilities", JsonObject().apply { add("tools", JsonObject()) })
+                    val serverInfo = JsonObject().apply {
+                        addProperty("name", "xiaozhi-android")
+                        addProperty("version", "1.0.0")
+                    }
+                    add("serverInfo", serverInfo)
+                }
+                add("result", result)
+            }
+            add("payload", responsePayload)
+        }
+        sendTextMessage(response.toString())
+        Logger.i(TAG, "回复MCP initialized响应")
+    }
+
+    private fun handleMcpToolsList(msgId: JsonElement) {
+        val toolList = mcpToolRegistry.getToolList()
+        val response = JsonObject().apply {
+            addProperty("type", "mcp")
+            addProperty("session_id", sessionId)
+            val responsePayload = JsonObject().apply {
+                addProperty("jsonrpc", "2.0")
+                add("id", msgId)
+                add("result", JsonObject().apply { add("tools", toolList) })
+            }
+            add("payload", responsePayload)
+        }
+        sendTextMessage(response.toString())
+        Logger.i(TAG, "回复MCP tools/list响应，工具数: ${toolList.size()}")
+    }
+
+    private fun handleMcpResourcesList(msgId: JsonElement) {
+        val response = JsonObject().apply {
+            addProperty("type", "mcp")
+            addProperty("session_id", sessionId)
+            val responsePayload = JsonObject().apply {
+                addProperty("jsonrpc", "2.0")
+                add("id", msgId)
+                add("result", JsonObject().apply {
+                    add("resources", JsonArray())
+                })
+            }
+            add("payload", responsePayload)
+        }
+        sendTextMessage(response.toString())
+        Logger.i(TAG, "回复MCP resources/list响应(空)")
+    }
+
+    private fun handleMcpResourcesRead(msgId: JsonElement) {
+        val response = JsonObject().apply {
+            addProperty("type", "mcp")
+            addProperty("session_id", sessionId)
+            val responsePayload = JsonObject().apply {
+                addProperty("jsonrpc", "2.0")
+                add("id", msgId)
+                add("result", JsonObject().apply {
+                    add("contents", JsonArray())
+                })
+            }
+            add("payload", responsePayload)
+        }
+        sendTextMessage(response.toString())
+        Logger.i(TAG, "回复MCP resources/read响应(空)")
+    }
+
+    private fun handleMcpPromptsList(msgId: JsonElement) {
+        val response = JsonObject().apply {
+            addProperty("type", "mcp")
+            addProperty("session_id", sessionId)
+            val responsePayload = JsonObject().apply {
+                addProperty("jsonrpc", "2.0")
+                add("id", msgId)
+                add("result", JsonObject().apply {
+                    add("prompts", JsonArray())
+                })
+            }
+            add("payload", responsePayload)
+        }
+        sendTextMessage(response.toString())
+        Logger.i(TAG, "回复MCP prompts/list响应(空)")
+    }
+
+    private fun handleMcpToolsCall(payload: JsonObject?, msgId: JsonElement) {
+        val params = payload?.get("params")?.asJsonObject
+        val toolName = params?.get("name")?.asString ?: ""
+        val arguments = params?.get("arguments")?.asJsonObject
+        val argsMap = mutableMapOf<String, Any>()
+        arguments?.entrySet()?.forEach { (k, v) ->
+            argsMap[k] = when {
+                v.isJsonPrimitive -> {
+                    val prim = v.asJsonPrimitive
+                    if (prim.isString) prim.asString
+                    else if (prim.isNumber) prim.asNumber
+                    else if (prim.isBoolean) prim.asBoolean
+                    else prim.toString()
+                }
+                else -> v.toString()
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val (isSuccess, result) = mcpToolRegistry.callTool(toolName, argsMap)
+            val response = JsonObject().apply {
+                addProperty("type", "mcp")
+                addProperty("session_id", sessionId)
+                val responsePayload = JsonObject().apply {
+                    addProperty("jsonrpc", "2.0")
+                    add("id", msgId)
+                    if (isSuccess) {
+                        add("result", JsonObject().apply {
+                            add("content", JsonArray().apply {
+                                add(JsonObject().apply {
+                                    addProperty("type", "text")
+                                    addProperty("text", (result as JsonObject).toString())
+                                })
+                            })
+                        })
+                    } else {
+                        add("error", JsonObject().apply {
+                            addProperty("code", -32603)
+                            addProperty("message", result as String)
+                        })
+                    }
+                }
+                add("payload", responsePayload)
+            }
+            sendTextMessage(response.toString())
+            Logger.i(TAG, "回复MCP tools/call响应: $toolName, success=$isSuccess")
         }
     }
 
