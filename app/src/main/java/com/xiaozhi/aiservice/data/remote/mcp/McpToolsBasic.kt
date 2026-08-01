@@ -9,6 +9,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** 时间格式化单例（SimpleDateFormat 创建开销大，工具热路径复用） */
+private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
 
 fun registerBasicTools(registry: MCPToolRegistry) {
     // 已合并到 get_system_info（get_device_info 删除）
@@ -54,7 +57,7 @@ fun registerBasicTools(registry: MCPToolRegistry) {
             addProperty("storage_free_gb", String.format(Locale.US, "%.1f", freeBlocks * blockSize / 1e9))
             addProperty("app_version", com.xiaozhi.aiservice.BuildConfig.VERSION_NAME)
             addProperty("app_version_code", com.xiaozhi.aiservice.BuildConfig.VERSION_CODE)
-            addProperty("current_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+            addProperty("current_time", timeFormat.format(Date()))
             addProperty("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
         }
     }

@@ -186,7 +186,6 @@ class KwsEngine(
         var bestDistance = Float.MAX_VALUE
         var secondBestDistance = Float.MAX_VALUE
         var bestFrames = CONTEXT_FRAMES
-        var secondBestFrames = CONTEXT_FRAMES
 
         for ((contactId, template) in templates) {
             val distance = dtwDistance(mfccFeatureMap, template.embedding)
@@ -194,13 +193,11 @@ class KwsEngine(
             val norm = if (frames > 0) distance / frames else distance
             if (norm < bestDistance) {
                 secondBestDistance = bestDistance
-                secondBestFrames = bestFrames
                 bestDistance = norm
                 bestFrames = frames
                 bestContact = contactId
             } else if (norm < secondBestDistance) {
                 secondBestDistance = norm
-                secondBestFrames = frames
             }
         }
 

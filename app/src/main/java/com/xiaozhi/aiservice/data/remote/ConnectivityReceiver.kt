@@ -98,6 +98,7 @@ class ConnectivityReceiver : BroadcastReceiver() {
     /**
      * BroadcastReceiver 回调（仅用于 Android 6- 低版本）
      */
+    @Suppress("DEPRECATION")
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ConnectivityManager.CONNECTIVITY_ACTION) {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

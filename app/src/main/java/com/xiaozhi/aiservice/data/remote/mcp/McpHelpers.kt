@@ -132,7 +132,9 @@ suspend fun getCurrentLocation(): Pair<Double, Double>? {
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 suspend fun <T> com.google.android.gms.tasks.Task<T>.await(): T? {
     return suspendCancellableCoroutine { continuation ->
-        addOnSuccessListener { result -> continuation.resume(result) {} }
+        addOnSuccessListener { result ->
+            continuation.resume(result) { _, _, _ -> }
+        }
         addOnFailureListener { continuation.cancel() }
     }
 }

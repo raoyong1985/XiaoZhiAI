@@ -212,7 +212,7 @@ fun GroupChatListScreen(
                             containerColor = MaterialTheme.colorScheme.surface
                         )
                     )
-                    Divider(
+                    HorizontalDivider(
                         modifier = Modifier.padding(start = 72.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                         thickness = 0.5.dp

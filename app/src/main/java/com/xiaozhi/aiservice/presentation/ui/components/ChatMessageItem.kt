@@ -201,7 +201,7 @@ fun ChatMessageItem(
                     text = { Text("删除", color = MaterialTheme.colorScheme.error) },
                     onClick = {
                         showContextMenu = false
-                        onDelete?.invoke(message.id)
+                        onDelete(message.id)
                     },
                     leadingIcon = {
                         Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)

@@ -745,7 +745,7 @@ class XiaoZhiBackendService(
                         Logger.i(TAG, "本地命令完成(不转发服务器): $feedbackText")
                         // 显示到聊天
                         if (result.success && result.rawResult is JsonObject) {
-                            val toolResult = result.rawResult as JsonObject
+                            val toolResult = result.rawResult
                             // 提取用户友好字段（message/text/content/result/...），
                             // 避免把 `{"key":"value"}` 原始 JSON 当消息显示在聊天界面
                             val displayText = formatToolResult(toolResult)

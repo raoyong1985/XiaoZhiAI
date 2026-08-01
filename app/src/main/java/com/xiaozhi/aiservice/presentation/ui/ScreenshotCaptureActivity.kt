@@ -140,6 +140,7 @@ class ScreenshotCaptureActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun startCapture(projection: MediaProjection) {
         try {
             // 获取屏幕实际尺寸
@@ -148,7 +149,6 @@ class ScreenshotCaptureActivity : ComponentActivity() {
                 val display = wmContext.defaultDisplay
                 DisplayMetrics().also { display.getRealMetrics(it) }
             } else {
-                @Suppress("DEPRECATION")
                 val display = windowManager.defaultDisplay
                 DisplayMetrics().also { display.getRealMetrics(it) }
             }

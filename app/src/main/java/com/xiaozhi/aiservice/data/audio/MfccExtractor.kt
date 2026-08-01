@@ -53,7 +53,6 @@ class MfccExtractor {
     private val fftCos: FloatArray
 
     init {
-        val half = N_FFT / 2
         fftSin = FloatArray(N_FFT) { i -> sin(2f * PI * i / N_FFT).toFloat() }
         fftCos = FloatArray(N_FFT) { i -> cos(2f * PI * i / N_FFT).toFloat() }
     }

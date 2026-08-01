@@ -92,9 +92,6 @@ class AudioAEC(
             // 从参考缓冲中获取延迟对齐的参考样本
             // 固定延迟补偿：寻找参考信号中对应位置
             val refIdx = (refWritePos - DELAY_FRAMES * 160 + i) % REF_BUF_SIZE
-            val x = if (refIdx >= 0 && refIdx < REF_BUF_SIZE) {
-                synchronized(refBuffer) { refBuffer[refIdx] }
-            } else 0f
 
             // NLMS 自适应滤波
             // 1. 计算估计回声

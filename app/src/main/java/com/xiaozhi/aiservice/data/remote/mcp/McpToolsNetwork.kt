@@ -7,6 +7,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.xiaozhi.aiservice.data.remote.MCPToolRegistry
+@Suppress("DEPRECATION")
 fun registerNetworkTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "get_network_info",

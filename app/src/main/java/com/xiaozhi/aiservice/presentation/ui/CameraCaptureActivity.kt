@@ -74,6 +74,7 @@ class CameraCaptureActivity : ComponentActivity() {
         startCameraCapture()
     }
 
+    @Suppress("DEPRECATION")
     private fun startCameraCapture() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({

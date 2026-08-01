@@ -46,6 +46,7 @@ import com.google.zxing.MultiFormatReader
 import com.google.zxing.DecodeHintType
 import com.google.zxing.NotFoundException
 
+@Suppress("DEPRECATION")
 fun registerExtraTools(registry: MCPToolRegistry) {
 
     // ── 笔记/闹钟工具已移至 McpToolsNotes.kt / McpToolsAlarm.kt ──
@@ -417,7 +418,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                 if (isNotEmpty()) append(" AND ")
                 append("address LIKE '%$sender%' OR body LIKE '%$sender%'")
             }
-        }.toString().takeIf { it.isNotEmpty() } ?: null
+        }.takeIf { it.isNotEmpty() }?.toString()
         
         val cursor = ctx.contentResolver.query(
             uri, projection, selection, null, "date DESC"
@@ -515,11 +516,11 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                     android.provider.ContactsContract.Contacts.DISPLAY_NAME,
                     android.provider.ContactsContract.Contacts.HAS_PHONE_NUMBER
                 )
-                val selection = if (query != null)
+                val selectionClause = if (query != null)
                     "${android.provider.ContactsContract.Contacts.DISPLAY_NAME} LIKE ?" else null
-                val args = if (query != null) arrayOf("%$query%") else null
+                val queryArgs = if (query != null) arrayOf("%$query%") else null
 
-                val cursor = ctx.contentResolver.query(uri, projection, selection, args, null)
+                val cursor = ctx.contentResolver.query(uri, projection, selectionClause, queryArgs, null)
                 val arr = JsonArray()
                 var count = 0
                 cursor?.use { c ->
@@ -621,11 +622,11 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                 if (target != null) {
                     val transportControls = target.transportControls
                     when (action) {
-                        "play" -> transportControls?.play()
-                        "pause" -> transportControls?.pause()
-                        "next" -> transportControls?.skipToNext()
-                        "previous" -> transportControls?.skipToPrevious()
-                        "stop" -> transportControls?.stop()
+                        "play" -> transportControls.play()
+                        "pause" -> transportControls.pause()
+                        "next" -> transportControls.skipToNext()
+                        "previous" -> transportControls.skipToPrevious()
+                        "stop" -> transportControls.stop()
                     }
                 }
             }
@@ -900,7 +901,7 @@ fun registerExtraTools(registry: MCPToolRegistry) {
 /**
  * 蓝牙扫描实现（权限已在调用方运行时检查过，此处 SuppressLint 避免 lint 误报）
  */
-@SuppressLint("MissingPermission")
+@SuppressLint("MissingPermission", "DEPRECATION")
 private suspend fun scanBluetooth(registry: MCPToolRegistry, maxResults: Int, scanTimeout: Long): JsonObject {
     val ctx = registry.context
     val bluetoothManager = if (Build.VERSION.SDK_INT >= 31) {
@@ -921,7 +922,7 @@ private suspend fun scanBluetooth(registry: MCPToolRegistry, maxResults: Int, sc
         val scanCallback = object : android.bluetooth.le.ScanCallback() {
             override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
                 val device = result?.device ?: return
-                val name = device.name ?: result?.scanRecord?.deviceName ?: "(未知)"
+                val name = device.name ?: result.scanRecord?.deviceName ?: "(未知)"
                 if (name != "(未知)" || device.address.isNotEmpty()) {
                     foundBleDevices.add(name to device.address)
                 }

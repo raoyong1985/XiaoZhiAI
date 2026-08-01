@@ -97,10 +97,6 @@ class XiaoZhiForegroundService : Service() {
         Logger.i(TAG, "网络已恢复，尝试触发重连")
         // 通过 GlobalServices 拿到 backend 实例触发重连
         val backend = com.xiaozhi.aiservice.di.GlobalServices.xiaozhiBackend
-        if (backend != null) {
-            backend.triggerReconnect()
-        } else {
-            Logger.w(TAG, "backend 尚未初始化，跳过重连")
-        }
+        backend.triggerReconnect()
     }
 }

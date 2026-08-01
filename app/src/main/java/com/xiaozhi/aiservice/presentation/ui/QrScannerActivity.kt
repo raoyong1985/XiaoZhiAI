@@ -148,6 +148,7 @@ class QrScannerActivity : ComponentActivity() {
         startCamera(previewView)
     }
 
+    @Suppress("DEPRECATION")
     private fun startCamera(previewView: androidx.camera.view.PreviewView) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({

@@ -92,7 +92,6 @@ private suspend fun analyzeWithVision(jpegData: ByteArray): String {
     if (visionUrl.isNullOrBlank()) return "照片已拍好，但视觉AI分析服务未配置"
 
     try {
-        val boundary = "----AndroidCameraBoundary"
         val token = backend.visionToken
 
         // 构造 multipart body（OkHttp 4.x 兼容写法）

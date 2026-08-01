@@ -291,7 +291,7 @@ class AudioService {
                 // 重置上次错误
                 lastRecordError = null
                 while (isRecording.get()) {
-                    var vadPcmData: ByteArray? = null
+                    var vadPcmData: ByteArray
                     try {
                         val readSize = audioRecord?.read(buffer, 0, bufferSize) ?: 0
                         if (readSize <= 0) {
@@ -331,7 +331,7 @@ class AudioService {
                     }
 
                     // VAD 检测（优先使用 FSMN VAD，否则降级到 RMS 能量阈值）
-                    if (enableVAD && vadPcmData != null) {
+                    if (enableVAD) {
                         val now = System.currentTimeMillis()
                         val hasVoice = if (fsmnVad.initialized) {
                             fsmnVad.isVoice(vadPcmData)

@@ -123,25 +123,25 @@ class EdgeTtsSynthesizer {
                 val ws = client.newWebSocket(request, object : WebSocketListener() {
                     private var turnEndReceived = false
 
-                    override fun onOpen(ws: WebSocket, response: Response) {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
                         Logger.w(TAG, "WebSocket 已连接")
                         // 连续发送 config + SSML，不等待服务器响应（edge-tts 协议要求）
-                        ws.send(buildConfigMessage())
+                        webSocket.send(buildConfigMessage())
                         val ssml = buildSsmlMessage(text, voice, splitAfter, rate)
-                        ws.send(ssml)
+                        webSocket.send(ssml)
                         Logger.w(TAG, "Config + SSML 已连续发送")
                     }
 
-                    override fun onMessage(ws: WebSocket, message: String) {
-                        val path = extractHeader(message, "Path")
-                        Logger.w(TAG, "收到文本消息: path=$path, preview=${message.take(80)}")
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        val path = extractHeader(text, "Path")
+                        Logger.w(TAG, "收到文本消息: path=$path, preview=${text.take(80)}")
 
                         if (path == "turn.end") {
                             turnEndReceived = true
                             Logger.w(TAG, "收到 turn.end")
                             scope.launch {
                                 delay(500)
-                                ws.close(1000, "完成")
+                                webSocket.close(1000, "完成")
                             }
                         } else if (path == "audio.metadata") {
                             Logger.w(TAG, "收到 audio.metadata")
@@ -152,7 +152,7 @@ class EdgeTtsSynthesizer {
                         }
                     }
 
-                    override fun onMessage(ws: WebSocket, bytes: ByteString) {
+                    override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                         if (bytes.size < 2) return
                         val rawData = bytes.toByteArray()
                         val headerLength = ((rawData[0].toInt() and 0xFF) shl 8) or
@@ -172,11 +172,11 @@ class EdgeTtsSynthesizer {
                         }
                     }
 
-                    override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                         Logger.w(TAG, "WebSocket 关闭中: code=$code reason=$reason")
                     }
 
-                    override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                         Logger.w(TAG, "WebSocket 已关闭: code=$code reason=$reason")
                         if (audioChunks.isNotEmpty()) {
                             val totalSize = audioChunks.sumOf { it.size }
@@ -194,7 +194,7 @@ class EdgeTtsSynthesizer {
                         }
                     }
 
-                    override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                         Logger.e(TAG, "WebSocket 失败: ${t.message}")
                         // 检查是否已有部分音频数据
                         if (audioChunks.isNotEmpty()) {
@@ -435,12 +435,7 @@ class EdgeTtsSynthesizer {
         val match = regex.find(voice) ?: return voice
         val lang = match.groupValues[1]
         val region = match.groupValues[2]
-        var name = match.groupValues[3]
-        // 处理 region 含连字符的情况：en-US-JennyNeural → JennyNeural, region stays US
-        if (name.contains("-")) {
-            val dashIdx = name.indexOf("-")
-            // region stays as-is in this case for most voices
-        }
+        val name = match.groupValues[3]
         return "Microsoft Server Speech Text to Speech Voice ($lang-$region, $name)"
     }
 

@@ -24,6 +24,7 @@ import java.net.URLEncoder
 import java.util.Calendar
 import java.util.Locale
 
+@Suppress("DEPRECATION")
 fun registerIntentTools(registry: MCPToolRegistry) {
     registry.registerTool(
         name = "open_app",
@@ -389,9 +390,6 @@ fun registerIntentTools(registry: MCPToolRegistry) {
         val mode = (args["mode"] as? String)?.lowercase() ?: "driving"
         val app = (args["app"] as? String)?.lowercase() ?: "auto"
         val ctx = registry.context
-
-        val dlat = args["dlat"] as? Double
-        val dlon = args["dlon"] as? Double
 
         // Auto mode: try amap → baidu → tencent → system → google web in sequence
         if (app == "auto") {
