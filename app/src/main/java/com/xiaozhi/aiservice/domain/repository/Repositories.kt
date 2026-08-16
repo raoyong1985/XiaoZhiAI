@@ -77,14 +77,7 @@ interface ConnectionRepository {
     suspend fun startListening(mode: String = "realtime")  // auto / manual / realtime
     suspend fun stopListening(userExplicitStop: Boolean = true)
 
-    // 唤醒词设置
-    fun setWakeWord(wakeWord: String)
-    fun startWakeWordMode(): Boolean
-    /** 发送唤醒检测通知到服务器（ESP32 协议 detect），服务端通过 ASR 匹配 wakeup_words */
-    fun sendListenDetect(text: String = "")
-    /** 重新从持久化存储加载唤醒模板到内存匹配器 */
-    fun reloadWakeTemplates()
-    /** 检查当前是否有任何录音运行（唤醒模式或实时模式） */
+    /** 检查当前是否有任何录音运行 */
     fun isRecording(): Boolean
 }
 
@@ -98,13 +91,4 @@ interface ContactsRepository {
 
     /** 从 JSON 恢复全部联系人 */
     suspend fun restoreContactsFromJson(json: String)
-
-    /** 获取所有联系人唤醒模板：contactId → base64 编码的 MFCC 矩阵（DTW 变长） */
-    fun getWakeTemplates(): Flow<Map<String, String>>
-
-    /** 保存联系人唤醒模板 */
-    suspend fun saveWakeTemplate(contactId: String, templateBase64: String)
-
-    /** 删除联系人唤醒模板 */
-    suspend fun deleteWakeTemplate(contactId: String)
 }

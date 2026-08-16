@@ -646,9 +646,11 @@ class GroupChatViewModel @Inject constructor(
                 }
                 playbackManager.decodeAndPlay(currentSourceId, serverRate, serverCh, audioData, volume)
                 val buf = audioForwardBuffer.getOrPut(botId) { Collections.synchronizedList(mutableListOf()) }
-                buf.add(audioData)
-                if (buf.size > RelayConfig.MAX_FORWARD_BUFFER_SIZE) {
-                    buf.removeAt(0) // 超出上限时丢弃最早的数据
+                synchronized(buf) {
+                    buf.add(audioData)
+                    if (buf.size > RelayConfig.MAX_FORWARD_BUFFER_SIZE) {
+                        buf.removeAt(0) // 超出上限时丢弃最早的数据
+                    }
                 }
             }
         }

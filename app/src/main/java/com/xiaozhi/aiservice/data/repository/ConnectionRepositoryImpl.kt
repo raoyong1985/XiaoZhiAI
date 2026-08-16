@@ -42,8 +42,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "ConnectionRepo"
-/** TTS 播放结束到允许唤醒的冷却时间（ms），防止残余回声触发假唤醒 */
-private const val WAKE_COOLDOWN_MS = 3000L
 
 @Singleton
 class ConnectionRepositoryImpl @Inject constructor(
@@ -151,15 +149,12 @@ class ConnectionRepositoryImpl @Inject constructor(
     private val _deviceState = MutableStateFlow(DeviceState.UNKNOWN)
     override val deviceState: StateFlow<DeviceState> = _deviceState.asStateFlow()
 
-    // 唤醒词模式启动 Job，防止多次快速重连时重复启动
-    private var wakeWordStartupJob: Job? = null
-
     // Opus 解码器（native libopus + STREAM_MUSIC AudioTrack）
     private val audioRecorder = AudioRecorder(audioService)
 
     // 状态机互斥锁：防止 VAD 回调与 WebSocket 消息并发修改状态
     private val stateMutex = Mutex()
-    // 录音模式互斥锁：唤醒模式 vs 直播模式，阻止竞态
+    // 录音模式互斥锁：阻止竞态
     private val recordingLock = Any()
 
     /** 音频发送 Channel：合并 onOpusPacket 回调（每包一个协程）为单消费者 */
@@ -167,21 +162,12 @@ class ConnectionRepositoryImpl @Inject constructor(
 
     init {
         observeBackendService()
-        // ESP32 方案：唤醒词验证由服务端 ASR + wakeup_words 完成，移除本地模板加载
         // 单消费者协程：串行发送音频包，避免每包一个 scope.launch 的调度开销
         scope.launch {
             for (packet in audioSendChannel) {
                 sendAudio(packet)
             }
         }
-    }
-
-    private fun loadWakeTemplatesFromStore() {
-        // ESP32 方案：移除本地模板加载，唤醒词验证由服务端 ASR + wakeup_words 完成
-    }
-
-    override fun reloadWakeTemplates() {
-        // ESP32 方案：无操作，唤醒词验证由服务端 ASR + wakeup_words 完成
     }
 
     private fun observeBackendService() {
@@ -256,11 +242,10 @@ class ConnectionRepositoryImpl @Inject constructor(
                         }
                         lastSpeakingEndMs = System.currentTimeMillis()
                         if (textInputActive) {
-                            Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听，启动唤醒词检测")
+                            Logger.i(TAG, "AUTO 模式：文本输入中，不重启监听，保持 IDLE")
                             _deviceState.value = DeviceState.IDLE
                             audioService.abandonAudioFocus()
                             weStartedRecording = false
-                            startWakeWordMode()
                             return@withLock
                         }
                         Logger.i(TAG, "AUTO 模式：AI 说完话，等待播放排空后重启监听")
@@ -272,12 +257,11 @@ class ConnectionRepositoryImpl @Inject constructor(
                     if (newAiState == AiState.IDLE && oldAiState == AiState.SPEAKING && listeningMode == VoiceMode.MANUAL) {
                         if (suppressAutoListening) { Logger.i(TAG, "MANUAL 模式：群聊活跃中，跳过"); return@withLock }
                         lastSpeakingEndMs = System.currentTimeMillis()
-                        Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE，启动唤醒词检测")
+                        Logger.i(TAG, "Manual Stop 模式：TTS 结束，保持 IDLE 等待用户操作")
                         _deviceState.value = DeviceState.IDLE
                         audioService.abandonAudioFocus()
                         isAutoMode = false
                         weStartedRecording = false
-                        startWakeWordMode()
                     }
 
                     // Realtime 模式：TTS 结束后自动重启监听（使用 realtime 参数）
@@ -309,15 +293,10 @@ class ConnectionRepositoryImpl @Inject constructor(
                     // 不在这初始化解码器，等 hello 收到后再初始化
                     Logger.i(TAG, "已连接，等待服务器hello...")
 
-                    // 连接建立后立即启动唤醒词检测（ESP32 在 hello 后立刻开始 WakeNet）
-                    // 延迟 1s 避免与初始化流程竞争
-                    scheduleWakeWordStartup(1000)
                 } else if (state is BotConnectionState.Disconnected ||
                            state is BotConnectionState.Error) {
                     playbackManager.releaseAll()
                     Logger.i(TAG, "连接断开，解码器已释放")
-                    // 断开后延迟再启动唤醒，让残留 TTS 播完
-                    scheduleWakeWordStartup(1000)
                 }
             }
         }
@@ -423,8 +402,6 @@ class ConnectionRepositoryImpl @Inject constructor(
         playbackManager.releaseAll()
         _connectionState.value = BotConnectionState.Disconnected
         _aiState.value = AiState.IDLE
-        // 断开后重启唤醒词检测
-        startWakeWordMode()
     }
     
     override suspend fun sendTextMessage(contactId: String, text: String): Result<Unit> {
@@ -476,105 +453,6 @@ class ConnectionRepositoryImpl @Inject constructor(
         }
     }
     
-    /**
-     * 初始化并启动唤醒词模式
-     * 对应 ESP32 EnableWakeWordDetection(true)
-     * 在 IDLE 状态时运行，监听唤醒词后自动切换到语音模式
-     */
-    /**
-     * 初始化并启动唤醒模式（单 AudioRecord + SileroVAD + 环形缓冲）。
-     * 检测到连续语音后自动过渡到编码发送。
-     */
-    override fun startWakeWordMode(): Boolean {
-        // ESP32 风格：唤醒词可打断 Speaking，简短冷却后重新监听
-        if (_aiState.value == AiState.SPEAKING) {
-            Logger.w(TAG, "唤醒词打断 AI 说话")
-            // 让 onWakeDetected 回调处理打断逻辑
-        } else if (_aiState.value == AiState.PROCESSING) {
-            Logger.w(TAG, "唤醒模式启动被拦截：AI 正忙 (state=${_aiState.value})")
-            return false
-        }
-
-        // TTS 刚结束冷却期（3秒），防止残余回声被捕获触发假唤醒
-        if (System.currentTimeMillis() - lastSpeakingEndMs < WAKE_COOLDOWN_MS) {
-            Logger.w(TAG, "唤醒模式延迟启动：TTS 刚结束（冷却中），跳过")
-            return false
-        }
-
-        synchronized(recordingLock) {
-            // 如果正在录音（对话模式），先停止再启动唤醒模式
-            if (audioRecorder.isRecording) {
-                Logger.w(TAG, "唤醒模式启动：停止当前录音，切入唤醒检测模式")
-                audioRecorder.stop("main")
-                weStartedRecording = false
-            }
-
-            // 从持久化存储加载 DSCNN 唤醒模板到 AudioRecorder 的 KWS 引擎
-            if (!audioRecorder.kwsEngine.hasTemplates()) {
-                kotlinx.coroutines.runBlocking {
-                    val templates = contactsRepository.getWakeTemplates().first()
-                    for ((cid, b64) in templates) {
-                        if (b64.length < 10) continue
-                        try {
-                            val bytes = java.util.Base64.getDecoder().decode(b64)
-                            // MFCC 矩阵 = N×40 floats × 4 bytes（trim 后可能 < 63 帧）
-                            if (bytes.size >= 160 && bytes.size % 160 == 0) {
-                                audioRecorder.kwsEngine.restoreTemplate(cid, "", bytes)
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-                val n = audioRecorder.kwsEngine.templateCount()
-                if (n > 0) Logger.i(TAG, "已加载 $n 个唤醒模板到 AudioRecorder")
-            }
-
-            // ESP32 方案：VAD 触发后直接通知服务器，不再设置本地模板匹配器
-            val ok = audioRecorder.startWake(
-                owner = "main",
-                scope = scope,
-                onWakeDetected = { contactId ->
-                    Logger.w(TAG, "🎤 唤醒触发: contactId=$contactId")
-                    scope.launch {
-                        // ESP32 风格：如果 AI 正在说话，先打断再重新监听
-                        if (_aiState.value == AiState.SPEAKING) {
-                            Logger.w(TAG, "唤醒打断 AI 说话：发送 abort + 强制停止播放")
-                            backendService.sendAbort("wake_word_interrupt")
-                            playbackManager.flushSource("main")
-                            audioService.softAecEnabled = false
-                        }
-                        audioService.fsmnVad.reset()
-                        // 传联系人名字作为 detect 文本（ESP32 方案：服务器用 text 验证唤醒词）
-                        val contacts = contactsRepository.getContacts().first()
-                        val contactName = contacts.find { it.id == contactId }?.name ?: contactId
-                        backendService.sendListenDetect(contactName)
-                        startListening("auto")
-                    }
-                },
-            )
-            return ok
-        }
-    }
-
-    /**
-     * 安全调度唤醒词模式启动，取消前一次未执行的调度防止重复
-     */
-    private fun scheduleWakeWordStartup(delayMs: Long) {
-        wakeWordStartupJob?.cancel()
-        wakeWordStartupJob = scope.launch {
-            delay(delayMs)
-            startWakeWordMode()
-        }
-    }
-
-    override fun setWakeWord(wakeWord: String) {
-        // 云端文本匹配已移除，唤醒词验证完全由服务端 ASR + wakeup_words 配置完成
-        Logger.d(TAG, "setWakeWord 已弃用（ESP32 方案：服务端 ASR + wakeup_words）")
-    }
-
-    override fun sendListenDetect(text: String) {
-        backendService.sendListenDetect(text)
-    }
-
     override fun isRecording(): Boolean = audioRecorder.isRecording
 
     override suspend fun startListening(mode: String) {
@@ -634,12 +512,8 @@ class ConnectionRepositoryImpl @Inject constructor(
             if (userExplicitStop) {
                 isAutoMode = false
                 _aiState.value = AiState.IDLE
-                // 用户手动停止后重启唤醒词检测
-                startWakeWordMode()
             } else if (!isAutoMode) {
                 _aiState.value = AiState.IDLE
-                // 非 AUTO 模式回到 IDLE 后重启唤醒词
-                startWakeWordMode()
             } else {
                 Logger.i(TAG, "VAD auto-stop (AUTO 模式)，保持状态等待 TTS")
             }
@@ -687,9 +561,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                 onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
                 onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
             )) {
-            Logger.e(TAG, "${mode} 模式重启监听失败，回退到唤醒词模式")
+            Logger.e(TAG, "${mode} 模式重启监听失败，保持 IDLE")
             _aiState.value = AiState.IDLE
-            startWakeWordMode()
             return
         }
         backendService.sendListenStart(mode)

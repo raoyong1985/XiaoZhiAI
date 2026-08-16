@@ -26,7 +26,6 @@ class ContactsRepositoryImpl @Inject constructor(
 
     companion object {
         private val CONTACTS_KEY = stringPreferencesKey("bot_contacts")
-        private val WAKE_TEMPLATES_KEY = stringPreferencesKey("wake_templates")
     }
 
     override fun getContacts(): Flow<List<BotContact>> {
@@ -80,57 +79,6 @@ class ContactsRepositoryImpl @Inject constructor(
             }
             contacts.removeAll { it.id == contactId }
             preferences[CONTACTS_KEY] = gson.toJson(contacts)
-
-            // 同时清理唤醒模板
-            val tj = preferences[WAKE_TEMPLATES_KEY] ?: "{}"
-            val tt = object : TypeToken<MutableMap<String, String>>() {}.type
-            val templates: MutableMap<String, String> = try {
-                gson.fromJson(tj, tt) ?: mutableMapOf()
-            } catch (e: Exception) {
-                mutableMapOf()
-            }
-            templates.remove(contactId)
-            preferences[WAKE_TEMPLATES_KEY] = gson.toJson(templates)
-        }
-    }
-
-    override fun getWakeTemplates(): Flow<Map<String, String>> {
-        return context.contactsDataStore.data.map { preferences ->
-            val json = preferences[WAKE_TEMPLATES_KEY] ?: "{}"
-            try {
-                val type = object : TypeToken<Map<String, String>>() {}.type
-                gson.fromJson(json, type) ?: emptyMap()
-            } catch (e: Exception) {
-                emptyMap()
-            }
-        }
-    }
-
-    override suspend fun saveWakeTemplate(contactId: String, templateBase64: String) {
-        context.contactsDataStore.edit { preferences ->
-            val json = preferences[WAKE_TEMPLATES_KEY] ?: "{}"
-            val type = object : TypeToken<MutableMap<String, String>>() {}.type
-            val templates: MutableMap<String, String> = try {
-                gson.fromJson(json, type) ?: mutableMapOf()
-            } catch (e: Exception) {
-                mutableMapOf()
-            }
-            templates[contactId] = templateBase64
-            preferences[WAKE_TEMPLATES_KEY] = gson.toJson(templates)
-        }
-    }
-
-    override suspend fun deleteWakeTemplate(contactId: String) {
-        context.contactsDataStore.edit { preferences ->
-            val tj = preferences[WAKE_TEMPLATES_KEY] ?: "{}"
-            val tt = object : TypeToken<MutableMap<String, String>>() {}.type
-            val templates: MutableMap<String, String> = try {
-                gson.fromJson(tj, tt) ?: mutableMapOf()
-            } catch (e: Exception) {
-                mutableMapOf()
-            }
-            templates.remove(contactId)
-            preferences[WAKE_TEMPLATES_KEY] = gson.toJson(templates)
         }
     }
 

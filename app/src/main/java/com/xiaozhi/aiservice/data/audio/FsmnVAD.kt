@@ -152,8 +152,9 @@ class FsmnVAD(
      * @return speech probability [0, 1]
      */
     private fun inferFrame(feat: FloatArray): Float {
-        val ortEnv = env!!
-        val ortSession = session!!
+        val ortEnv = env
+        val ortSession = session
+        if (ortEnv == null || ortSession == null) throw IllegalStateException("FSMN VAD 未初始化")
 
         // 创建输入张量
         val speechTensor = OnnxTensor.createTensor(

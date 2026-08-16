@@ -62,18 +62,10 @@ fun ChatScreen(
         onDispose { view.keepScreenOn = false }
     }
 
-    // 计算展示用的唤醒词：优先用 wakeWord，否则用名字重复两次
-    val displayWakeWord = remember(contact.wakeWord, contact.name) {
-        if (contact.wakeWord.isNotBlank()) contact.wakeWord
-        else "${contact.name}${contact.name}"
-    }
-
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         viewModel.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId, contact.id, contact.voiceMode)
-        viewModel.setCurrentWakeWord(displayWakeWord)
-        viewModel.checkWakeTemplate(displayWakeWord)
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -219,13 +211,6 @@ fun ChatScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
-            // 唤醒词提示横幅（仅提示，录制入口在联系人编辑页）
-            AnimatedVisibility(visible = uiState.needsWakeRecording) {
-                WakeWordHintBanner(
-                    onDismiss = { viewModel.dismissWakeRecording() }
-                )
-            }
-
             ChatMessageList(
                 messages = uiState.messages,
                 listState = listState,
@@ -251,48 +236,3 @@ fun ChatScreen(
 // 唤醒词提示横幅（仅提示，录制在联系人编辑页）
 // ============================================================
 
-@Composable
-private fun WakeWordHintBanner(
-    onDismiss: () -> Unit
-) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-
-    Surface(
-        tonalElevation = 2.dp,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = null,
-                tint = primaryColor,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = "请在联系人编辑页录制唤醒模板，启用语音唤醒",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "关闭",
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}

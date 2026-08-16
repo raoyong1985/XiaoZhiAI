@@ -107,10 +107,6 @@ fun ContactsScreen(
             }
         }
     }
-    val trainingContactId by viewModel.trainingContactId.collectAsState()
-    val trainingStatusMap by viewModel.trainingStatus.collectAsState()
-    val wakeTemplates by viewModel.wakeTemplates.collectAsState()
-
     LaunchedEffect(Unit) {
         viewModel.toastEvent.collect { message ->
             android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
@@ -122,9 +118,6 @@ fun ContactsScreen(
         AddEditContactDialog(
             contact = null,
             viewModel = viewModel,
-            trainingContactId = trainingContactId,
-            trainingStatusMap = trainingStatusMap,
-            wakeTemplates = wakeTemplates,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -138,9 +131,6 @@ fun ContactsScreen(
         AddEditContactDialog(
             contact = contact,
             viewModel = viewModel,
-            trainingContactId = trainingContactId,
-            trainingStatusMap = trainingStatusMap,
-            wakeTemplates = wakeTemplates,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -370,12 +360,9 @@ private fun ContactItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddEditContactDialog(
+private fun AddEditContactDialog(
     contact: BotContact?,
     viewModel: ContactsViewModel,
-    trainingContactId: String?,
-    trainingStatusMap: Map<String, String>,
-    wakeTemplates: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {
@@ -384,15 +371,6 @@ fun AddEditContactDialog(
     var name by remember { mutableStateOf(contact?.name ?: "") }
     var serverUrl by remember { mutableStateOf(contact?.serverUrl ?: BotContact().serverUrl) }
     var otaUrl by remember { mutableStateOf(contact?.otaUrl ?: BotContact().otaUrl) }
-    var wakeWord by remember { mutableStateOf(contact?.wakeWord ?: "") }
-    val wakeWordAutoFilled = remember { mutableStateOf(false) }
-    LaunchedEffect(name) {
-        if (!wakeWordAutoFilled.value && wakeWord.isEmpty() && name.isNotBlank()) {
-            wakeWord = "$name $name"
-            wakeWordAutoFilled.value = true
-        }
-    }
-    val trainingStatus = trainingStatusMap[contactId] ?: ""
     val generatedDeviceId: String = contact?.deviceId ?: DeviceIdHelper.generateContactMac()
     val generatedClientId: String = contact?.clientId ?: DeviceIdHelper.generateContactUuid(contactId)
 
@@ -467,78 +445,6 @@ fun AddEditContactDialog(
                         )
                     }
 
-                    // 语音唤醒
-                    FormSection(title = "语音唤醒") {
-                        val effectiveWake = wakeWord.ifBlank { "${name} ${name}" }
-
-                        OutlinedTextField(
-                            value = wakeWord,
-                            onValueChange = { wakeWord = it },
-                            label = { Text("唤醒词") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            placeholder = { Text("例如：${name}${name}") },
-                            shape = AppShapes.menu
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        val isTrainingThis = trainingContactId == contactId
-                        val hasTemplate = wakeTemplates.containsKey(contactId)
-
-                        if (isTrainingThis) {
-                            WakeStatusRow(
-                                icon = {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                },
-                                title = "正在自动训练唤醒模板",
-                                subtitle = "合成「${effectiveWake}」音频并提取声纹特征",
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        } else {
-                            FilledTonalButton(
-                                onClick = { viewModel.trainWakeTemplate(contactId, effectiveWake) },
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = AppShapes.menu
-                            ) {
-                                Text(
-                                    "自动训练",
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-                        }
-
-                        // 已有模板时提供删除入口（训练错/换唤醒词后可单独清理）
-                        if (hasTemplate && !isTrainingThis) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(
-                                onClick = { viewModel.deleteWakeTemplate(contactId) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    "删除已训练模板",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-
-                        // 训练状态文本（显示在弹窗内，不依赖 Toast/Snackbar）
-                        if (trainingStatus.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = trainingStatus,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (trainingStatus.startsWith("✅")) MaterialTheme.colorScheme.primary
-                                       else if (trainingStatus.startsWith("❌")) MaterialTheme.colorScheme.error
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
                     // 设备标识
                     FormSection(title = "设备标识") {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -576,8 +482,7 @@ fun AddEditContactDialog(
                                     serverUrl = serverUrl.trim(),
                                     otaUrl = otaUrl.trim(),
                                     deviceId = generatedDeviceId,
-                                    clientId = generatedClientId,
-                                    wakeWord = wakeWord.trim().ifBlank { "${name.trim()} ${name.trim()}" }
+                                    clientId = generatedClientId
                                 )
                                 onSave(newContact)
                             },
@@ -608,39 +513,6 @@ private fun FormSection(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         content()
-    }
-}
-
-@Composable
-private fun WakeStatusRow(
-    icon: @Composable () -> Unit,
-    title: String,
-    subtitle: String,
-    color: Color
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(AppShapes.menu)
-            .background(color.copy(alpha = 0.08f))
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        icon()
-        Spacer(modifier = Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-                color = color
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
     }
 }
 

@@ -10,7 +10,6 @@ import com.xiaozhi.aiservice.domain.model.VoiceMode
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import com.xiaozhi.aiservice.domain.model.MessageDirection
 import com.xiaozhi.aiservice.domain.repository.ConnectionRepository
-import com.xiaozhi.aiservice.domain.repository.ContactsRepository
 import com.xiaozhi.aiservice.domain.repository.MessageRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -25,8 +24,7 @@ private const val TAG = "ChatViewModel"
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val connectionRepository: ConnectionRepository,
-    private val messageRepository: MessageRepository,
-    private val contactsRepository: ContactsRepository
+    private val messageRepository: MessageRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -111,13 +109,6 @@ class ChatViewModel @Inject constructor(
             Logger.i(TAG, "connect: about to call connectionRepository.connect()")
             connectionRepository.connect(config, contactId)
         }
-    }
-
-    /** 设置当前唤醒词并启动唤醒检测（FSMN VAD + MFCC DTW） */
-    fun setCurrentWakeWord(contactName: String) {
-        Logger.i(TAG, "设置唤醒词: <<${contactName}>>（FSMN VAD + MFCC DTW）")
-        val started = connectionRepository.startWakeWordMode()
-        Logger.i(TAG, "唤醒模式启动${if (started) "成功" else "失败"}，录音中=${connectionRepository.isRecording()}")
     }
 
     fun disconnect() {
@@ -245,21 +236,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 检查当前联系人是否需要录制唤醒词模板 */
-    fun checkWakeTemplate(wakeWord: String) {
-        if (currentContactId.isBlank() || wakeWord.isBlank()) return
-        viewModelScope.launch {
-            val templates = contactsRepository.getWakeTemplates().first()
-            val hasTemplate = templates.containsKey(currentContactId)
-            _uiState.update { it.copy(needsWakeRecording = !hasTemplate && wakeWord.isNotBlank()) }
-        }
-    }
-
-    /** 关闭唤醒词提示 */
-    fun dismissWakeRecording() {
-        _uiState.update { it.copy(needsWakeRecording = false) }
-    }
-
 }
 
 data class ChatUiState(
@@ -271,6 +247,5 @@ data class ChatUiState(
     val voiceMode: VoiceMode = VoiceMode.REALTIME,
     val alert: String? = null,
     val error: String? = null,
-    val isAiResponding: Boolean = false,
-    val needsWakeRecording: Boolean = false
+    val isAiResponding: Boolean = false
 )

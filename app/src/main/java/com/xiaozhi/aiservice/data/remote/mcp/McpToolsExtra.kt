@@ -49,6 +49,13 @@ import com.google.zxing.NotFoundException
 @Suppress("DEPRECATION")
 fun registerExtraTools(registry: MCPToolRegistry) {
 
+    // 线程安全的 SimpleDateFormat（MCP 工具可能并发调用）
+    val logTimeFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    }
+    fun formatLogTime(tsMs: Long): String =
+        logTimeFormat.get().format(Date(tsMs))
+
     // ── 笔记/闹钟工具已移至 McpToolsNotes.kt / McpToolsAlarm.kt ──
 
 
@@ -432,11 +439,11 @@ fun registerExtraTools(registry: MCPToolRegistry) {
                 val body = it.getString(2) ?: ""
                 val dateMs = it.getLong(3)
                 val isRead = it.getInt(4) == 1
-                val df = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                val timeStr = formatLogTime(dateMs)
                 messages.add(JsonObject().apply {
                     addProperty("sender", address)
                     addProperty("body", body.take(200))
-                    addProperty("time", df.format(Date(dateMs)))
+                    addProperty("time", timeStr)
                     addProperty("read", isRead)
                     addProperty("length", body.length)
                 })
@@ -821,13 +828,14 @@ fun registerExtraTools(registry: MCPToolRegistry) {
         val eventUri = ctx.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
         val eventId = eventUri?.lastPathSegment ?: ""
 
-        val df = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+        val startStr = formatLogTime(startTime)
+        val endStr = formatLogTime(endTime)
         JsonObject().apply {
             addProperty("success", eventId.isNotEmpty())
             addProperty("event_id", eventId)
             addProperty("title", title)
-            addProperty("start", df.format(java.util.Date(startTime)))
-            addProperty("end", df.format(java.util.Date(endTime)))
+            addProperty("start", startStr)
+            addProperty("end", endStr)
             if (location.isNotEmpty()) addProperty("location", location)
             addProperty("message", "已创建日历事件「$title」")
         }
