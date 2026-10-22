@@ -4,6 +4,26 @@
 
 把「小智」语音助手装进 Android 手机。App 只做客户端：连上你自己配置的小智服务器后，就能用语音和文字跟智能体对话，并让它操作手机。
 
+## 下载安装
+
+最新版本：**v1.5.78**（2026-10-22）· 需要 Android 8.0 及以上
+
+| 文件 | 说明 |
+|---|---|
+| [XiaoZhiAI-1.5.78.apk](https://github.com/raoyong1985/XiaoZhiAI/raw/main/dist/XiaoZhiAI-1.5.78.apk) | 安装包（38.3 MB） |
+| [XiaoZhiAI-1.5.78.apk.sha256](https://github.com/raoyong1985/XiaoZhiAI/raw/main/dist/XiaoZhiAI-1.5.78.apk.sha256) | 校验值 |
+
+下载后校验完整性：
+
+```bash
+sha256sum XiaoZhiAI-1.5.78.apk
+# c387fc501755a40e4054c86b0b3456371b36e1d664dd33854caf5af0380bcaed
+```
+
+安装时系统会提示「未知来源应用」，允许后即可安装。手机上已装旧版本时可以直接覆盖升级，聊天记录和配置都保留。
+
+安装好之后第一次打开需要填服务器地址，见下面的「怎么接入」。
+
 ## 能做什么
 
 ### 语音对话
