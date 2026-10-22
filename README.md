@@ -2,134 +2,102 @@
 
 [![CI](https://github.com/raoyong1985/XiaoZhiAI/actions/workflows/ci.yml/badge.svg)](https://github.com/raoyong1985/XiaoZhiAI/actions/workflows/ci.yml)
 
-把「小智」语音助手跑在 Android 手机上：WebSocket 长连接 + Opus 双向音频 + 流式 TTS + 设备端 MCP 工具 + 多智能体群聊接龙。
+把「小智」语音助手装进 Android 手机。App 只做客户端：连上你自己配置的小智服务器后，就能用语音和文字跟智能体对话，并让它操作手机。
 
-- 最低支持 Android 8.0（API 26），目标 API 34
-- Kotlin + Jetpack Compose + Hilt + OkHttp + ONNX Runtime（VAD 全程端侧）
-- 纯客户端，不含任何服务端实现；服务端地址由用户在「联系人」里配置
+## 能做什么
 
----
+### 语音对话
 
-## 功能
+- **按住说话 / 点按说话**：说完自动把这段发出去
+- **自动断句**：连续说话时，检测到停顿就自动提交，不用一直按着
+- **可打断**：AI 正在说的时候你开口，它会停下来听你说
+- **自动续听**：AI 说完自动重新开麦，可以连续对话
+- **回声抑制**：AI 的声音不会被自己的麦克风收回去当用户输入
+- **逐句显示文字**：AI 说的话按句子一条条出现，跟着语音节奏走
 
-| 模块 | 说明 |
+### 文字对话
+
+- 输入框打字发送，AI 同样会语音回复
+- 消息按智能体分会话保存，重启 App 不丢
+
+### 多智能体群聊
+
+- 把多个智能体拉进一个群，围绕同一个话题轮流发言（接龙）
+- **接龙**：当前智能体说完，自动把它的回答转给下一位继续
+- **乒乓模式**：两个智能体一对一互聊
+- **@提及**：在群里指定由谁说
+- **打断**：发言过程中可以直接插话，接龙会重新排队
+
+### 让手机执行操作
+
+App 向服务端注册了一组设备端工具，聊天时用自然语言触发，例如“设个 7 点的闹钟”“打开蓝牙”“拍张照”“屏幕调亮一点”。
+
+| 类别 | 工具 |
 |---|---|
-| 语音对话 | WebSocket 双向流；上行 Opus 20ms 帧，下行 Opus 60ms 帧；支持手动说话与 VAD 自动断句 |
-| 语音唤醒 | 已整体移除（v1.5.77 起），避免常驻麦克风与误唤醒 |
-| 流式 TTS | 服务端按句下发音频，客户端边收边播；文字按播放进度上屏，句间插入停顿 |
-| 回声消除 | 硬件 AEC（若设备支持）+ 软件 NLMS（以 TTS 参考信号对齐），防止自问自答 |
-| 群聊接龙 | 多智能体轮流发言，按音量/情绪打分选择下一位，支持乒乓模式与打断 |
-| 设备端 MCP | 43 个工具：闹钟、笔记、音乐、截图、蓝牙、位置、应用控制、网页搜索等 |
-| 本地命令 | 不联网即可执行的指令（音量、亮度、打开应用等），带冷却期防回声循环 |
-| 前台服务 | 保活、锁屏唤醒、断电重启自启 |
+| 系统与设备 | 系统信息、设备状态、已安装应用、打开应用、打开应用设置、剪贴板、通知列表 |
+| 声音与显示 | 音量调节、屏幕亮度、手电筒、铃声模式、媒体控制、静音小智 |
+| 时间与提醒 | 闹钟、计时器、日历事件、查日历 |
+| 通信 | 打电话、发短信、读短信、通讯录管理 |
+| 网络 | 网络信息、WiFi 开关、WiFi 扫描、蓝牙开关、蓝牙扫描、移动数据、热点 |
+| 位置 | 当前位置 |
+| 拍照与识别 | 拍照、截屏、扫二维码、生成二维码 |
+| 信息查询 | 网页搜索、股票查询、打开链接、导航、分享 WiFi 二维码 |
+| 个性化 | 主题切换、AEC 模式 |
 
-## 环境要求
+### 本地命令（不联网也能用）
 
-| 项 | 要求 |
+音量、亮度、打开应用、播放控制这类指令在手机本地直接执行，不走服务器，响应更快，也不会出现“命令发到服务器再绕回手机”的延迟。
+
+### 后台与自启
+
+- 前台服务保活，息屏后仍能接收消息和语音
+- 开机自启，断电重启后自动恢复
+- 定时提醒到点会亮屏并播报
+
+## 怎么接入
+
+1. 打开 App，点「+」添加智能体
+2. 填写服务器配置：
+
+   | 字段 | 说明 |
+   |---|---|
+   | 服务器地址 | WebSocket 地址，例如 `ws://主机:端口/xiaozhi/v1/` |
+   | OTA 地址 | 设备注册/激活接口，填本地服务器地址时会自动推导 |
+   | 设备标识 | 服务器侧为该设备分配的 ID |
+
+3. 保存后进入会话，即可开始说话
+
+兼容小智官方服务器和自建的 xiaozhi-esp32-server 系服务端。服务端提供 LLM、ASR、TTS、记忆与人格，手机只负责采集、播放和设备能力。
+
+## 界面
+
+- **会话列表**：每个智能体一行，显示最近一条消息和连接状态
+- **聊天页**：中间消息流，底部麦克风按钮（语音）/输入框（文字）；右上角地球图标显示与服务器的连接状态——绿色全部在线、黄色部分在线、灰色未连接
+- **群聊页**：顶部显示当前谁在说话，支持接龙状态与成员列表
+- **长按消息**：复制、删除
+- **长按会话**：清空记录、编辑配置、删除
+
+## 权限
+
+按使用到的功能申请，首次触发时询问：
+
+| 权限 | 用途 |
 |---|---|
-| JDK | **必须 17**。JDK 21 会让 kapt 直接失败：`'com.sun.tools.javac.util.Context' class can't be found ('tools.jar' is absent)`；改了 `JAVA_HOME` 仍报同一句，说明 Gradle 守护进程复用了旧 JDK，先 `./gradlew --stop` |
-| Android SDK | compileSdk 34、NDK（Opus / ONNX 原生库） |
-| 网络 | 首次构建需联网（`androidx.compose.compiler:compiler:1.5.14` 等依赖不在本地缓存，`--offline` 会失败） |
+| 麦克风 | 语音对话、自动断句 |
+| 通知 | 后台服务与提醒 |
+| 蓝牙 / 位置 | 蓝牙设备扫描、WiFi 信息 |
+| 通讯录 / 短信 / 电话 | 联系人、短信、拨号类工具 |
+| 相机 | 拍照、扫码 |
+| 屏幕录制授权 | 截屏工具 |
 
-## 构建与安装
+拒绝某一项只会让对应工具不可用，不影响语音对话。
 
-```bash
-# 调试包（签名用 app/debug.keystore）
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleDebug
+## 常见问题
 
-# 发布包（签名用 app/release.keystore + app/keystore.properties，均已 gitignore）
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleRelease
+**说话没反应**：先看右上角地球图标的颜色，灰色表示没连上服务器；再确认系统是否给了麦克风权限。
 
-adb install -r app/build/outputs/apk/release/app-release.apk
-```
+**AI 说话有回声**：设备支持硬件 AEC 时自动启用，不支持时走软件回声消除，也可以在工具里切换 AEC 模式。
 
-> 换签名会导致 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。若设备上已装发布包，升包必须继续用 `release.keystore`，否则只能卸载重装（会丢聊天记录）。
+**声音断断续续**：多为网络抖动，客户端按句缓冲，短暂卡顿后会自动追上。
 
-## 测试
-
-```bash
-./gradlew testDebugUnitTest
-```
-
-## 架构
-
-```
-presentation/   Compose UI + ViewModel（ChatViewModel / GroupChatViewModel）
-   │
-domain/         usecase：relay（接龙引擎）、group（连接池）；model；repository 接口
-   │
-data/           remote（WebSocket、协议解析、MCP 工具）｜audio（录制/解码/播放/AEC/VAD）｜repository 实现
-```
-
-关键文件：
-
-| 文件 | 职责 |
-|---|---|
-| `data/remote/XiaoZhiBackendService.kt` | WebSocket 生命周期、协议分发（hello/tts/stt/llm/mcp/alert）、重连退避 |
-| `data/repository/ConnectionRepositoryImpl.kt` | 会话状态机（IDLE/LISTENING/SPEAKING）、音频流与文字流的桥接 |
-| `data/audio/AudioService.kt` | AudioRecord、VAD、软/硬 AEC、静音检测 |
-| `data/audio/NativeOpusDecoder.kt` | Opus 解码 + AudioTrack 播放线程 + 队列与句间停顿 |
-| `data/audio/NativeOpusEncoder.kt` | 上行 Opus 编码（JNI） |
-| `domain/usecase/relay/RelayEngine.kt` | 群聊接龙：选人、转发、超时、重试上限 |
-| `data/remote/MCPToolRegistry.kt` | 设备端 MCP 工具注册（同名覆盖去重） |
-
-## 音频链路要点
-
-下行 TTS 是本项目最容易出问题的地方，几个已踩过的坑已固化在代码里：
-
-1. **服务端生成快于实时播放** → 队列必须有上限（`MAX_BACKLOG_MS`），否则延迟累积到十几秒，上一轮尾音会拖进下一轮。
-2. **文字必须跟随播放进度**：`queuedMillis()` 用「已写入 AudioTrack 字节 − playbackHead 已播字节」计算真实积压，而不是只看解码队列长度（播放线程会把队列一次抽干写进 AudioTrack，队列长度恒为 0）。
-3. **句间停顿按需插入**：只有确实有音频在排队时才插 80ms 静音；上一句已播完时再插会让下一句第一个字听起来「卡一下」。
-4. **开播前预缓冲 120ms**：空闲恢复后立刻 `play()` 会在第二包写入前播空，吃掉第一包尾部。
-5. **空闲保活按实际间隔补静音**：固定写 66ms 而每 400ms 写一次，会导致每秒一次 `AudioTrack underrun → restart`（周期性咔哒）。
-6. **base64 与二进制双路音频按「批」判重**：给二进制副本 300ms 抢先窗口，逐帧 cancel 会让 base64-only 服务端只剩最后一帧。
-7. **音频包必须单消费者串行发射**：每包 `launch{}` 一个协程会在 IO 线程池乱序，解码后 PCM 顺序错乱（咔嗒/吞字）。
-
-## 本次更新（v1.5.78）
-
-**音频**
-
-- 句间停顿改为按需 80ms；开播预缓冲 120ms；空闲保活按实际间隔补静音
-- 队列积压上限 3s，`queuedMillis()` 改为按真实未播字节计算
-- base64 音频改为整批 + 代际校验判重，修复 base64-only 服务端只播最后一帧
-- 音频下发改为单消费者 Channel，保证 Opus 包顺序
-- 修复编码器尾帧：不足一帧补零到整帧（原来每次停止录音都丢尾音并报 `opus_encode failed`）
-- 修复编码器停止时的 use-after-free 风险（线程未退出不销毁 native 句柄）
-- 录音启动失败回滚 `isRecording`；软件 AEC 开关不再被 `stopRecording` 清掉
-
-**群聊**
-
-- 连接状态聚合跟随连接池成员变化（`membership` StateFlow），地球图标不再一直显示错误颜色；语义改为「全部在线=绿 / 部分在线=黄 / 未连接=灰」
-- 修复成功后 `waitingSpeakerIndex` 被误清空导致的串话
-- 修复重试计数被提前清零导致的无限重连重发
-- 修复群聊解码器 key 缺少采样率后缀、每次按麦克风都 `releaseAll()` 的问题
-
-**稳定性**
-
-- `registerReceiver` 改用 `ContextCompat`（三参重载是 API 33+，minSdk 26 直接调用会在 Android 8~12 崩）
-- 解码器 LRU 淘汰时显式 `release()`，不再泄漏 AudioTrack / 播放线程 / native 句柄
-- 重连标志 `isReconnecting` 复位，修复「第二次重连失败后永久不再重连」
-- 服务端协议级错误（如 MCP 工具重名）不再弹给用户，只记日志
-- 设备端 `web_search` 改名 `device_web_search`，避免与服务端内置工具重名
-
-## 已知问题
-
-- 服务端以 `1000/1001` 正常关闭时客户端不会自动重连（需手动返回重进）
-- 发送文本后若服务端不回 TTS，输入框可能停留在「等待回复」状态
-- 部分机型不支持 `VOICE_RECOGNITION` 音源时会自动降级，降级失败后需重启 App
-- 群聊中某个 bot 长期掉线时，需要退出重进才能刷新连接池
-
-## 隐私
-
-仓库**不包含**任何 API Key、账号口令、聊天记录、设备标识或数据库备份：
-
-- `app/*.keystore`、`app/keystore.properties`、`local.properties` 均在 `.gitignore`
-- `BAK/`（数据库 dump、datastore 备份）不入库
-- 服务端地址、设备 ID 由用户在应用内填写，不写死在代码里
-
-## 相关文档
-
-- [AGENTS.md](AGENTS.md) — 开发规范与协作约定
-- [SPEC.md](SPEC.md) — 功能规格
-- [GROUP_CHAT_WORKFLOW.md](GROUP_CHAT_WORKFLOW.md) — 群聊接龙流程
-- [audio_pipeline_analysis.md](audio_pipeline_analysis.md) — 音频链路分析
+**群聊里某个智能体不说话**：它到服务器的连接断了，退出群聊重进会重连。
