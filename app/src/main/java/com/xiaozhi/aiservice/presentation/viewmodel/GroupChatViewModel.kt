@@ -78,6 +78,7 @@ import javax.inject.Inject
  * - ❌ Service Locator 模式（AppContainer 全局访问）
  * - ❌ 代码过长（~1000 行，应拆分为 RelayEngine + GroupChatUseCase）
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class GroupChatViewModel @Inject constructor(
     private val groupChatRepository: GroupChatRepository,
@@ -162,6 +163,7 @@ class GroupChatViewModel @Inject constructor(
     // ── 协程 Job 引用（用于取消） ──
     private var sttCollectorJob: Job? = null   // 语音转文字结果收集
     private var observeJob: Job? = null        // 主监听协程
+    private var combinedStateJob: Job? = null  // 连接状态聚合协程
     private var stuckRelayWatcher: Job? = null // 看门狗
     /** 监听 service 重建事件，重建 bot 事件观察者 */
     private var serviceReplacedJob: Job? = null
@@ -304,6 +306,8 @@ class GroupChatViewModel @Inject constructor(
                 Logger.i(TAG, "serviceReplaced: bot[$botId] 连接已重建，重建事件观察者")
                 botObserverJobs[botId]?.cancel()
                 observeBotEvents(botId, currentGroupId, contact.name, newService)
+                // 新实例的连接状态要纳入聚合，否则 UI 永远反映的是旧 flow
+                observeCombinedConnectionState()
             }
         }
 
@@ -316,17 +320,42 @@ class GroupChatViewModel @Inject constructor(
      * 聚合所有 bot 的连接状态 → 对外暴露单一 connectionState
      */
     private fun observeCombinedConnectionState() {
-        viewModelScope.launch {
-            val flows = botConnectionPool.all.values.map { it.connectionState }
-            _connectionState.value = BotConnectionState.Connecting
-            combine(flows) { states ->
-                when {
-                    states.any { it is BotConnectionState.Connected } -> BotConnectionState.Connected
-                    states.any { it is BotConnectionState.Connecting } -> BotConnectionState.Connecting
-                    states.any { it is BotConnectionState.Error } -> BotConnectionState.Error()
-                    else -> BotConnectionState.Disconnected
+        combinedStateJob?.cancel()
+        combinedStateJob = viewModelScope.launch {
+            // 跟随池成员变化重建 combine：只在进入界面时取一次 all 快照的话，
+            // 之后异步连上的 bot 永远不在聚合里，地球图标颜色就会一直是错的
+            botConnectionPool.membership
+                .flatMapLatest { ids ->
+                    val flows = ids.mapNotNull { botConnectionPool.get(it)?.connectionState }
+                    if (flows.isEmpty()) {
+                        // combine(emptyList()) 不发射任何值，这里显式给出「未连接」
+                        flowOf(BotConnectionState.Disconnected)
+                    } else {
+                        combine(flows) { states -> aggregateConnectionState(states) }
+                    }
                 }
-            }.collect { _connectionState.value = it }
+                .distinctUntilChanged()
+                .collect { _connectionState.value = it }
+        }
+    }
+
+    /**
+     * 群聊连接状态聚合：
+     * - 全部在线 → 绿
+     * - 部分在线 → 黄（说明有 bot 掉线，接龙会跳过它）
+     * - 都在连接中 → 黄
+     * - 有错误 → 灰
+     * - 其余 → 灰（未连接）
+     */
+    private fun aggregateConnectionState(states: Array<BotConnectionState>): BotConnectionState {
+        if (states.isEmpty()) return BotConnectionState.Disconnected
+        val connected = states.count { it is BotConnectionState.Connected }
+        return when {
+            connected == states.size -> BotConnectionState.Connected
+            connected > 0 -> BotConnectionState.Connecting   // 部分在线：黄色提示
+            states.any { it is BotConnectionState.Connecting } -> BotConnectionState.Connecting
+            states.any { it is BotConnectionState.Error } -> BotConnectionState.Error()
+            else -> BotConnectionState.Disconnected
         }
     }
 
@@ -439,12 +468,9 @@ class GroupChatViewModel @Inject constructor(
 
         // 不清除共享解码器——只排空队列，保持 AudioTrack 活过整个群聊会话
         // 避免华为上反复创建/释放 AudioTrack 导致的无声问题
-        val sharedId = "${groupId}_shared"
-        if (playbackManager.contains(sharedId)) {
-            playbackManager.flushSource(sharedId)
-        } else {
-            playbackManager.releaseAll()
-        }
+        // 解码器 key 实际是 "${groupId}_shared_${serverRate}"，直接用 "_shared" 判断永远为 false，
+        // 会导致每次都 releaseAll() 强拆 AudioTrack（华为等机型首包无声）
+        playbackManager.flushByPrefix("${groupId}_shared")
         // 不取消 botObserverJobs！监听器跨录音会话存活，
         // 取消会导致 aiState/audioData 无人处理，机器人有回复但听不到
         audioForwardBuffer.clear()
@@ -611,7 +637,14 @@ class GroupChatViewModel @Inject constructor(
         // 4. 缓存音频包用于后续转发到下一个 bot
         viewModelScope.launch(parentJob) {
             service.audioData.collect { audioData ->
-                if (audioData.isEmpty()) return@collect
+                // 空包是服务端「句子边界」标记：群聊同样要插静音，否则三个 bot 的句子照样粘连
+                if (audioData.isEmpty()) {
+                    val sharedSource = "${groupId}_shared_${service.getServerSampleRate()}"
+                    if (playbackManager.queuedMillis(sharedSource) > 120) {
+                        playbackManager.insertSentenceGap(sharedSource, 80)
+                    }
+                    return@collect
+                }
                 botLastAudioTime[botId] = System.currentTimeMillis()
                 val rs = _relayState.value
                 val idx = rs.botIds.indexOf(botId)

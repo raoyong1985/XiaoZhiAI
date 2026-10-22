@@ -21,7 +21,11 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
     // LinkedHashMap with accessOrder=true: 最久未使用的排前面
     private val decoders = object : LinkedHashMap<String, NativeOpusDecoder>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NativeOpusDecoder>?): Boolean {
-            return size > MAX_DECODERS
+            if (size <= MAX_DECODERS) return false
+            // 淘汰前必须释放：否则 AudioTrack / 播放线程 / native 解码器全部泄漏
+            runCatching { eldest?.value?.release() }
+                .onFailure { Logger.w(TAG, "淘汰解码器 ${eldest?.key} 失败: ${it.message}") }
+            return true
         }
     }
     private val decoderLock = Any()
@@ -69,6 +73,12 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
         }
     }
 
+    override fun flushByPrefix(prefix: String) {
+        synchronized(decoderLock) {
+            decoders.entries.filter { it.key.startsWith(prefix) }.forEach { it.value.flushAudio() }
+        }
+    }
+
     override fun flushSource(sourceId: String) {
         synchronized(decoderLock) {
             decoders[sourceId]?.flushAudio()
@@ -90,6 +100,16 @@ class AudioPlaybackManagerImpl @Inject constructor() : AudioPlaybackManagerInter
         synchronized(decoderLock) {
             return decoders[sourceId]?.getServerSampleRate() ?: 0
         }
+    }
+
+    override fun queuedMillis(sourceId: String): Long {
+        val decoder = synchronized(decoderLock) { decoders[sourceId] }
+        return decoder?.queuedMillis() ?: 0L
+    }
+
+    override fun insertSentenceGap(sourceId: String, gapMs: Int) {
+        val decoder = synchronized(decoderLock) { decoders[sourceId] }
+        decoder?.insertSentenceGap(gapMs)
     }
 
     override suspend fun waitForQueueEmpty(sourceId: String, timeoutMs: Long): Boolean {

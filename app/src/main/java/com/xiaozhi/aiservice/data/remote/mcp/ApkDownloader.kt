@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Environment
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.domain.model.ChatMessage
@@ -110,10 +111,13 @@ object ApkDownloader {
                 }
             }
         }
-        context.registerReceiver(
+        // 三参 registerReceiver 是 API 33 新增重载，minSdk 26 直接调用会在 Android 8~12 上
+        // 抛 NoSuchMethodError；ContextCompat 内部按版本分级处理。
+        ContextCompat.registerReceiver(
+            context,
             receiver,
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-            Context.RECEIVER_EXPORTED
+            ContextCompat.RECEIVER_EXPORTED
         )
     }
 

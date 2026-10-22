@@ -79,10 +79,13 @@ class RelayEngine(
         // 全局超时兜底：防止 isRelaying 被锁死（接龙卡在某 bot 等待上）
         val overallTimeoutMs = 45_000L
         val deadline = System.currentTimeMillis() + overallTimeoutMs
-        withTimeoutOrNull(overallTimeoutMs) {
+        val completed = withTimeoutOrNull(overallTimeoutMs) {
             innerTriggerNextSpeakerImpl(previousReply, deadline)
-        }
-        if (relayState.value.waitingSpeakerIndex >= 0) {
+            true
+        } ?: false
+        // 只有超时才清等待索引；成功转发时 innerTriggerNextSpeakerImpl 已经设好
+        // waitingSpeakerIndex，无条件清掉会让「非预期 bot 音频过滤」和 IDLE 路径 A 永远失效
+        if (!completed && relayState.value.waitingSpeakerIndex >= 0) {
             relayState.update { it.clearWaiting() }
         }
     }
@@ -295,8 +298,7 @@ class RelayEngine(
 
         // 所有候选不可用 → 重连重试
         // ⚠️ buffer 保留不清理，让 retry 能读到音频数据
-        // 本轮重试结束，复位计数
-        if (retryCount > 0) retryCount = 0
+        // 注意：重试计数不能在这里清零，否则下面 `retryCount >= maxRetries` 永远不成立
 
         if (candidates.isNotEmpty()) {
             logger.w(tag, "无可用bot转发，尝试重连所有候选")
@@ -310,13 +312,13 @@ class RelayEngine(
                         relayState.update { it.copy(waitingSpeakerIndex = origIdx) }
                         scope.launch {
                             delay(100)
-                            if (retryCount >= maxRetries) {
+                            retryCount++
+                            if (retryCount > maxRetries) {
                                 logger.w(tag, "重试已达上限(${maxRetries}次)，停止本轮重试")
                                 relayState.update { it.clearWaiting() }
                                 retryCount = 0
                                 return@launch
                             }
-                            retryCount++
                             triggerNextSpeaker(previousReply)
                         }
                         return
@@ -326,6 +328,7 @@ class RelayEngine(
         }
 
         logger.w(tag, "无可用bot转发，跳过本轮")
+        retryCount = 0   // 本轮彻底结束，复位重试计数
         relayState.update { it.clearWaiting() }
         val firstAlive = relayState.value.botIds.firstOrNull()
         if (firstAlive != null) {

@@ -3,6 +3,7 @@ package com.xiaozhi.aiservice.domain.repository
 import com.xiaozhi.aiservice.domain.model.BotConnection
 import com.xiaozhi.aiservice.domain.model.BotContact
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 
 interface BotConnectionPoolRepository {
     fun getOrConnect(botId: String, contact: BotContact): BotConnection
@@ -10,6 +11,13 @@ interface BotConnectionPoolRepository {
     fun get(botId: String): BotConnection?
 
     val all: Map<String, BotConnection>
+
+    /**
+     * 池内 botId 集合的变化流。
+     * 连接状态聚合必须跟着它走：只在进入界面时取一次 all 快照，
+     * 后面异步连上的 bot 不在快照里，地球图标就会一直显示错误颜色。
+     */
+    val membership: StateFlow<List<String>>
 
     val size: Int
 

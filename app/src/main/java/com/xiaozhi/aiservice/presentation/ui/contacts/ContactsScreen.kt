@@ -117,7 +117,6 @@ fun ContactsScreen(
     if (showAddDialog) {
         AddEditContactDialog(
             contact = null,
-            viewModel = viewModel,
             onDismiss = { showAddDialog = false },
             onSave = { contact ->
                 viewModel.saveContact(contact)
@@ -130,7 +129,6 @@ fun ContactsScreen(
     editingContact?.let { contact ->
         AddEditContactDialog(
             contact = contact,
-            viewModel = viewModel,
             onDismiss = { editingContact = null },
             onSave = { updated ->
                 viewModel.saveContact(updated)
@@ -362,7 +360,6 @@ private fun ContactItem(
 @Composable
 private fun AddEditContactDialog(
     contact: BotContact?,
-    viewModel: ContactsViewModel,
     onDismiss: () -> Unit,
     onSave: (BotContact) -> Unit
 ) {

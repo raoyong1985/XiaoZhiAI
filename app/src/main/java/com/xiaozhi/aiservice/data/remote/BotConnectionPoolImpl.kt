@@ -43,6 +43,14 @@ class BotConnectionPoolImpl @Inject constructor(
     private val deadBotIds = ConcurrentHashMap.newKeySet<String>()
 
     /** service 被重建时的事件流 */
+    /** 池成员变化（新增/移除），供连接状态聚合使用 */
+    private val _membership = MutableStateFlow<List<String>>(emptyList())
+    override val membership: StateFlow<List<String>> = _membership.asStateFlow()
+
+    private fun syncMembership() {
+        _membership.value = connections.keys.toList()
+    }
+
     private val _serviceReplaced = MutableSharedFlow<Pair<String, BotConnection>>(extraBufferCapacity = 4)
     override val serviceReplaced: SharedFlow<Pair<String, BotConnection>> = _serviceReplaced.asSharedFlow()
 
@@ -64,7 +72,7 @@ class BotConnectionPoolImpl @Inject constructor(
                 service.connect(contact.serverUrl, contact.otaUrl, contact.deviceId, contact.clientId)
                 Logger.i(TAG, "连接 bot[$botId] (${contact.name})")
             }
-        }
+        }.also { syncMembership() }
     }
 
     /** 获取已有连接（不存在返回 null，不触发新建） */
@@ -174,6 +182,7 @@ class BotConnectionPoolImpl @Inject constructor(
     override fun disconnect(botId: String) {
         // 池里移除的 service 不会复用，destroy() 取消其 scope 防止协程泄漏
         connections.remove(botId)?.destroy()
+        syncMembership()
     }
 
     /** 断开所有 bot 连接，清理全部状态 */
@@ -181,5 +190,6 @@ class BotConnectionPoolImpl @Inject constructor(
         connections.values.forEach { it.destroy() }
         connections.clear()
         deadBotIds.clear()
+        syncMembership()
     }
 }

@@ -51,7 +51,9 @@ fun registerNetworkTools(registry: MCPToolRegistry) {
     }
 
     registry.registerTool(
-        name = "web_search",
+        // 设备端必须加前缀：服务端自带一个 web_search，同名会被服务端 MCP 管理器拒绝
+        // （客户端弹「Duplicate tool names: web_search」）
+        name = "device_web_search",
         description = "搜索网页获取实时信息，返回搜索结果列表",
         inputSchema = jsonSchema(
             "query" to jsonStringProp("搜索关键词"),

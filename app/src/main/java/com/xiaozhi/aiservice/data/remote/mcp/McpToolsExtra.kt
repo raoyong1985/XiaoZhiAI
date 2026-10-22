@@ -53,8 +53,13 @@ fun registerExtraTools(registry: MCPToolRegistry) {
     val logTimeFormat = ThreadLocal.withInitial {
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
     }
-    fun formatLogTime(tsMs: Long): String =
-        logTimeFormat.get().format(Date(tsMs))
+    fun formatLogTime(tsMs: Long): String {
+        // ThreadLocal.withInitial 保证有初始值，但 get() 在 Kotlin 侧是平台类型，
+        // 显式兜底避免「unsafe nullable receiver」告警
+        val fmt = logTimeFormat.get()
+            ?: SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).also { logTimeFormat.set(it) }
+        return fmt.format(Date(tsMs))
+    }
 
     // ── 笔记/闹钟工具已移至 McpToolsNotes.kt / McpToolsAlarm.kt ──
 
@@ -975,7 +980,12 @@ private suspend fun scanBluetooth(registry: MCPToolRegistry, maxResults: Int, sc
                 }
             }
         }
-        ctx.registerReceiver(receiver, android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND), Context.RECEIVER_NOT_EXPORTED)
+        androidx.core.content.ContextCompat.registerReceiver(
+            ctx,
+            receiver,
+            android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         adapter.startDiscovery()
         delay(minOf(scanTimeout, 8000L))
         adapter.cancelDiscovery()

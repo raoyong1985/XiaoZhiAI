@@ -383,11 +383,13 @@ class AudioService {
             val msg = "录音权限被拒绝: ${e.message}"
             Logger.e(TAG, msg)
             lastRecordError = msg
+            rollbackRecordingState()
             return false
         } catch (e: Exception) {
             val msg = "录音启动失败: ${e.message}"
             Logger.e(TAG, msg)
             lastRecordError = msg
+            rollbackRecordingState()
             return false
         }
     }
@@ -411,6 +413,19 @@ class AudioService {
             i += 4
         }
         return kotlin.math.sqrt(sumSquares / count)
+    }
+
+    /**
+     * 录音启动失败时回滚状态。
+     * 不回滚的话 isRecording 会一直为 true，下一次 startRecording(同 owner) 会在入口
+     * 直接 return true，调用方以为在录音，实际永远没有数据（只能杀进程恢复）。
+     */
+    private fun rollbackRecordingState() {
+        isRecording.set(false)
+        try { audioRecord?.release() } catch (_: Exception) {}
+        audioRecord = null
+        recorderOwner?.let { silenceCallbacks.remove(it) }
+        recorderOwner = null
     }
 
     /**
@@ -450,9 +465,10 @@ class AudioService {
         audioRecord = null
         // 5. 释放 AudioFX 增强器（AEC+AGC+NS）
         audioEnhancer.release()
-        // 重置软件 NLMS AEC
+        // 重置软件 NLMS AEC 的内部状态，但不关闭开关：
+        // softAecEnabled 是会话级配置，startLive() 内部会先 stopRecording 再 startRecording，
+        // 在这里清掉会导致「AI 说完重启监听」场景完全没有软件回声消除（回声自我唤醒）
         softAec.reset()
-        softAecEnabled = false
 
         // 6. 清理 owner 记录（不再有活跃录音）
         if (recorderOwner != null) {

@@ -25,3 +25,9 @@ Thumbs.db
 keystore.properties
 __pycache__/
 .omo
+
+# 本地数据库/数据备份（含聊天记录、设备与凭据，禁止入库）
+BAK/
+*.datastore
+# 临时文件
+keepAliveTimer

@@ -36,6 +36,12 @@ class NativeOpusDecoder(
         // 因 underrun 被禁用的 track；8x 缓冲 + take() 阻塞写入可保证数据流畅。
         private const val BUFFER_MULTIPLIER = 8
         private const val MAX_QUEUE_SIZE = 200
+        // 排队音频的软上限：超过就丢最旧的包。服务端 TTS 生成速度快于实时播放，
+        // 不设上限时队列会堆到 12s，表现为「文字早就显示完、声音还在放」，
+        // 且上一轮回复的尾音会拖到下一轮，听起来像叠音。
+        private const val MAX_BACKLOG_MS = 3000
+        /** 单包音频时长（ms），服务端 Opus 固定 60ms 帧 */
+        private const val FRAME_MS = 60
         // 播放线程: poll(500ms) 等待音频数据，超时写少量静音帧保活
         // 参考 ESP32 AudioOutputTask: condition_variable::wait() 直到音频队列非空
         // 但 Android AudioFlinger 约 3-4s 后会将空闲 track 因 underrun 超时移除，
@@ -113,6 +119,10 @@ class NativeOpusDecoder(
     // Opus C 库解码器非线程安全。群聊中多个 bot 的音频协程并发调用 decodePacket，
     // 必须串行化防止 nativeDecode 内部状态错乱导致输出全零无声
     private val decodeLock = ReentrantLock()
+    /** 下一包音频前需要插入的静音时长（ms），用于句间停顿 */
+    @Volatile
+    private var pendingSentenceGapMs = 0
+
     /** 最后一次成功的音频播放时间戳，用于空闲超时检测 */
     private val lastAudioActivityMs = AtomicLong(System.currentTimeMillis())
     // 每次 restartPlayback 后重置，用于调试首次解码
@@ -356,10 +366,24 @@ class NativeOpusDecoder(
                         } else {
                             // poll 超时：空闲时每 3s 写 500B 保活，防 AudioFlinger 杀 track
                             val now = System.currentTimeMillis()
-                            if (now - keepAliveTimer >= 400) {
-                                keepAliveTimer = System.currentTimeMillis()
+                            val idleMs = now - keepAliveTimer
+                            if (idleMs >= 400) {
+                                keepAliveTimer = now
                                 try {
-                                    audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
+                                    // 按实际空闲时长补静音：固定写 66ms 而每 400ms 才写一次，
+                                    // 每个周期会有 ~330ms 音频轨饿死，系统反复
+                                    // restartIfDisabled → 周期性咔哒/爆音（听感像「叠」「断」）
+                                    val silenceBytes = ((idleMs.coerceAtMost(1000L) *
+                                            clientSampleRate * channels * BYTES_PER_SAMPLE) / 1000L).toInt()
+                                    if (silenceBytes > 0) {
+                                        val silence = if (silenceBytes <= keepAliveSilence.size) {
+                                            keepAliveSilence
+                                        } else {
+                                            ByteArray(silenceBytes)
+                                        }
+                                        val n = minOf(silenceBytes, silence.size)
+                                        audioTrackRef.get()?.write(silence, 0, n)
+                                    }
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
                                     consecutiveWriteFails++
@@ -465,11 +489,23 @@ class NativeOpusDecoder(
                         }
                         val data = audioQueue.poll(500, TimeUnit.MILLISECONDS)
                         if (data != null && data.isNotEmpty()) {
-                            audioTrackRef.get()?.play()
                             lastAudioActivityMs.set(System.currentTimeMillis())
                             keepAliveTimer = System.currentTimeMillis()
                             pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
                             var written = track.write(data, 0, data.size)
+                            // 预缓冲约 120ms 再开播：空闲恢复时立刻 play()，第二包还没写进
+                            // AudioTrack 就已经播空，第一包尾部被吃掉 → 每句第一个字「卡一下」
+                            val preBufBytes = clientSampleRate * channels * BYTES_PER_SAMPLE * 120 / 1000
+                            var preBuffered = data.size
+                            while (preBuffered < preBufBytes) {
+                                val more = audioQueue.poll(50, TimeUnit.MILLISECONDS) ?: break
+                                if (more.isNotEmpty()) {
+                                    written += track.write(more, 0, more.size)
+                                    preBuffered += more.size
+                                    pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
+                                }
+                            }
+                            audioTrackRef.get()?.play()
                             if (written > 0) {
                                 totalBytesWritten.updateAndGet { it + written }
                             }
@@ -486,10 +522,24 @@ class NativeOpusDecoder(
                             }
                         } else {
                             val now = System.currentTimeMillis()
-                            if (now - keepAliveTimer >= 400) {
-                                keepAliveTimer = System.currentTimeMillis()
+                            val idleMs = now - keepAliveTimer
+                            if (idleMs >= 400) {
+                                keepAliveTimer = now
                                 try {
-                                    audioTrackRef.get()?.write(keepAliveSilence, 0, keepAliveSilence.size)
+                                    // 按实际空闲时长补静音：固定写 66ms 而每 400ms 才写一次，
+                                    // 每个周期会有 ~330ms 音频轨饿死，系统反复
+                                    // restartIfDisabled → 周期性咔哒/爆音（听感像「叠」「断」）
+                                    val silenceBytes = ((idleMs.coerceAtMost(1000L) *
+                                            clientSampleRate * channels * BYTES_PER_SAMPLE) / 1000L).toInt()
+                                    if (silenceBytes > 0) {
+                                        val silence = if (silenceBytes <= keepAliveSilence.size) {
+                                            keepAliveSilence
+                                        } else {
+                                            ByteArray(silenceBytes)
+                                        }
+                                        val n = minOf(silenceBytes, silence.size)
+                                        audioTrackRef.get()?.write(silence, 0, n)
+                                    }
                                     consecutiveWriteFails = 0
                                 } catch (_: Exception) {
                                     consecutiveWriteFails++
@@ -513,6 +563,32 @@ class NativeOpusDecoder(
         } finally {
             isRestarting.set(false)
         }
+    }
+
+    /**
+     * 当前排队待播的音频时长（毫秒）。
+     * 供上层把文字上屏时间对齐到实际播放进度。
+     */
+    fun queuedMillis(): Long {
+        val frameBytes = channels * BYTES_PER_SAMPLE
+        val bytesPerSec = clientSampleRate * frameBytes
+        if (frameBytes <= 0 || bytesPerSec <= 0) return audioQueue.size.toLong() * FRAME_MS
+        // 队列里未解码完的 + 已写进 AudioTrack 但还没播出去的，才是真实的延迟
+        var queuedBytes = 0L
+        for (b in audioQueue) queuedBytes += b.size
+        val written = totalBytesWritten.get()
+        val playedBytes = (audioTrackRef.get()?.playbackHeadPosition ?: 0).toLong() * frameBytes
+        val inflight = (written - playedBytes).coerceIn(0L, bytesPerSec.toLong() * 5L)
+        return (inflight + queuedBytes) * 1000L / bytesPerSec
+    }
+
+    /**
+     * 在下一包音频之前插入 [gapMs] 毫秒静音。
+     * 句间停顿用，能显著减轻「上一句尾音贴住下一句」的粘连感。
+     */
+    fun insertSentenceGap(gapMs: Int) {
+        if (gapMs <= 0) return
+        pendingSentenceGapMs = gapMs
     }
 
     fun decodePacket(opusData: ByteArray, onPcm: ((ByteArray) -> Unit)? = null) {
@@ -562,6 +638,29 @@ class NativeOpusDecoder(
                     onPcm?.invoke(pcmBytes)
                     // 同步写入 TTS 参考缓冲（供 SoftAec 回声消除使用）
                     TtsReferenceBuffer.write(pcmBytes)
+
+                    // 句间停顿：把静音 PCM 先入队，避免上一句尾音直接贴住下一句首音
+                    val gapMs = pendingSentenceGapMs
+                    if (gapMs > 0) {
+                        pendingSentenceGapMs = 0
+                        val gapBytes = clientSampleRate * channels * BYTES_PER_SAMPLE * gapMs / 1000
+                        if (gapBytes > 0) {
+                            audioQueue.offer(ByteArray(gapBytes))
+                            pendingDecodePackets.incrementAndGet()
+                        }
+                    }
+
+                    // 背压上限：超过 MAX_BACKLOG_MS 就丢最旧的包，防止延迟无限累积
+                    val maxPackets = MAX_BACKLOG_MS / FRAME_MS
+                    var dropped = 0
+                    while (audioQueue.size >= maxPackets) {
+                        if (audioQueue.poll() == null) break
+                        pendingDecodePackets.updateAndGet { maxOf(it - 1, 0) }
+                        dropped++
+                    }
+                    if (dropped > 0 && packetsSinceRestart.get() % 20 == 1) {
+                        Logger.w(TAG, "音频排队超过 ${MAX_BACKLOG_MS}ms，丢弃 $dropped 个旧包")
+                    }
 
                     if (audioQueue.remainingCapacity() > 0) {
                         audioQueue.offer(pcmBytes)

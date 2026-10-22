@@ -71,10 +71,15 @@ class NativeOpusEncoder(
             while (isEncoding) {
                 val pcm = try { pcmQueue.poll(50, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { break }
                 if (pcm == null) {
-                    if (accumulatedSamples >= frameSamples) {
-                        encodeFrame(codecPtr, pcmAccumulator, accumulatedSamples)
-                        pcmAccumulator = ShortArray(frameSamples * 4)
-                        accumulatedSamples = 0
+                    // 积压可能不止一帧：逐帧编完，剩余样本留在缓冲里，
+                    // 否则多出来的音频被下一个 new ShortArray 直接丢掉
+                    while (accumulatedSamples >= frameSamples && isEncoding) {
+                        encodeFrame(codecPtr, pcmAccumulator, frameSamples)
+                        val remaining = accumulatedSamples - frameSamples
+                        if (remaining > 0) {
+                            System.arraycopy(pcmAccumulator, frameSamples, pcmAccumulator, 0, remaining)
+                        }
+                        accumulatedSamples = remaining
                     }
                     continue
                 }
@@ -112,13 +117,24 @@ class NativeOpusEncoder(
 
     private fun encodeFrame(ptr: Long, samples: ShortArray, count: Int) {
         try {
-            val input = if (count == samples.size) samples else samples.copyOf(count)
+            val n = minOf(count, frameSamples)
+            if (n <= 0) return
+            // 必须切出**正好一帧**的数组：samples 是累加缓冲（frameSamples*4），
+            // 直接整块传过去会让 native 的帧长校验失败，每帧都返回 -1（彻底没声音上行）
+            // opus_encode 也要求固定帧长，不足一帧补零，否则同样返回 -1（尾音丢失）
+            val input = if (n == frameSamples && samples.size == frameSamples) {
+                samples
+            } else if (n == frameSamples) {
+                samples.copyOf(frameSamples)
+            } else {
+                ShortArray(frameSamples).also { System.arraycopy(samples, 0, it, 0, n) }
+            }
 
             // 输出缓冲：Opus 最大帧约 1275 字节（@ 48kHz），16kHz 更少
             val maxOutputSize = 1500
             val output = ByteArray(maxOutputSize)
 
-            val encodedBytes = nativeEncode(ptr, input, count, output, maxOutputSize)
+            val encodedBytes = nativeEncode(ptr, input, frameSamples, output, maxOutputSize)
             if (encodedBytes > 0) {
                 val opusData = output.copyOf(encodedBytes)
                 onOpusData?.invoke(opusData)
@@ -134,8 +150,17 @@ class NativeOpusEncoder(
         encodingThread = null
         thread?.interrupt()
         // 等编码线程退出后再销毁 native 编码器，防止 use-after-free
-        try { thread?.join(200) } catch (_: InterruptedException) {}
-        if (encoderPtr != 0L) {
+        try {
+            var waited = 0
+            while (thread?.isAlive == true && waited < 3000) {
+                thread.join(200)
+                waited += 200
+            }
+        } catch (_: InterruptedException) {}
+        if (thread?.isAlive == true) {
+            // 线程还活着就销毁 native 编码器 = use-after-free（native 崩溃，Java 无栈）
+            Logger.e(TAG, "编码线程 3s 内未退出，跳过 native 销毁以避免 use-after-free")
+        } else if (encoderPtr != 0L) {
             nativeDestroyEncoder(encoderPtr)
             encoderPtr = 0L
         }

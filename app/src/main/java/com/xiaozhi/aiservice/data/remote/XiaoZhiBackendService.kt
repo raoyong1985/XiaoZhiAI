@@ -18,6 +18,8 @@ import com.xiaozhi.aiservice.di.AppContext
 import com.xiaozhi.aiservice.domain.model.BotConnection
 import com.xiaozhi.aiservice.domain.model.BotConnectionState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -52,6 +54,37 @@ class XiaoZhiBackendService(
 
     @Volatile
     private var binaryAudioInSession = false  // 本轮TTS是否已有二进制音频（用于base64去重）
+
+    /** 收到 sentence_start 后置位；下一个二进制音频包前会先发一个空包作为句子边界标记 */
+    @Volatile
+    private var sentenceBoundaryPending = false
+
+    /** base64 音频的延迟判定任务：给二进制副本 300ms 的抢先窗口 */
+    private var pendingBase64Job: Job? = null
+
+    /** 音频下发单消费者通道（保证 Opus 包顺序） */
+    private val audioEmitChannel = Channel<ByteArray>(Channel.UNLIMITED)
+
+    @Volatile
+    private var audioEmitConsumerStarted = false
+
+    /** 启动音频单消费者（幂等）。必须等 scope 初始化完成后调用。 */
+    private fun startAudioEmitConsumer() {
+        if (audioEmitConsumerStarted) return
+        audioEmitConsumerStarted = true
+        scope.launch {
+            for (chunk in audioEmitChannel) {
+                _audioData.emit(chunk)
+            }
+        }
+    }
+
+    /** 聚合中的 base64 音频帧（按到达顺序） */
+    private val pendingBase64Frames = mutableListOf<ByteArray>()
+
+    /** TTS 代际：用于丢弃上一轮残留的 base64 批次 */
+    @Volatile
+    private var ttsGeneration = 0
 
     companion object {
         private const val PROTOCOL_VERSION = "1"
@@ -142,6 +175,7 @@ class XiaoZhiBackendService(
      * @param accessToken 访问令牌 (用于Authorization header)
      */
     override fun connect(url: String, otaUrl: String, deviceId: String, clientId: String, accessToken: String) {
+        startAudioEmitConsumer()
         serverUrl = url
         this.deviceId = deviceId
         this.clientId = clientId
@@ -337,6 +371,14 @@ class XiaoZhiBackendService(
         isConnected = false
         reconnectAttempt = 0  // 重置重连计数
         wsToken = ""
+        // 清掉上一轮残留的 TTS 状态，否则重连后第一包会莫名插静音 / base64-only 音频被误丢
+        sessionId = ""
+        binaryAudioInSession = false
+        sentenceBoundaryPending = false
+        pendingBase64Job?.cancel()
+        pendingBase64Job = null
+        synchronized(pendingBase64Frames) { pendingBase64Frames.clear() }
+        ttsGeneration++
         _connectionState.value = BotConnectionState.Disconnected
         _aiState.value = AiStateStr.IDLE
         // 注意：不 cancel supervisorJob，scope 保持活跃以支持重连
@@ -358,10 +400,14 @@ class XiaoZhiBackendService(
         if (isDisconnecting) return
         if (isReconnecting) return  // 防止 onClosing+onClosed 双重调度
         isReconnecting = true
-        if (serverUrl.isEmpty()) return
+        if (serverUrl.isEmpty()) {
+            isReconnecting = false
+            return
+        }
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
             Logger.e(TAG, "重连已达到最大次数($MAX_RECONNECT_ATTEMPTS)，停止重连")
             _connectionState.value = BotConnectionState.Error()
+            isReconnecting = false
             return
         }
 
@@ -375,9 +421,17 @@ class XiaoZhiBackendService(
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(delay)
+            // 本次重连已真正发起：复位标志，否则下一次失败时会被上面的
+            // `if (isReconnecting) return` 挡住，永久不再重连
+            isReconnecting = false
             Logger.i(TAG, "执行重连... (第 $reconnectAttempt 次)")
             _connectionState.value = BotConnectionState.Connecting
-            doConnect(serverUrl, deviceId, clientId, accessToken)
+            try {
+                doConnect(serverUrl, deviceId, clientId, accessToken)
+            } catch (e: Exception) {
+                Logger.e(TAG, "重连失败: ${e.message}")
+                scheduleReconnect()
+            }
         }
     }
 
@@ -774,6 +828,14 @@ class XiaoZhiBackendService(
             ?: json.get("data")?.asString
             ?: json.get("audio_data")?.asString
 
+        // 新一轮 TTS 开始：先在这里重置本轮状态，避免下面 base64 分支排好的任务被 when 里的
+        // "start" 分支 cancel 掉（表现为第一句没声音）
+        if (state == "start") {
+            ttsGeneration++
+            binaryAudioInSession = false
+            sentenceBoundaryPending = true
+        }
+
         if (audioBase64 != null && audioBase64.isNotEmpty()) {
             Logger.i(TAG, "收到 TTS 音频数据 (base64): ${audioBase64.length} 字符")
             if (binaryAudioInSession) {
@@ -781,7 +843,35 @@ class XiaoZhiBackendService(
             } else {
                 try {
                     val audioData = android.util.Base64.decode(audioBase64, android.util.Base64.NO_WRAP)
-                    if (audioData.isNotEmpty()) scope.launch { _audioData.emit(audioData) }
+                    if (audioData.isNotEmpty()) {
+                        // 服务器可能同时下发 base64 与二进制两份同一句音频。
+                        // 这里先把 base64 帧聚合起来，给二进制副本 300ms 抢先窗口：
+                        //   窗口内出现二进制 → 整批丢弃（避免同一句播两遍）
+                        //   窗口内没有二进制 → 按原顺序整批播放（兼容只发 base64 的服务端）
+                        // 按「批」而不是按「帧」判定，否则逐帧 cancel 会让 base64-only 服务端
+                        // 只播出最后一帧（听感是整句被吃掉）。
+                        synchronized(pendingBase64Frames) { pendingBase64Frames.add(audioData) }
+                        if (pendingBase64Job?.isActive != true) {
+                            val gen = ttsGeneration
+                            pendingBase64Job = scope.launch {
+                                delay(300)
+                                val batch = synchronized(pendingBase64Frames) {
+                                    val copy = pendingBase64Frames.toList()
+                                    pendingBase64Frames.clear()
+                                    copy
+                                }
+                                if (gen != ttsGeneration) {
+                                    Logger.i(TAG, "丢弃上一轮残留的 base64 音频 ${batch.size} 帧")
+                                    return@launch
+                                }
+                                if (binaryAudioInSession) {
+                                    Logger.i(TAG, "跳过 base64 音频 ${batch.size} 帧（二进制副本已到达，避免同一句播两遍）")
+                                } else {
+                                    batch.forEach { _audioData.emit(it) }
+                                }
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
                     Logger.e(TAG, "Base64 解码失败: ${e.message}")
                 }
@@ -791,7 +881,8 @@ class XiaoZhiBackendService(
         when (state) {
             "start" -> {
                 idleDebounceJob?.cancel()
-                binaryAudioInSession = false
+                // 本轮状态（binaryAudioInSession / sentenceBoundaryPending / ttsGeneration）
+                // 已在 handleTts 入口统一重置
                 Logger.i(TAG, "tts start received, setting aiState=speaking")
                 _aiState.value = AiStateStr.SPEAKING
                 _ttsText.value = ""
@@ -808,6 +899,8 @@ class XiaoZhiBackendService(
             }
             "sentence_start" -> {
                 idleDebounceJob?.cancel()
+                // 句子边界：下一个音频包前插入静音，避免句子粘连
+                sentenceBoundaryPending = true
                 if (ttsTextContent.isNotEmpty()) {
                     val id = java.util.UUID.randomUUID().toString()
                     streamingMessageId = id
@@ -1024,6 +1117,12 @@ class XiaoZhiBackendService(
             ?: json.get("message")?.asString
             ?: json.get("content")?.asString
             ?: "收到通知"
+        // 服务端协议级错误（如 MCP 工具重名）属于诊断信息，弹到用户面前只是一个黑色提示条，
+        // 没有任何可操作内容 → 只记日志，不打扰用户
+        if (alertText.contains("Duplicate tool names", ignoreCase = true)) {
+            Logger.w(TAG, "忽略协议级错误提示: $alertText")
+            return
+        }
         Logger.i(TAG, "收到Alert: $alertText")
         scope.launch { _alert.emit(alertText) }
     }
@@ -1126,9 +1225,12 @@ class XiaoZhiBackendService(
         // 剥离协议头，只发射纯Opus payload
         val opusPayload = stripProtocolHeader(data)
         Logger.d(TAG, "发射音频到Flow: ${opusPayload.size}B (原${data.size}B)")
-        scope.launch {
-            _audioData.emit(opusPayload)
-        }
+        val isBoundary = sentenceBoundaryPending
+        sentenceBoundaryPending = false
+        // 单消费者通道：每包 launch 一个协程 emit 会在 IO 线程池里乱序，
+        // 导致解码出的 PCM 顺序错乱（咔嗒/吞字），空包边界也可能排到音频后面
+        if (isBoundary) audioEmitChannel.trySend(ByteArray(0))
+        audioEmitChannel.trySend(opusPayload)
     }
 
     /**

@@ -28,6 +28,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -42,6 +43,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "ConnectionRepo"
+
+/** 句间停顿：上一句尾音与下一句首音之间插入的静音时长 */
+private const val SENTENCE_GAP_MS = 80
+/** 文字上屏最大提前量：避免极端情况下队列太深导致文字迟迟不显示 */
+private const val MAX_TEXT_LEAD_MS = 3000L
 
 @Singleton
 class ConnectionRepositoryImpl @Inject constructor(
@@ -328,6 +334,15 @@ class ConnectionRepositoryImpl @Inject constructor(
                         lastTtsText = message.content
                     }
                 }
+                // 文字跟随语音：AI 回复的句子按当前待播音频时长延迟上屏，
+                // 否则服务端生成速度远快于播放，文字会一口气全冒出来（衔接太快）。
+                if (message.type == MessageType.TEXT &&
+                    message.direction == MessageDirection.RECEIVED &&
+                    message.isStreaming
+                ) {
+                    val backlog = playbackManager.queuedMillis("main")
+                    if (backlog > 0) delay(backlog.coerceAtMost(MAX_TEXT_LEAD_MS))
+                }
                 messageRepository.addReceivedMessage(currentContactId, message)
             }
         }
@@ -335,7 +350,17 @@ class ConnectionRepositoryImpl @Inject constructor(
         scope.launch {
             backendService.audioData.collect { audioData ->
                 try {
-                if (audioData.isEmpty()) return@collect
+                // 空包是服务端发来的「句子边界」标记：在下一句音频前插 150ms 静音，
+                // 避免上一句尾音直接贴住下一句首音（听感像叠音）。
+                if (audioData.isEmpty()) {
+                    // 只在音频确实在连续播放时才补句间静音。
+                    // 队列已空说明上一句已经播完、本来就有自然停顿，
+                    // 再插静音会让下一句的第一个字听起来「卡一下」。
+                    if (playbackManager.queuedMillis("main") > 120) {
+                        playbackManager.insertSentenceGap("main", SENTENCE_GAP_MS)
+                    }
+                    return@collect
+                }
                 val t0 = System.nanoTime()
                 val serverRate = backendService.getServerSampleRate()
                 val serverCh = backendService.getServerChannels()
@@ -558,7 +583,8 @@ class ConnectionRepositoryImpl @Inject constructor(
                 scope = scope,
                 enableVAD = enableVAD,
                 startMuteMs = 600L,  // AI说话刚结束，防回声
-                onOpusPacket = { packet -> scope.launch { sendAudio(packet) } },
+                // 走串行通道：逐包 launch 会在 IO 线程池里乱序，服务端 ASR 会收到错序音频
+                onOpusPacket = { packet -> audioSendChannel.trySend(packet) },
                 onSilenceDetected = { scope.launch { stopListening(userExplicitStop = false) } }
             )) {
             Logger.e(TAG, "${mode} 模式重启监听失败，保持 IDLE")
