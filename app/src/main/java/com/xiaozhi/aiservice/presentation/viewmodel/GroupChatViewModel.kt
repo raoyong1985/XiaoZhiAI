@@ -73,7 +73,7 @@ import javax.inject.Inject
  * 4. 接龙轮次自动限制 → MAX_FORWARD_ROUND = bot数-1，防无限循环
  * 5. 死循环检测 → hint 去重 + speaker 去重双重检测
  *
- * 架构限制（来自 ARCHITECTURE_REVIEW.md）：
+ * 架构限制：
  * - ❌ 直接依赖 Data 层（AudioPlaybackManager/AudioRecorder/BotConnectionPool）
  * - ❌ Service Locator 模式（AppContainer 全局访问）
  * - ❌ 代码过长（~1000 行，应拆分为 RelayEngine + GroupChatUseCase）

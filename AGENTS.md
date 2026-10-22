@@ -153,8 +153,7 @@ XiaoZhiAI/
 │           └── res/                  # 资源文件
 ├── GROUP_CHAT_WORKFLOW.md           # 群聊工作流文档
 ├── SPEC.md                          # 完整规格文档
-├── ARCHITECTURE_REVIEW.md           # 架构审查报告
-└── XiaoZhiAI-重构计划-Phase0.md      # 重构计划
+└── README.md                        # 功能说明
 ```
 
 ---
@@ -336,9 +335,7 @@ adb shell dumpsys power | grep "WAKE_LOCK" | grep XiaoZhi
 
 - `SPEC.md` — 完整规格（协议、消息类型、对话流程）
 - `GROUP_CHAT_WORKFLOW.md` — 群聊接龙工作流（含调试检查点）
-- `ARCHITECTURE_REVIEW.md` — 架构审查（2026-05-23，6大维度）
-- `XiaoZhiAI-重构计划-Phase0.md` — 重构计划（7 个 Step）
-- `.hermes/skills/xiaozhi/xiaozhi-android/` — 150+ 篇参考文档
+- `README.md` — 功能说明（面向使用者）
 
 ---
 
